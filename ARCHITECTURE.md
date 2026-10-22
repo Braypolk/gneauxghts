@@ -447,6 +447,16 @@ preparation and publication. No independent tag writer or durable tag store exis
 interactive query grammar. The note catalog and semantic metadata carry derived
 tag values; embeddings and Atlas structure hashes remain content-based.
 
+### Markdown tables
+
+`markdown/tables/` projects top-level GFM tables into pane-local controls and
+editable cells. Canonical values remain in the existing CodeMirror document;
+cell and structural changes dispatch ordinary transactions through the shared
+undo root. Pane widgets retain focus and composition only, retiring stale input
+when source, read-only state or widget lifetime changes. Syntax changes own
+table inventory, including enclosing fences. Nested and irregular tables retain
+literal source editing to preserve container prefixes and extra cells.
+
 ### Images
 
 `images/` projects wiki and Markdown image embeds from authored Markdown into a
@@ -464,9 +474,9 @@ authors size suffixes or dirties the note. Size hints expire with the document.
 
 Width, reset, deletion, cut and successful imports dispatch ordinary isolated
 editor transactions through `EditorDocumentRuntime`; they share its undo root and
-the existing save/Editing Window path. Paste and file-drop imports share the same
-view-owned upload jobs; drops insert at their pointer without replacing the editor
-selection. Paste jobs preserve selected text until
+the existing save/Editing Window path. Paste, file-drop and slash-menu file imports
+share one view-owned upload owner. Drops insert at their pointer without replacing
+the editor selection. Chooser destinations and paste jobs preserve selected text until
 success, map unaffected ranges, reuse partial successes, and discard results after
 replacement, navigation, read-only takeover or view destruction. Removing an
 embed never removes asset bytes.

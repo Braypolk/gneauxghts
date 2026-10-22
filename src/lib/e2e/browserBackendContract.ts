@@ -1,4 +1,5 @@
 export type NoteFixture = {
+  updatedAtMillis?: number;
   tags?: string[];
   noteId: string;
   title: string;

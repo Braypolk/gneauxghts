@@ -32,6 +32,12 @@ export interface NotepadCommandBarSearchProps {
   onQueryImage?: (file: File) => void | Promise<void>;
   onSearchClear?: () => void;
   onImageSelect?: (item: ImageSearchItem) => void | Promise<void>;
+  /** Present only while a result may create a new split. */
+  onOpenInSplit?: (item: SearchItem | LocationHistoryEntry) => void;
+  lastEditedNotes?: SearchItem[];
+  isLoadingLastEdited?: boolean;
+  lastEditedError?: string | null;
+  onLoadLastEdited?: () => void | Promise<void>;
   searchMode: SearchMode;
   searchQuery: string;
   matchCase: boolean;
@@ -68,4 +74,5 @@ export interface NotepadCommandBarRelatedProps {
   onClose: () => void;
   onRefresh: () => void;
   onSelect: (item: import('#lib/types/semantic.js').RelatedNoteItem) => void;
+  onOpenInSplit?: (item: import('#lib/types/semantic.js').RelatedNoteItem) => void;
 }

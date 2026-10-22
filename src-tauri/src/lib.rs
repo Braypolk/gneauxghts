@@ -388,6 +388,7 @@ pub fn run() {
             commands::forgotten_note_commands::get_forgotten_note_retention_days,
             commands::forgotten_note_commands::set_forgotten_note_retention_days,
             commands::search_commands::list_recent_notes,
+            commands::search_commands::list_last_edited_notes,
             commands::search_commands::list_recent_focus,
             commands::search_commands::get_last_chat_location,
             commands::search_commands::set_last_chat_location,

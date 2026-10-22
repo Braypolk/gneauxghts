@@ -47,6 +47,11 @@ and reproducible fixtures belong in Git.
 
 - [Editor input and task layout](archive/editor-input-bugs-2026-10-22.md): previous-note navigation releases stale WebKit editing focus before buffer swaps; task date actions no longer wrap onto an empty line; image drops use the existing upload jobs. Browser, native and repository checks are recorded with their evidence boundaries.
 
+- [Workspace improvements](archive/workspace-improvements.md): popup split actions,
+  polished Markdown tables, drag auto-scroll and Escape cancellation, Last edited
+  browsing, and slash-menu image picking. Parallel implementation and independent
+  reviews are complete; validation and native chooser limits are recorded.
+
 - [Pane-motion wait lifetime](archive/pane-motion-wait-lifetime.md): cancelled motion no longer reads destroyed workspace state. Desktop and compact navigation regressions verify cancellation, warning-free teardown, Settings focus and workspace return.
 
 - [Pi observer lifetime](archive/pi-observer-lifetime.md): acceptance observation follows the mounted workspace across Settings, safely retires late callbacks/watches and accounts for callback failures. Four support regressions and real native navigation cover the fix; 55 native tests, 143 support tests, 1,418 frontend tests, type checks and production build pass.

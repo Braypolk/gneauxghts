@@ -10,6 +10,7 @@ import {
   listRecentFocus,
   listRecentNotes,
   listRecentTasks,
+  listLastEditedNotes,
   searchNotes,
   setNotePinned,
   type SearchMode
@@ -65,6 +66,9 @@ export class NotepadSearchStore {
   searchResults = $state<SearchItem[]>([]);
   pinnedNotes = $state<SearchItem[]>([]);
   recentNotes = $state<SearchItem[]>([]);
+  lastEditedNotes = $state<SearchItem[]>([]);
+  isLoadingLastEdited = $state(false);
+  lastEditedError = $state<string | null>(null);
   recentTasks = $state<RecentTaskItem[]>([]);
   isSearching = $state(false);
   imageResults = $state<ImageSearchItem[]>([]);
@@ -79,6 +83,7 @@ export class NotepadSearchStore {
   #activeSearchRequest = 0;
   #activeRecentNotesRequest = 0;
   #activeRecentTasksRequest = 0;
+  #activeLastEditedRequest = 0;
   #lastEmittedHighlightQuery = '';
   #lastEmittedHighlightMode: SearchMode = 'all';
   #lastEmittedMatchCase = false;
@@ -447,6 +452,23 @@ export class NotepadSearchStore {
     return this.#loadRecentFocus();
   };
 
+  loadLastEditedNotes = async () => {
+    const requestId = ++this.#activeLastEditedRequest;
+    this.isLoadingLastEdited = true;
+    this.lastEditedError = null;
+    try {
+      const notes = await listLastEditedNotes();
+      if (requestId === this.#activeLastEditedRequest) this.lastEditedNotes = notes;
+    } catch (error) {
+      if (requestId === this.#activeLastEditedRequest) {
+        this.lastEditedError = 'Could not load last edited notes. Try again.';
+      }
+      console.error('Failed to load last edited notes:', error);
+    } finally {
+      if (requestId === this.#activeLastEditedRequest) this.isLoadingLastEdited = false;
+    }
+  };
+
   setPinned = async (noteId: string, pinned: boolean) => {
     await setNotePinned(noteId, pinned);
     await this.#loadRecentFocus();
@@ -458,6 +480,7 @@ export class NotepadSearchStore {
     this.#activeSearchRequest += 1;
     this.#activeRecentNotesRequest += 1;
     this.#activeRecentTasksRequest += 1;
+    this.#activeLastEditedRequest += 1;
   };
 }
 

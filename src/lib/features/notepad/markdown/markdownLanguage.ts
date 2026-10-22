@@ -8,7 +8,7 @@ import { obsidianMarkdownExtensions } from '#lib/features/notepad/markdown/obsid
 //  - `base: markdownLanguage` selects the GFM-enabled dialect (strikethrough,
 //    task lists, autolinks) rather than plain CommonMark.
 //  - `extensions` adds Obsidian-style wikilink, highlight, and comment parsing
-//    and disables tables so their Markdown remains ordinary paragraph text.
+//    alongside portable GFM tables.
 //  - `codeLanguages` drives fenced-code-block syntax highlighting via lazily
 //    loaded language parsers (see codemirrorLanguageData for the curated list).
 //  - `pasteURLAsLink` keeps the "paste a URL over a selection → link" affordance.
@@ -22,7 +22,7 @@ import { obsidianMarkdownExtensions } from '#lib/features/notepad/markdown/obsid
 export function createMarkdownLanguage(): Extension {
   return markdown({
     base: markdownLanguage,
-    extensions: [obsidianMarkdownExtensions, { remove: ['Table'] }],
+    extensions: [obsidianMarkdownExtensions],
     codeLanguages: [...languages],
     completeHTMLTags: true,
     pasteURLAsLink: true,

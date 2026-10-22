@@ -21,6 +21,9 @@
     left: var(--dock-search-results-center, 50%);
     right: auto;
     transform: translateX(-50%);
+    max-height: max(5rem, calc(100dvh - var(--search-results-anchor-height, 3.25rem) - 8rem - var(--keyboard-inset-height, 0px)));
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: var(--search-scope-results-bg, var(--popover));
     border-color: var(--search-scope-results-border, var(--border));
     transition:

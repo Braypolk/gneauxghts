@@ -6,6 +6,8 @@ import type { ImagesConfig } from './imageConfig';
 export interface Upload {
   id: symbol; from: number; to: number; original: string; files: File[];
   assets: (StoredImageAsset | null)[]; error: boolean; pending: boolean;
+  errorMessage?: string;
+  retryable?: boolean;
 }
 export const setUpload = StateEffect.define<Upload>();
 export const removeUpload = StateEffect.define<symbol>();
@@ -28,7 +30,7 @@ export const uploads = StateField.define<readonly Upload[]>({
 });
 export async function runImageUpload(view: EditorView, id: symbol, config: ImagesConfig, isCurrent: () => boolean) {
     const job = view.state.field(uploads, false)?.find(job => job.id === id);
-    if (!isCurrent() || !job || job.pending || view.state.readOnly) return;
+    if (!isCurrent() || !job || job.pending || job.retryable === false || view.state.readOnly) return;
     view.dispatch({ effects: setUpload.of({ ...job, pending: true, error: false }) });
     const results = await Promise.allSettled(job.files.map((file, index) => job.assets[index] ? Promise.resolve(job.assets[index]!) : config.storePastedImage(file)));
     const current = view.state.field(uploads, false)?.find(job => job.id === id);

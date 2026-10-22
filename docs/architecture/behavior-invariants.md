@@ -324,9 +324,23 @@ does not require lifecycle recovery.
 The explicit Move block handle owns touch dragging; surrounding note content
 retains native scrolling and selection. Only a matching pointerup commits a
 drop or opens the formatting menu after a tap. Pointer cancellation, capture
-loss, window blur, hidden visibility, document changes and editor teardown
+loss, Escape, window blur, hidden visibility, document changes and editor teardown
 discard the drag and its preview without publishing a move. A later pointerup
 cannot revive it. Successful moves retain ordinary Undo behavior.
+
+While dragging, approaching the visible pane's top or bottom scrolls that pane
+with proportional edge speed, including under a stationary pointer. The drop
+preview follows the newly revealed content. Leaving the edge or ending the
+gesture stops scrolling.
+
+### Tables retain canonical Markdown and shared undo
+
+Top-level GFM tables expose editable cells, row/column controls, alignment and
+keyboard navigation. Cell and structural edits use ordinary Markdown transactions
+and the document's shared Undo/Redo history. Moving a table moves all its rows.
+Composition, source replacement and widget disposal cannot publish stale input.
+Source mode remains available; nested tables and irregular extra-cell rows retain
+literal editing so visual controls cannot discard authored content.
 
 ### Optional note tags are authored content
 
@@ -975,6 +989,14 @@ It retains ordinary search
 query/scope state. Related is absent from chat and History; changing the active
 pane or document dismisses its popup. Escape restores the captured editor/title
 focus, and pointer/keyboard selection uses ordinary passage navigation.
+Search, Related, pinned and idle saved-note results offer an explicit split action
+while one pane is open and the viewport admits a split. Unsaved draft matches
+retain ordinary selection without offering an unavailable split action.
+The action loads and activates a new editor through the workspace
+session while preserving the source pane. Existing splits retain ordinary result
+selection. The idle Recent / Last edited switch preserves the query and Recent
+shortcuts; Last edited orders saved eligible notes by authored edit time rather
+than opening activity, using existing filesystem time for legacy notes.
 Related replaces its floating icon with a floating Search control on the left;
 the Related icon is absorbed into the bar through the same dock exchange as Chat.
 Its idle icon stays adjacent to the painted Search bar. The active bar keeps
@@ -1195,6 +1217,10 @@ publication/conflict/proof requirements continue independently of that UI.
 - Image file drops insert at the drop position through the same upload jobs,
   asset storage, shared undo and save paths; they never import binary bytes as text
   or replace an unrelated selected range. Failed drops retain the authored text.
+- Slash-menu image picking uses the same import owner as paste. Its destination
+  maps through unrelated edits and retires on overlap, replacement, read-only
+  takeover or view disposal. Cancelling the chooser or a failed import retains
+  authored command text; a successful import remains one shared Undo step.
 - The viewer shares the existing transient owner. Closing returns focus, scroll
   and selection only to a still-live origin. Image-list changes, replacement and
   history/review takeover invalidate it. Gallery navigation includes offscreen

@@ -19,7 +19,8 @@ const notes = new Map<string, NoteFixture>([
       noteId: 'note-alpha',
       title: 'Alpha note',
       markdown: alphaMarkdown,
-      path: '/e2e/alpha.md'
+      path: '/e2e/alpha.md',
+      updatedAtMillis: 2
     }
   ],
   [
@@ -46,7 +47,8 @@ const notes = new Map<string, NoteFixture>([
         '',
         `Wrapped block extent ${'continues across the narrow pane '.repeat(18)}`
       ].join('\n'),
-      path: '/e2e/beta.md'
+      path: '/e2e/beta.md',
+      updatedAtMillis: 1
     }
   ]
 ]);
@@ -654,6 +656,7 @@ function historicalDiff(
       }
       const saved: NoteFixture = {
         ...target,
+        updatedAtMillis: Date.now(),
         ...(args.tagEdit ? { tags: [...(args.tagEdit as { tags: string[] }).tags] } : {}),
         title: String(args.title ?? target.title),
         markdown: String(args.markdown ?? target.markdown)
@@ -873,6 +876,10 @@ function historicalDiff(
         .map(searchItem);
     }
     if (command === 'list_recent_notes') return [...notes.values()].map(searchItem);
+    if (command === 'list_last_edited_notes') return [...notes.values()]
+      .sort((a, b) => (b.updatedAtMillis ?? 0) - (a.updatedAtMillis ?? 0) || a.noteId.localeCompare(b.noteId))
+      .slice(0, Math.min(20, Math.max(0, Number(args.limit ?? 20))))
+      .map(note => ({ ...searchItem(note), startLine: null, endLine: null }));
     if (command === 'list_recent_focus') {
       return {
         pinnedNotes: [...pinnedNoteIds]

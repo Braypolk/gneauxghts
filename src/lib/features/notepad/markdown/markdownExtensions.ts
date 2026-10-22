@@ -17,6 +17,8 @@ import { decorateLink } from './decorations/links';
 import { decorateList } from './decorations/lists';
 import { decorateWikilink } from './decorations/wikilinks';
 import type { MarkdownDecorationContext, MarkdownNodeDecorator } from './decorations/types';
+import { createTableExtension } from './tables/tableExtension';
+import './tables/table.css';
 
 // Ordered list of per-concern decorators. The view plugin visits visible syntax
 // and its enclosing context; each decorator matches its own node names.
@@ -158,6 +160,7 @@ export function createMarkdownExtensions(): Extension[] {
     markdownEditorClass,
     createMarkdownLanguage(),
     createMarkdownHighlight(),
+    createTableExtension(),
     markdownDecorationPlugin,
     EditorView.atomicRanges.of(
       (view) => view.plugin(markdownDecorationPlugin)?.atomicRanges ?? Decoration.none

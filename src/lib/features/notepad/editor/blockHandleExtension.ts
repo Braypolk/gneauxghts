@@ -47,6 +47,24 @@ export interface BlockExtentGeometry {
   height: number;
 }
 
+/** Pixels per second, increasing proportionally through the viewport's edge band. */
+export function computeBlockDragScrollVelocity(
+  pointerY: number,
+  viewportTop: number,
+  viewportBottom: number
+) {
+  const height = viewportBottom - viewportTop;
+  if (!Number.isFinite(pointerY) || !Number.isFinite(height) || height <= 0) return 0;
+  const edge = Math.min(72, height / 4);
+  if (pointerY < viewportTop + edge) {
+    return -900 * Math.min(1, (viewportTop + edge - pointerY) / edge);
+  }
+  if (pointerY > viewportBottom - edge) {
+    return 900 * Math.min(1, (pointerY - viewportBottom + edge) / edge);
+  }
+  return 0;
+}
+
 /** Clip a fixed-position block extent indicator to the editor viewport. */
 export function computeBlockExtentGeometry({
   blockTop,
@@ -109,6 +127,8 @@ export function createBlockHandleExtension(
       #dropSlotsDirty = true;
       #pointerX = 0;
       #pointerY = 0;
+      #dragFrame: number | null = null;
+      #lastDragFrameTime: number | null = null;
       #drag:
         | {
             pointerId: number;
@@ -302,11 +322,10 @@ export function createBlockHandleExtension(
 
       #handleScroll = () => {
         this.#laneDirty = true;
-        if (this.#currentBlock) {
-          this.#syncCurrentBlock();
-        }
         if (this.#drag?.dragging) {
-          this.#renderDropIndicator();
+          this.#updateDragTarget();
+        } else if (this.#currentBlock) {
+          this.#syncCurrentBlock();
         }
       };
 
@@ -329,6 +348,8 @@ export function createBlockHandleExtension(
 
         event.preventDefault();
         this.#hideExtentIndicator();
+        this.#pointerX = event.clientX;
+        this.#pointerY = event.clientY;
         this.#drag = {
           pointerId: event.pointerId,
           startX: event.clientX,
@@ -356,6 +377,7 @@ export function createBlockHandleExtension(
           true
         );
         window.addEventListener('blur', this.#cancelDrag);
+        window.addEventListener('keydown', this.#handleDragKeyDown, true);
         document.addEventListener(
           'visibilitychange', this.#handleVisibilityChange
         );
@@ -365,6 +387,9 @@ export function createBlockHandleExtension(
         const drag = this.#drag;
         if (!drag || event.pointerId !== drag.pointerId) return;
 
+        this.#pointerX = event.clientX;
+        this.#pointerY = event.clientY;
+
         const movedEnough =
           Math.abs(event.clientX - drag.startX) > 5 ||
           Math.abs(event.clientY - drag.startY) > 5;
@@ -372,8 +397,19 @@ export function createBlockHandleExtension(
 
         drag.dragging = true;
         this.#content?.setAttribute('data-dragging', 'true');
-        const slot = this.#resolveDropSlot(event.clientY);
+        this.#updateDragTarget();
+        if (this.#dragFrame === null) {
+          this.#dragFrame = requestAnimationFrame(this.#advanceDragScroll);
+        }
+      };
+
+      #updateDragTarget() {
+        const drag = this.#drag;
+        if (!drag?.dragging) return;
+        const slot = this.#resolveDropSlot(this.#pointerY);
         if (!slot) {
+          drag.target = null;
+          drag.indicatorDocY = null;
           this.#hideDropIndicator();
           return;
         }
@@ -382,6 +418,33 @@ export function createBlockHandleExtension(
         drag.before = slot.before;
         drag.indicatorDocY = slot.indicatorDocY;
         this.#renderDropIndicator();
+      }
+
+      #advanceDragScroll = (time: number) => {
+        this.#dragFrame = null;
+        if (this.#destroyed || !this.#drag?.dragging) return;
+
+        const scroller = this.#view.scrollDOM;
+        const viewport = scroller.getBoundingClientRect();
+        let top = Math.max(0, viewport.top);
+        let bottom = Math.min(window.innerHeight, viewport.bottom);
+        for (const source of this.#view.state.facet(EditorView.scrollMargins)) {
+          const margins = source(this.#view);
+          top = Math.max(top, viewport.top + (margins?.top ?? 0));
+          bottom = Math.min(bottom, viewport.bottom - (margins?.bottom ?? 0));
+        }
+        const velocity = this.#pointerX >= viewport.left && this.#pointerX <= viewport.right
+          ? computeBlockDragScrollVelocity(this.#pointerY, top, bottom) : 0;
+        // Cap elapsed time after a stalled frame so returning to the app cannot jump.
+        const elapsed = Math.min(48, Math.max(0, time - (this.#lastDragFrameTime ?? time)));
+        this.#lastDragFrameTime = time;
+        const before = scroller.scrollTop;
+        if (velocity) scroller.scrollTop += velocity * elapsed / 1000;
+        if (scroller.scrollTop !== before) this.#laneDirty = true;
+        // A stationary pointer must select newly revealed blocks, including after
+        // CodeMirror replaces estimated offscreen heights with measured content.
+        this.#updateDragTarget();
+        this.#dragFrame = requestAnimationFrame(this.#advanceDragScroll);
       };
 
       #handleWindowPointerUp = (event: PointerEvent) => {
@@ -420,6 +483,13 @@ export function createBlockHandleExtension(
         if (document.visibilityState === 'hidden') this.#cancelDrag();
       };
 
+      #handleDragKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape' || !this.#drag) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.#cancelDrag();
+      };
+
       #cancelDrag = () => {
         if (!this.#drag) return;
         this.#clearDrag();
@@ -430,6 +500,9 @@ export function createBlockHandleExtension(
 
       #clearDrag() {
         this.#drag = null;
+        if (this.#dragFrame !== null) cancelAnimationFrame(this.#dragFrame);
+        this.#dragFrame = null;
+        this.#lastDragFrameTime = null;
 
         window.removeEventListener(
           'pointermove',
@@ -447,6 +520,7 @@ export function createBlockHandleExtension(
           true
         );
         window.removeEventListener('blur', this.#cancelDrag);
+        window.removeEventListener('keydown', this.#handleDragKeyDown, true);
         document.removeEventListener(
           'visibilitychange', this.#handleVisibilityChange
         );

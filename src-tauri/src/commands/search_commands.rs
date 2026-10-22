@@ -44,6 +44,7 @@ use tauri::{AppHandle, Manager, State};
 const SEARCH_RESULT_CACHE_TTL: Duration = Duration::from_millis(750);
 const SEARCH_RESULT_CACHE_MAX_ENTRIES: usize = 16;
 const SEARCH_ACCESS_WEIGHT: f32 = 0.08;
+const MAX_LAST_EDITED_RESULTS: usize = 100;
 
 #[derive(Clone)]
 struct CachedSearchResults {
@@ -289,6 +290,62 @@ pub(crate) fn list_recent_notes(
                 limit,
             ))
         })
+}
+
+/// Saved edits are a catalog projection, independent of note-open activity.
+#[tauri::command]
+pub(crate) fn list_last_edited_notes(
+    state: State<'_, AppState>,
+    limit: usize,
+) -> Result<Vec<NoteSearchResult>, String> {
+    list_last_edited_notes_for_state(state.inner(), limit)
+}
+
+fn list_last_edited_notes_for_state(
+    state: &AppState,
+    limit: usize,
+) -> Result<Vec<NoteSearchResult>, String> {
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read_refreshable(|| {
+            let notes_dir = prepare_notes_dir(state, false)?;
+            state.ensure_interactive_index(&notes_dir, "list_last_edited_notes")?;
+            let index = state
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            Ok(collect_last_edited_note_results(&index, &notes_dir, limit))
+        })
+}
+
+fn collect_last_edited_note_results(
+    index: &NotesIndex,
+    notes_dir: &Path,
+    limit: usize,
+) -> Vec<NoteSearchResult> {
+    let mut notes = index
+        .entries
+        .iter()
+        .filter(|(path, note)| {
+            note.document_kind == crate::note::DocumentKind::Note
+                && path.starts_with(notes_dir)
+                && !crate::state::is_forgotten_note_path(path, notes_dir)
+                && path.is_file()
+        })
+        .collect::<Vec<_>>();
+    notes.sort_by(|(left_path, left), (right_path, right)| {
+        right
+            .updated_at_millis
+            .cmp(&left.updated_at_millis)
+            .then_with(|| left.note_id.cmp(&right.note_id))
+            .then_with(|| left_path.cmp(right_path))
+    });
+    notes
+        .into_iter()
+        .take(limit.min(MAX_LAST_EDITED_RESULTS))
+        .map(|(path, note)| build_recent_result(Some(path), note))
+        .collect()
 }
 
 #[derive(Clone, Serialize)]

@@ -1,6 +1,7 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
+import { markdownTables } from '../markdown/tables/tableModel';
 
 export interface EditorMenuOption {
   id: string;
@@ -279,6 +280,16 @@ function describeBlockStartingAt(state: EditorState, startLine: number): BlockDe
   const text = start.text;
   const { from, to, moveTo } = lineContentRange(state, startLine);
 
+  // A rendered table is one movable block. Treating its source as individual
+  // lines lets a handle silently pull out a header, delimiter or body row.
+  const table = markdownTables(state, from, to).find(table => table.from <= from && table.to >= from);
+  if (table) {
+    const endLine = state.doc.lineAt(table.to).number;
+    return { from: table.from, to: table.to,
+      moveTo: endLine < state.doc.lines ? state.doc.line(endLine + 1).from : table.to,
+      startLine: state.doc.lineAt(table.from).number, endLine, typeId: 'paragraph', indent: 0 };
+  }
+
   return {
     from,
     to,
@@ -297,7 +308,7 @@ export function listBlocks(state: EditorState) {
   while (lineNo <= state.doc.lines) {
     const block = describeBlockStartingAt(state, lineNo);
     blocks.push(block);
-    lineNo += 1;
+    lineNo = block.endLine + 1;
   }
 
   return blocks;

@@ -280,6 +280,72 @@ it('opens an explicit note selection in the chosen chat pane and retains its pre
   expect(notepadLocationMru.list(chat)).toContainEqual(expect.objectContaining({ kind: 'chat', conversationId: 'retained-conversation' }));
 });
 
+describe('discovery results in a new split', () => {
+  it('loads the selected note beside the retained dirty source without saving or leaving it', async () => {
+    const f = setup();
+    updateDocumentMarkdown(f.initialDocument, 'retained local work');
+    const destination = await f.commands.openNoteInSplit('/vault/b.md', { noteId: 'b' });
+    expect(destination).not.toBeNull();
+    expect(f.workspace.paneOrder).toEqual([f.first, destination]);
+    expect(f.workspace.activePaneId).toBe(destination);
+    expect(f.workspace.paneCommand.paneId).toBeNull();
+    expect(f.getPaneDocument(f.first)).toBe(f.initialDocument);
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('retained local work');
+    expect(f.getPaneDocument(destination!)).toMatchObject({ identity: { noteId: 'b', path: '/vault/b.md' } });
+    expect(f.save).not.toHaveBeenCalled();
+    expect(finalizeNoteEditingWindow).not.toHaveBeenCalled();
+    expect(f.deps.presentation.focusPaneEditor).toHaveBeenCalledWith(destination);
+    f.workspace.assertInvariants();
+  });
+
+  it('retains the solo workspace when loading fails and permits retry', async () => {
+    const f = setup();
+    vi.mocked(openNoteSession).mockRejectedValueOnce(new Error('Missing note path'));
+    await expect(f.commands.openNoteInSplit('/vault/missing.md')).rejects.toThrow('Missing note path');
+    expect(f.workspace.paneOrder).toEqual([f.first]);
+    expect(f.workspace.activePaneId).toBe(f.first);
+    expect(f.getPaneDocument(f.first)).toBe(f.initialDocument);
+    f.workspace.assertInvariants();
+    expect(await f.commands.openNoteInSplit('/vault/b.md')).not.toBeNull();
+  });
+
+  it('shares the retained document when the result is the current dirty note', async () => {
+    const f = setup();
+    updateDocumentMarkdown(f.initialDocument, 'newer local text');
+    const destination = await f.commands.openNoteInSplit('/vault/a.md', { noteId: 'a' });
+    expect(f.getPaneDocument(destination!)).toBe(f.initialDocument);
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('newer local text');
+    expect(f.save).not.toHaveBeenCalled();
+    f.workspace.assertInvariants();
+  });
+
+  it('admits only one simultaneous split and refuses existing split layouts', async () => {
+    const f = setup();
+    const load = deferred<ReturnType<typeof createSessionSnapshot>>();
+    vi.mocked(openNoteSession).mockImplementation(() => load.promise);
+    const first = f.commands.openNoteInSplit('/vault/b.md', { noteId: 'b' });
+    const second = f.commands.openNoteInSplit('/vault/b.md', { noteId: 'b' });
+    load.resolve(createSessionSnapshot(persistedSession('b')));
+    const results = await Promise.all([first, second]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(f.workspace.paneOrder).toHaveLength(2);
+    const active = f.workspace.activePaneId;
+    expect(await f.commands.openNoteInSplit('/vault/c.md')).toBeNull();
+    expect(f.workspace.activePaneId).toBe(active);
+    expect(f.workspace.paneOrder).toHaveLength(2);
+    f.workspace.assertInvariants();
+  });
+
+  it('retains a chat source and selects an editor destination immediately', async () => {
+    const f = setup();
+    await f.commands.setPaneKind(f.first, 'chat');
+    f.workspace.setPaneConversationId(f.first, 'original-chat');
+    const destination = await f.commands.openNoteInSplit('/vault/b.md', { noteId: 'b' });
+    expect(f.workspace.getPaneState(f.first)).toMatchObject({ kind: 'chat', chatConversationId: 'original-chat' });
+    expect(f.workspace.getPaneState(destination!)).toMatchObject({ kind: 'editor' });
+  });
+});
+
 it('waits for pane presentation and rejects stale keyboard focus after a newer activation', async () => {
   const f = setup();
   await f.commands.splitWorkspace('thoughtPartner');

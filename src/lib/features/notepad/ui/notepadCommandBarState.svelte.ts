@@ -234,10 +234,6 @@ class NotepadCommandBarController {
     }
 
     const items = this.#deps.getVisibleItems();
-    const isPanelVisible =
-      this.#deps.getSearchQuery().trim() !== '' ||
-      this.#deps.getPinnedNotes().length > 0 ||
-      this.#deps.getRecentLocations().length > 0;
 
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -263,7 +259,7 @@ class NotepadCommandBarController {
       }
     }
 
-    if (!isPanelVisible || items.length === 0) {
+    if (items.length === 0) {
       return;
     }
 

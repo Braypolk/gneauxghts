@@ -48,8 +48,7 @@ export function createNavigationSelectionController<
   TPaneId extends string
 >(deps: NavigationSelectionControllerDeps<TPaneId>) {
   const afterRender = deps.afterRender ?? tick;
-  function contextForSelection() {
-    const paneId = deps.getActivePaneId();
+  function contextForSelection(paneId = deps.getActivePaneId()) {
     return {
       paneId,
       open: deps.getOpenContext(paneId),
@@ -57,9 +56,9 @@ export function createNavigationSelectionController<
     };
   }
 
-  async function handleSearchResultSelect(result: SearchItem) {
+  async function handleSearchResultSelect(result: SearchItem, paneId?: TPaneId) {
     deps.resetPaneCommand();
-    const context = contextForSelection();
+    const context = contextForSelection(paneId);
     if (
       deps.getSearchMode() === 'current' &&
       result.currentMatchRange && context.open.isEditorVisible !== false
@@ -121,10 +120,11 @@ export function createNavigationSelectionController<
   }
 
   async function handleRelatedItemSelect(
-    item: RelatedNoteItem
+    item: RelatedNoteItem,
+    paneId?: TPaneId
   ) {
     deps.resetPaneCommand();
-    const context = contextForSelection();
+    const context = contextForSelection(paneId);
     await deps.openSearchResult(
       context.open,
       context.navigation,

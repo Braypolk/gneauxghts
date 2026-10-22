@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CalendarDays, CalendarCheck, Clock, CalendarClock, CalendarRange } from '@lucide/svelte';
+  import { CalendarDays, CalendarCheck, Clock, CalendarClock, CalendarRange, ImagePlus, Table2 } from '@lucide/svelte';
   import { hiddenFloatingPanelStyle, positionFloatingPanel } from '#lib/ui/floatingPanel.js';
   import { editorFloatingReference } from './editorFloatingReference';
   import { blockTypeIcons } from '#lib/features/notepad/editor/blockTypes.js';
@@ -18,7 +18,9 @@
     today: CalendarCheck,
     time: Clock,
     now: CalendarClock,
-    due: CalendarRange
+    due: CalendarRange,
+    image: ImagePlus,
+    table: Table2
   };
 
   interface Props {

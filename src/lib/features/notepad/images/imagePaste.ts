@@ -2,13 +2,14 @@ import { uploads, setUpload, removeUpload, runImageUpload, type Upload } from '.
 import { StateField } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
 import type { ImagesConfig } from './imageConfig';
+import { ImageFilePickerController, imagePickerTarget } from './imageFilePicker';
 class UploadWidget extends WidgetType {
   constructor(readonly job: Upload, readonly retry: () => void, readonly cancel: () => void) { super(); }
-  override eq(other: UploadWidget) { return this.job.id === other.job.id && this.job.error === other.job.error && this.job.pending === other.job.pending; }
+  override eq(other: UploadWidget) { return this.job.id === other.job.id && this.job.error === other.job.error && this.job.pending === other.job.pending && this.job.errorMessage === other.job.errorMessage; }
   override toDOM() {
     const element = document.createElement('span'); element.className = 'gn-image-upload-placeholder'; element.contentEditable = 'false';
-    element.setAttribute('role', 'status'); element.textContent = this.job.error ? 'Image save failed. ' : 'Saving image… ';
-    for (const [label, run] of [...(this.job.error ? [['Retry', this.retry] as const] : []), ['Cancel', this.cancel] as const]) {
+    element.setAttribute('role', this.job.error ? 'alert' : 'status'); element.textContent = this.job.error ? `${this.job.errorMessage ?? 'Image save failed.'} ` : 'Saving image… ';
+    for (const [label, run] of [...(this.job.error && this.job.retryable !== false ? [['Retry', this.retry] as const] : []), ['Cancel', this.cancel] as const]) {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
       button.onclick = event => { event.preventDefault(); event.stopPropagation(); run(); }; element.append(button);
     }
@@ -17,11 +18,28 @@ class UploadWidget extends WidgetType {
   override ignoreEvent() { return true; }
 }
 export function createImagePasteExtension(config: ImagesConfig) {
-  const lifecycle = ViewPlugin.fromClass(class { alive = true; destroy() { this.alive = false; } });
+  const lifecycle = ViewPlugin.fromClass(class {
+    alive = true;
+    readonly picker: ImageFilePickerController;
+    constructor(view: EditorView) {
+      this.picker = new ImageFilePickerController(view, (target, files, errorMessage) => {
+        const job: Upload = { ...target, files, assets: files.map(() => null), pending: false, error: !!errorMessage,
+          ...(errorMessage ? { errorMessage, retryable: false } : {}) };
+        submit(view, job);
+      });
+    }
+    update() { this.picker.update(); }
+    destroy() { this.alive = false; this.picker.destroy(); }
+  });
   function find(view: EditorView, id: symbol) { return view.state.field(uploads, false)?.find(job => job.id === id); }
   function run(view: EditorView, id: symbol) {
     const owner = view.plugin(lifecycle);
     return runImageUpload(view, id, config, () => !!owner?.alive && view.plugin(lifecycle) === owner);
+  }
+  function submit(view: EditorView, job: Upload) {
+    views.set(job.id, view);
+    view.dispatch({ effects: setUpload.of(job) });
+    if (!job.error) void run(view, job.id);
   }
   const placeholders = StateField.define({
     create: () => Decoration.none,
@@ -51,9 +69,9 @@ export function createImagePasteExtension(config: ImagesConfig) {
     const id = Symbol('image import');
     const job: Upload = { id, from, to, original: view.state.sliceDoc(from, to), files,
       assets: files.map(() => null), error: false, pending: false };
-    views.set(id, view); view.dispatch({ effects: setUpload.of(job) }); void run(view, id);
+    submit(view, job);
   }
-  return [uploads, placeholders, lifecycle, cleanup, EditorView.domEventHandlers({
+  return [uploads, imagePickerTarget, placeholders, lifecycle, cleanup, EditorView.domEventHandlers({
     paste(event, view) {
       if (view.state.readOnly || view.composing || view.state.selection.ranges.length !== 1) return false;
       const files = Array.from(event.clipboardData?.files ?? []).filter(file => file.type.startsWith('image/'));

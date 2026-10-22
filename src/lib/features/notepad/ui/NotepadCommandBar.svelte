@@ -4,6 +4,8 @@
   import SearchResultsPanel from './SearchResultsPanel.svelte';
   import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
   import SearchNoteResult from '#lib/ui/search/SearchNoteResult.svelte';
+  import SplitSearchResultAction from '#lib/ui/search/SplitSearchResultAction.svelte';
+  import { hasSplitNoteDestination } from '../navigation/splitNoteDestination';
   import type { DockActionPresentation } from './workspaceDockPresentation';
   import { ramp as dockRamp } from '#lib/ui/morphing-containers/motion.js';
   import { onDestroy, tick, untrack } from 'svelte';
@@ -122,6 +124,11 @@
     searchBar?.closeSearch();
     related?.onSelect(item);
   }
+  function chooseSplit(action: () => void) {
+    onSearchCommit?.();
+    searchBar?.closeSearch();
+    action();
+  }
 
   const canUnforget = $derived(forget.canUnforget);
   const canForget = $derived(forget.canForget ?? true);
@@ -153,6 +160,13 @@
   const searchResults = $derived(search.searchResults);
   const pinnedNotes = $derived(search.pinnedNotes);
   const recentLocations = $derived(search.recentLocations);
+  const lastEditedNotes = $derived(search.lastEditedNotes ?? []);
+  let browseMode = $state<'recent' | 'edited'>('recent');
+  function selectBrowseMode(mode: 'recent' | 'edited') {
+    browseMode = mode;
+    commandBarState.resetActiveIndex();
+    if (mode === 'edited') void search.onLoadLastEdited?.();
+  }
   const isSearching = $derived(search.isSearching);
   const onSearchInput = $derived(search.onSearchInput);
   const onSearchClear = $derived(search.onSearchClear);
@@ -224,9 +238,12 @@
       ? rankMediaResults(visibleSearchResults, imageResults).map(item => item.kind === 'image'
           ? { kind: 'image' as const, item }
           : { kind: 'search' as const, item })
-      : deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, pinnedNotes, recentLocations)
+      : searchQuery.trim() === '' && browseMode === 'edited'
+        ? [...pinnedNotes.map(item => ({ kind: 'pinned' as const, item })),
+            ...lastEditedNotes.map(item => ({ kind: 'search' as const, item }))]
+        : deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, pinnedNotes, recentLocations)
   );
-  const hasRecentContent = $derived(pinnedNotes.length > 0 || recentLocations.length > 0);
+  const hasRecentContent = $derived(pinnedNotes.length > 0 || (browseMode === 'edited' ? lastEditedNotes.length > 0 : recentLocations.length > 0));
   const hasVisibleSearchContent = $derived(
     searchQuery.trim() === '' && !imageQueryUrl ? hasRecentContent : visibleItems.length > 0
   );
@@ -342,6 +359,7 @@
     onDockModeChange?.('search');
     commandBarState.resetActiveIndex();
     onSearchOpen();
+    if (browseMode === 'edited') void search.onLoadLastEdited?.();
   }
 
   function handleSharedSearchModeChange(mode: string) {
@@ -662,18 +680,40 @@
         <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode}>
           {#if relatedMode}
             <div id={relatedPopupId} class="max-h-80 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label="Related notes">
-              <RelatedResults result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()} />
+              <RelatedResults result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()}
+                onOpenInSplit={related?.onOpenInSplit ? (item) => chooseSplit(() => related?.onOpenInSplit?.(item)) : undefined} />
             </div>
           {:else}
           {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
+          {#if searchQuery.trim() === '' && !imageQueryUrl}
+            <div class="flex justify-center px-3 pb-1 pt-2">
+              <div class="inline-flex gap-1 rounded-full border border-border/80 bg-muted/40 p-1" role="group" aria-label="Browse notes">
+                {#each [{ id: 'recent', label: 'Recent' }, { id: 'edited', label: 'Last edited' }] as choice}
+                  <button type="button" aria-pressed={browseMode === choice.id}
+                    class={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${browseMode === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                    data-search-focus-independent
+                    onmousedown={(event) => event.preventDefault()}
+                    onclick={() => selectBrowseMode(choice.id as 'recent' | 'edited')}>{choice.label}</button>
+                {/each}
+              </div>
+            </div>
+            {#if browseMode === 'edited' && search.lastEditedError}
+              <div class="flex items-center justify-between gap-2 px-4 py-2 text-sm text-muted-foreground" role="status">
+                <span>{search.lastEditedError}</span>
+                <button type="button" class="rounded px-2 py-1 text-foreground hover:bg-accent" data-search-focus-independent onclick={() => void search.onLoadLastEdited?.()}>Retry</button>
+              </div>
+            {/if}
+          {/if}
           {#if isSearching && (searchQuery.trim() !== '' || imageQueryUrl)}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
           {:else if imageQueryUrl && visibleItems.length === 0}
             {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">No matching images or text passages yet.</p>{/if}
+          {:else if searchQuery.trim() === '' && !imageQueryUrl && browseMode === 'edited' && search.isLoadingLastEdited && lastEditedNotes.length === 0}
+            <div class="px-4 py-3 text-sm text-muted-foreground" role="status">Loading last edited notes…</div>
           {:else if !hasVisibleSearchContent}
             <div class="px-4 py-3 text-sm text-muted-foreground">
               {#if searchQuery.trim() === ''}
-                Start typing to search {searchMode === 'current' ? 'this note' : 'all notes'}.
+                {browseMode === 'edited' ? 'No saved notes yet.' : `Start typing to search ${searchMode === 'current' ? 'this note' : 'all notes'}.`}
               {:else}
                 No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
               {/if}
@@ -686,7 +726,7 @@
               {#if pinnedNotes.length > 0}
                 <section
                   class={`min-w-0 flex-1 lg:order-2 ${
-                    recentLocations.length > 0
+                    (browseMode === 'edited' ? lastEditedNotes.length : recentLocations.length) > 0
                       ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
                       : ''
                   }`}
@@ -696,6 +736,7 @@
                     {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
                       <div class="group flex items-center gap-1">
                         <SearchNoteResult title={item.fileName} label={`Open pinned note: ${item.fileName}`}
+                          onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => chooseSplit(() => search.onOpenInSplit?.(item)) : undefined}
                           active={index === commandBarState.activeIndex}
                           onPoint={() => commandBarState.handleSearchItemPointerEnter(index)}
                           onSelect={() => commandBarState.selectItem({ kind: 'pinned', item })}>
@@ -718,13 +759,28 @@
                 </section>
               {/if}
 
-              {#if recentLocations.length > 0}
+              {#if browseMode === 'edited' && lastEditedNotes.length > 0}
+                <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
+                  <SearchResultsHeading title="Last edited" />
+                  <div class={getRecentNotesViewportClass()}>
+                    {#each lastEditedNotes as item, index (`edited-${item.noteId ?? item.notePath}-${index}`)}
+                      {@const globalIndex = pinnedNotes.length + index}
+                      <SearchNoteResult title={item.fileName} label={`Open last edited note: ${item.fileName}`}
+                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => chooseSplit(() => search.onOpenInSplit?.(item)) : undefined}
+                        active={globalIndex === commandBarState.activeIndex}
+                        onPoint={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
+                        onSelect={() => commandBarState.selectItem({ kind: 'search', item })} />
+                    {/each}
+                  </div>
+                </section>
+              {:else if browseMode === 'recent' && recentLocations.length > 0}
                 <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
                   <SearchResultsHeading title="Recent" />
                   <div class={getRecentNotesViewportClass()}>
                     {#each recentLocations as item, index (locationHistoryKey(item, index))}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={item.label}
+                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => chooseSplit(() => search.onOpenInSplit?.(item)) : undefined}
                         label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
                         active={globalIndex === commandBarState.activeIndex}
                         onPoint={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
@@ -746,6 +802,7 @@
                     onSelect={() => commandBarState.selectItem(entry)} />
                 {:else if entry.kind === 'search'}
                 {@const item = entry.item}
+                <div class="flex min-w-0 items-center gap-1">
                 <button
                   type="button"
                   data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
@@ -803,6 +860,10 @@
                     </p>
                   {/if}
                 </button>
+                {#if search.onOpenInSplit && hasSplitNoteDestination(item)}
+                  <SplitSearchResultAction title={item.fileName} onSelect={() => chooseSplit(() => search.onOpenInSplit?.(item))} />
+                {/if}
+                </div>
                 {/if}
               {/each}
             </div>

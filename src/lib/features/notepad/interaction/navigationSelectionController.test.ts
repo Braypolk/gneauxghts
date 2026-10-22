@@ -85,6 +85,20 @@ function setup() {
 }
 
 describe('navigation selection controller', () => {
+  it.each(['search', 'related'] as const)('applies the %s passage in an explicitly created split destination', async kind => {
+    const harness = setup();
+    if (kind === 'related') {
+      await harness.controller.handleRelatedItemSelect({ noteId: 'note-1', notePath: '/vault/Note.md', noteTitle: 'Note' } as RelatedNoteItem, 'split-pane');
+    } else {
+      await harness.controller.handleSearchResultSelect(searchResult(), 'split-pane');
+    }
+    expect(harness.getOpenContext).toHaveBeenCalledWith('split-pane');
+    const navigation = harness.openSearchResult.mock.calls[0][1];
+    harness.setActivePane('other-pane');
+    navigation();
+    expect(harness.getNavigationContext).toHaveBeenCalledWith('split-pane');
+  });
+
   it.each(['search', 'related', 'task'])('binds a %s selection to the active pane throughout navigation', async kind => {
     const harness = setup();
     harness.setActivePane('chat-pane');

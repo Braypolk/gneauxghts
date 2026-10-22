@@ -94,6 +94,20 @@ describe('createNotepadCommandBarState', () => {
     expect(closeSearch).toHaveBeenCalledOnce();
   });
 
+  it('navigates last edited rows when no pinned or recent locations exist', () => {
+    const first = searchItem({ noteId: 'first' });
+    const second = searchItem({ noteId: 'second' });
+    const onSearchSelect = vi.fn();
+    const state = createState({
+      getVisibleItems: () => [{ kind: 'search', item: first }, { kind: 'search', item: second }],
+      onSearchSelect
+    });
+    const key = (key: string) => ({ key, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    state.handleSearchKeydown(key('ArrowDown'));
+    state.handleSearchKeydown(key('Enter'));
+    expect(onSearchSelect).toHaveBeenCalledWith(second);
+  });
+
   it('returns the user to where they were when Escape dismisses search', () => {
     const calls: string[] = [];
     const state = createState({

@@ -51,6 +51,10 @@ export async function listRecentNotes(context: Pick<SearchContext, 'currentPath'
   });
 }
 
+export async function listLastEditedNotes() {
+  return invoke<SearchItem[]>('list_last_edited_notes', { limit: RECENT_ITEMS_LIMIT });
+}
+
 export async function listRecentTasks() {
   return invoke<RecentTaskItem[]>('list_recent_tasks', {
     limit: RECENT_ITEMS_LIMIT

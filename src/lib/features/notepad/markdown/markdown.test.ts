@@ -94,14 +94,14 @@ function classes(specs: DecorationSpec[]): (string | undefined)[] {
 }
 
 describe('markdown decoration lifecycle', () => {
-  it('keeps table Markdown as paragraph text while retaining inline formatting', () => {
+  it('parses portable GFM tables while retaining inline formatting', () => {
     const doc = '| Column | Other |\n| --- | :---: |\n| **Value** | Cell |';
     const state = EditorState.create({ doc, extensions: [createMarkdownLanguage()] });
     const tree = ensureSyntaxTree(state, doc.length, 5000)!;
 
     expect(state.doc.toString()).toBe(doc);
-    expect(tree.topNode.firstChild?.name).toBe('Paragraph');
-    expect(tree.toString()).not.toContain('Table');
+    expect(tree.topNode.firstChild?.name).toBe('Table');
+    expect(tree.toString()).toContain('TableCell');
     expect(tree.toString()).toContain('StrongEmphasis');
   });
 

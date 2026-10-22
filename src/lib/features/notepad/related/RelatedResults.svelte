@@ -3,12 +3,14 @@
   import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
   import type { RelatedResult } from './store.svelte';
   import type { RelatedNoteItem } from '#lib/types/semantic.js';
-  let { result, activeIndex = -1, onSelect, onPoint, onRefresh }: {
+  import { hasSplitNoteDestination } from '../navigation/splitNoteDestination';
+  let { result, activeIndex = -1, onSelect, onPoint, onRefresh, onOpenInSplit }: {
     result: RelatedResult | null;
     activeIndex?: number;
     onSelect: (item: RelatedNoteItem) => void;
     onPoint?: (index: number) => void;
     onRefresh: () => void;
+    onOpenInSplit?: (item: RelatedNoteItem) => void;
   } = $props();
 </script>
 <div class="related-results" aria-busy={result?.isLoading ?? false}>
@@ -26,6 +28,7 @@
       {#each result.items as item, index (item.noteId ?? item.notePath)}
         <li>
           <SearchNoteResult title={item.noteTitle} label={`Open related note: ${item.noteTitle}`}
+            onOpenInSplit={onOpenInSplit && hasSplitNoteDestination(item) ? () => onOpenInSplit?.(item) : undefined}
             active={index === activeIndex} onPoint={() => onPoint?.(index)} onFocus={() => onPoint?.(index)} onSelect={() => onSelect(item)}>
             {#snippet detail()}
               {#if item.sectionLabel && item.sectionLabel !== 'Title'}<span class="block max-w-full truncate text-xs text-muted-foreground">{item.sectionLabel}</span>{/if}

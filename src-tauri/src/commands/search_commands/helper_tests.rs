@@ -6,6 +6,117 @@ use crate::{
 use std::path::PathBuf;
 
 #[test]
+fn last_edited_uses_saved_metadata_and_deterministic_ties() {
+    let notes = crate::test_support::TestDir::new("last-edited-order");
+    let mut index = NotesIndex::default();
+    for (file, id, updated, modified) in [
+        ("latest", "latest-id", Some("2026-01-03T00:00:00Z"), 1),
+        ("tie-b", "tie-b-id", Some("2026-01-02T00:00:00Z"), 9_999),
+        ("tie-a", "tie-a-id", Some("2026-01-02T00:00:00Z"), 99_999),
+        ("legacy", "legacy-id", None, 42),
+    ] {
+        let path = notes.path().join(format!("{file}.md"));
+        let markdown = updated.map_or_else(
+            || "Legacy saved body".to_string(),
+            |updated| {
+                format!("---\ngneauxghts:\n  id: {id}\n  updated_at: {updated}\n---\n\nSaved body")
+            },
+        );
+        std::fs::write(&path, &markdown).unwrap();
+        index.upsert_note(path.clone(), build_indexed_note(&path, &markdown, modified));
+    }
+
+    let results = collect_last_edited_note_results(&index, notes.path(), 20);
+    assert_eq!(
+        results
+            .iter()
+            .map(|item| item.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["latest", "tie-a", "tie-b", "legacy"]
+    );
+    assert_eq!(
+        collect_last_edited_note_results(&index, notes.path(), 2).len(),
+        2
+    );
+    assert!(collect_last_edited_note_results(&index, notes.path(), 0).is_empty());
+}
+
+#[test]
+fn last_edited_filters_unavailable_entries_before_the_limit() {
+    let notes = crate::test_support::TestDir::new("last-edited-eligibility");
+    let outside = crate::test_support::TestDir::new("last-edited-outside");
+    let mut index = NotesIndex::default();
+    for (path, exists) in [
+        (notes.path().join("ordinary.md"), true),
+        (notes.path().join("missing.md"), false),
+        (notes.path().join(".forgotten/forgotten.md"), true),
+        (outside.path().join("outside.md"), true),
+    ] {
+        if exists {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "Saved body").unwrap();
+        }
+        let note = build_indexed_note(&path, "Saved body", 42);
+        index.upsert_note(path, note);
+    }
+    let results = collect_last_edited_note_results(&index, notes.path(), 1);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].file_name, "ordinary");
+}
+
+#[test]
+fn last_edited_command_includes_unopened_notes_without_changing_recent_activity() {
+    let fixture = crate::test_support::TestVault::with_notes("last-edited-command", |notes| {
+        for (title, id, date) in [
+            ("Opened", "opened-id", "2026-01-01T00:00:00Z"),
+            ("Unopened", "unopened-id", "2026-01-02T00:00:00Z"),
+        ] {
+            std::fs::write(
+                notes.join(format!("{title}.md")),
+                format!("---\ngneauxghts:\n  id: {id}\n  updated_at: {date}\n---\n\nSaved body"),
+            )
+            .unwrap();
+        }
+    });
+    // Initialize canonical identities before recording open activity.
+    list_last_edited_notes_for_state(&fixture.state, 20).unwrap();
+    crate::state::db_mark_note_opened("opened-id").unwrap();
+    let before = serde_json::to_value(read_state(fixture.notes.path()).unwrap()).unwrap();
+    let results = list_last_edited_notes_for_state(&fixture.state, 20).unwrap();
+    assert_eq!(
+        results
+            .iter()
+            .map(|item| item.note_id.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["unopened-id", "opened-id"]
+    );
+    let after = serde_json::to_value(read_state(fixture.notes.path()).unwrap()).unwrap();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn last_edited_bounds_results_without_truncating_the_recent_view_limit() {
+    let notes = crate::test_support::TestDir::new("last-edited-limit");
+    let mut index = NotesIndex::default();
+    for number in 0..=MAX_LAST_EDITED_RESULTS {
+        let path = notes.path().join(format!("{number}.md"));
+        std::fs::write(&path, "Saved body").unwrap();
+        index.upsert_note(
+            path.clone(),
+            build_indexed_note(&path, "Saved body", number as u64),
+        );
+    }
+    assert_eq!(
+        collect_last_edited_note_results(&index, notes.path(), 20).len(),
+        20
+    );
+    assert_eq!(
+        collect_last_edited_note_results(&index, notes.path(), usize::MAX).len(),
+        MAX_LAST_EDITED_RESULTS
+    );
+}
+
+#[test]
 fn collect_recent_note_results_skips_current_note() {
     let current_path = PathBuf::from("/tmp/current.md");
     let other_path = PathBuf::from("/tmp/other.md");

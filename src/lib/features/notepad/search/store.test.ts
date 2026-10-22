@@ -18,13 +18,14 @@ function result(fileName: string): SearchItem {
   };
 }
 
-const { invokeMock, searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock, setNotePinnedMock } =
+const { invokeMock, searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock, listLastEditedNotesMock, setNotePinnedMock } =
   vi.hoisted(() => ({
     invokeMock: vi.fn(),
     searchNotesMock: vi.fn(),
     listRecentFocusMock: vi.fn(),
     listRecentNotesMock: vi.fn(),
     listRecentTasksMock: vi.fn(),
+    listLastEditedNotesMock: vi.fn(),
     setNotePinnedMock: vi.fn()
   }));
 
@@ -35,6 +36,7 @@ vi.mock('#lib/features/notepad/search/search.js', () => ({
   listRecentFocus: listRecentFocusMock,
   listRecentNotes: listRecentNotesMock,
   listRecentTasks: listRecentTasksMock,
+  listLastEditedNotes: listLastEditedNotesMock,
   setNotePinned: setNotePinnedMock
 }));
 
@@ -50,6 +52,7 @@ describe('NotepadSearchStore', () => {
     listRecentFocusMock.mockReset();
     listRecentNotesMock.mockReset();
     listRecentTasksMock.mockReset();
+    listLastEditedNotesMock.mockReset();
     setNotePinnedMock.mockReset();
   });
 
@@ -69,6 +72,50 @@ describe('NotepadSearchStore', () => {
       openNote: vi.fn(async () => {})
     });
   }
+
+  it('keeps last edited separate from recent opening activity and retires superseded responses', async () => {
+    const first = deferred<SearchItem[]>();
+    const second = deferred<SearchItem[]>();
+    listLastEditedNotesMock.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const store = createStore();
+    store.recentNotes = [result('opened')];
+    const oldLoad = store.loadLastEditedNotes();
+    const newLoad = store.loadLastEditedNotes();
+    second.resolve([result('edited')]);
+    await newLoad;
+    first.resolve([result('obsolete')]);
+    await oldLoad;
+    expect(store.lastEditedNotes).toEqual([result('edited')]);
+    expect(store.recentNotes).toEqual([result('opened')]);
+    expect(store.isLoadingLastEdited).toBe(false);
+  });
+
+  it('shows a retryable last edited failure while preserving the previous list', async () => {
+    const store = createStore();
+    store.lastEditedNotes = [result('retained')];
+    listLastEditedNotesMock.mockRejectedValueOnce(new Error('unavailable'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await store.loadLastEditedNotes();
+    expect(store.lastEditedError).toContain('Try again');
+    expect(store.lastEditedNotes).toEqual([result('retained')]);
+    listLastEditedNotesMock.mockResolvedValueOnce([result('fresh')]);
+    await store.loadLastEditedNotes();
+    expect(store.lastEditedError).toBeNull();
+    expect(store.lastEditedNotes).toEqual([result('fresh')]);
+    store.dispose();
+    log.mockRestore();
+  });
+
+  it('discards last edited results delivered after disposal', async () => {
+    const pending = deferred<SearchItem[]>();
+    listLastEditedNotesMock.mockReturnValueOnce(pending.promise);
+    const store = createStore();
+    const load = store.loadLastEditedNotes();
+    store.dispose();
+    pending.resolve([result('late')]);
+    await load;
+    expect(store.lastEditedNotes).toEqual([]);
+  });
 
 
   it('retires image work and releases its preview when switching to current-note find', async () => {

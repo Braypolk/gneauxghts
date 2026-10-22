@@ -751,6 +751,50 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     await navigate(paneId, true, operation => restoreDestination(operation, location));
   }
 
+  /** A discovery result creates its destination without departing the retained source. */
+  async function openNoteInSplit(
+    notePath: string | null,
+    open: Pick<OpenNoteOptions, 'noteId'> = {}
+  ): Promise<NotepadPaneId | null> {
+    if ((!notePath && !open.noteId) || workspace.paneOrder.length !== 1 || options.maxVisiblePanes < 2) {
+      return null;
+    }
+    const sourcePaneId = workspace.activePaneId;
+    const paneId = presentation.createPane();
+    let opened: NotepadPaneId | null = null;
+    await navigate(paneId, false, async operation => {
+      let created = false;
+      try {
+        if (!workspace.dispatchPaneMembership(paneId, { type: 'createRequested', operationId: operation.id })) {
+          throw new Error('Pane creation could not start.');
+        }
+        // Load before exposing membership: a failed read must leave the source
+        // and layout intact, and simultaneous choices may only create one split.
+        const snapshot = await openNoteSession(open.noteId ?? null, notePath);
+        operation.check();
+        if (workspace.paneOrder.length !== 1 || !workspace.paneOrder.includes(sourcePaneId)) return;
+        const source = getPaneDocument(sourcePaneId);
+        workspace.completePaneCreation(paneId, operation.id, source.handle, 'editor');
+        created = true;
+        const next = adoptSnapshotForPane(state, workspace, paneId, snapshot);
+        workspace.resetPaneCommand();
+        activatePaneSession(paneId);
+        workspace.assertInvariants();
+        await presentDocument(operation, source, next, true);
+        opened = paneId;
+      } finally {
+        if (!created) {
+          const membership = workspace.getPaneMembership(paneId);
+          if (membership.kind === 'creating' && membership.operationId === operation.id) {
+            workspace.dispatchPaneMembership(paneId, { type: 'creationFailed', operationId: operation.id });
+            await presentation.disposePaneRuntime(paneId, null);
+          }
+        }
+      }
+    });
+    return opened;
+  }
+
   async function splitWorkspace(choice?: PaneCommandChoice) {
     if (workspace.paneOrder.length >= options.maxVisiblePanes) {
       await switchActivePane();
@@ -1248,6 +1292,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     switchActivePane,
     handleNotepadCommandBarCommand,
     openNotePath,
+    openNoteInSplit,
     startNewNoteFlow,
     clearNotepad: (request?: { canRestore?: boolean }) => withStandaloneMutation(() => clearNotepad(request)),
     unforgetNotepad: () => withStandaloneMutation(unforgetNotepad),

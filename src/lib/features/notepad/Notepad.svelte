@@ -5,8 +5,10 @@
   import { nextEditorFrame } from './editor/editorPresentation';
   import { workspaceDockInset } from "./ui/workspaceDockInset";
   import { onMount, tick, untrack } from "svelte";
+  import { MediaQuery } from 'svelte/reactivity';
   import { invoke } from '@tauri-apps/api/core';
-  import type { ImageSearchItem } from '#lib/types/semantic.js';
+  import type { ImageSearchItem, SearchItem, RelatedNoteItem } from '#lib/types/semantic.js';
+  import { hasSplitNoteDestination } from './navigation/splitNoteDestination';
   import { createNativeContractProbe, type NativeContractProbe } from "#lib/e2e/nativeContractProbe.js";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ImageViewer from "./images/ImageViewer.svelte";
@@ -167,6 +169,8 @@
 
   // workspaceStore owns pane order, active pane, and pane command chrome.
   let paneOrder = $derived(workspaceStore.paneOrder);
+  const splitViewport = new MediaQuery('(max-width: 639px), (min-height: 560px)');
+  const canOpenDiscoverySplit = $derived(paneOrder.length === 1 && splitViewport.current);
   let activePaneId = $derived(workspaceStore.activePaneId);
   let collapsingPaneId = $derived(workspaceStore.collapsingPaneId);
   let paneSpaceWidth = $state(0);
@@ -1202,6 +1206,20 @@
       openRecentTask,
     });
 
+  async function openDiscoveryInSplit(item: SearchItem | LocationHistoryEntry) {
+    if (!canOpenDiscoverySplit || !hasSplitNoteDestination(item)) return;
+    const target = 'location' in item ? item.location : item;
+    if ('kind' in target && target.kind === 'chat') return;
+    const paneId = await commands.openNoteInSplit(target.notePath, { noteId: target.noteId });
+    if (paneId && !('location' in item)) await handleSearchResultSelect(item, paneId);
+  }
+
+  async function openRelatedInSplit(item: RelatedNoteItem) {
+    if (!canOpenDiscoverySplit || !hasSplitNoteDestination(item)) return;
+    const paneId = await commands.openNoteInSplit(item.notePath, { noteId: item.noteId });
+    if (paneId) await handleRelatedItemSelect(item, paneId);
+  }
+
   const handleGlobalKeydown = createWorkspaceShortcutHandler<PaneId>({
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
@@ -1583,7 +1601,8 @@
             onOpen: () => { relatedSubscription?.release(); relatedSubscription = relatedState.acquire(getRelatedContext()); },
             onClose: () => { relatedSubscription?.release(); relatedSubscription = null; },
             onRefresh: () => { if (relatedSubscription) void relatedState.refresh(relatedSubscription.result); },
-            onSelect: (item) => { void handleRelatedItemSelect(item).catch(error => console.error('Failed to open related note:', error)); }
+            onSelect: (item) => { void handleRelatedItemSelect(item).catch(error => console.error('Failed to open related note:', error)); },
+            onOpenInSplit: canOpenDiscoverySplit ? (item) => { void openRelatedInSplit(item).catch(error => console.error('Failed to split related note:', error)); } : undefined
           }}
           chatAvailable={dockChatPaneId !== null}
           {dockMode}
@@ -1619,6 +1638,10 @@
             matchWholeWord: searchState.matchWholeWord,
             searchResults: searchState.searchResults,
             pinnedNotes: searchState.pinnedNotes,
+            lastEditedNotes: searchState.lastEditedNotes,
+            isLoadingLastEdited: searchState.isLoadingLastEdited,
+            lastEditedError: searchState.lastEditedError,
+            onLoadLastEdited: searchState.loadLastEditedNotes,
             recentLocations: locationHistoryItems,
             isSearching: searchState.isSearching,
             onSearchInput: handleSearchInput,
@@ -1629,6 +1652,7 @@
               void handleSearchResultSelect(result).catch((error) => {
                 console.error("Failed to open searched note:", error);
               }),
+            onOpenInSplit: canOpenDiscoverySplit ? (item) => { void openDiscoveryInSplit(item).catch(error => console.error('Failed to split searched note:', error)); } : undefined,
             onSearchNavigate: (result) =>
               void handleSearchResultNavigate(result).catch((error) => {
                 console.error("Failed to navigate search result:", error);

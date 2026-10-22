@@ -19,6 +19,8 @@ import {
   stepMenuHoverIndex
 } from '#lib/features/notepad/editor/editorMenuKeyboard.js';
 import { emitSlashMenuUpdate } from '#lib/features/notepad/editor/slashMenuBridge.js';
+import { openImageFilePicker } from '#lib/features/notepad/images/imageFilePicker.js';
+import { insertMarkdownTable } from '#lib/features/notepad/markdown/tables/tableCommands.js';
 
 const slashMenuFloatingReferenceByView = new WeakMap<EditorView, HTMLElement>();
 
@@ -75,11 +77,24 @@ export interface SlashMenuAPI {
 }
 
 export function getSlashMenuState(filter = '', block = true, task = false, insert = true): SlashMenuModel {
-  return buildEditorMenuModel([...(block ? slashMenuGroups : []), ...(insert ? dateInsertGroups : []), ...(task ? [dueMenuGroup] : [])], filter);
+  const insertItems = [
+    ...(block ? [{ id: 'table', label: 'Table' }] : []),
+    { id: 'image', label: 'Image from file…' },
+    ...(insert ? dateInsertGroups[0].items : [])
+  ];
+  return buildEditorMenuModel([...(block ? slashMenuGroups : []), { key: 'insert', label: 'Insert', items: insertItems }, ...(task ? [dueMenuGroup] : [])], filter);
 }
 
 export function runSlashMenuSelection(view: EditorView, optionId: string) {
   const token = slashTokenAtSelection(view.state);
+  if (optionId === 'image') {
+    openImageFilePicker(view, token ?? view.state.selection.main);
+    return;
+  }
+  if (optionId === 'table') {
+    insertMarkdownTable(view, token ?? undefined);
+    return;
+  }
   if (dateInsertGroups[0].items.some((item) => item.id === optionId)) {
     if (!token) return;
     const insert = formatDateInsertion(optionId);
@@ -185,6 +200,12 @@ class SlashMenuController {
     if (hideMenu) this.hide();
     if (item.id === 'due' && programmaticPos !== null) {
       openTaskDueDatePicker(this.#view, programmaticPos);
+      return;
+    }
+    if (programmaticPos !== null && (item.id === 'image' || item.id === 'table')) {
+      const range = { from: programmaticPos, to: programmaticPos };
+      if (item.id === 'image') openImageFilePicker(this.#view, range);
+      else insertMarkdownTable(this.#view, range);
       return;
     }
     runSlashMenuSelection(this.#view, item.id);
