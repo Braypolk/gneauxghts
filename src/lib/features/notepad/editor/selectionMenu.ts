@@ -16,6 +16,8 @@ import {
   stepMenuHoverIndex
 } from '#lib/features/notepad/editor/editorMenuKeyboard.js';
 import { emitSelectionMenuUpdate } from '#lib/features/notepad/editor/selectionMenuBridge.js';
+import type { NativeSelectionMenuTarget } from './selectionMenuTarget';
+import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
 
 export type { EditorMenuGroupWithItems as SelectionMenuGroupWithItems };
 
@@ -29,6 +31,7 @@ export type SelectionMenuSnapshot =
       hoverIndex: number;
       blockPanelOpen: boolean;
       activeInlineFormats: readonly InlineFormatId[];
+      nativeAnchor?: NativeSelectionMenuTarget['anchor'];
     };
 
 export type PaneSelectionMenuModel =
@@ -42,6 +45,7 @@ export type PaneSelectionMenuModel =
       hoverIndex: number;
       blockPanelOpen: boolean;
       activeInlineFormats: readonly InlineFormatId[];
+      nativeAnchor?: NativeSelectionMenuTarget['anchor'];
     };
 
 function getSelectionRange(view: EditorView) {
@@ -63,6 +67,8 @@ class SelectionMenuController {
   #hoverIndex = 0;
   #blockPanelOpen = false;
   #visible = false;
+  #nativeTarget: NativeSelectionMenuTarget | null = null;
+  #applyingNative = false;
 
   constructor(view: EditorView) {
     this.#view = view;
@@ -71,8 +77,9 @@ class SelectionMenuController {
   }
 
   sync(view: EditorView) {
-    const range = getSelectionRange(view);
-    if (!view.hasFocus || !range || isDateTimePickerOpen()) {
+    if (this.#applyingNative) return;
+    const range = this.#readRange();
+    if ((!this.#nativeTarget && !view.hasFocus) || !range || isDateTimePickerOpen()) {
       this.hide();
       return;
     }
@@ -83,6 +90,7 @@ class SelectionMenuController {
   }
 
   hide() {
+    this.#nativeTarget = null;
     this.#visible = false;
     this.#blockPanelOpen = false;
     emitSelectionMenuUpdate(this.#view, { open: false });
@@ -94,7 +102,7 @@ class SelectionMenuController {
   }
 
   toggleBlockPanel() {
-    if (!this.#visible) {
+    if (!this.#visible || this.#nativeTarget) {
       return;
     }
     this.#blockPanelOpen = !this.#blockPanelOpen;
@@ -102,7 +110,7 @@ class SelectionMenuController {
   }
 
   setBlockPanelOpen(open: boolean) {
-    if (!this.#visible || this.#blockPanelOpen === open) {
+    if (!this.#visible || this.#nativeTarget || this.#blockPanelOpen === open) {
       return;
     }
     this.#blockPanelOpen = open;
@@ -133,11 +141,48 @@ class SelectionMenuController {
   }
 
   applyInline(id: InlineFormatId) {
-    applyInlineFormat(this.#view, id);
+    if (!this.#visible) return;
+    const target = this.#nativeTarget;
+    if (target) {
+      const range = this.#readRange();
+      if (!range) { this.hide(); return; }
+      // Selection stays pane-local. Only the ordinary formatting transaction
+      // enters the document's shared history; the native input retains focus.
+      this.#applyingNative = true;
+      try {
+        this.#view.dispatch({ selection: { anchor: range.from, head: range.to } });
+        applyInlineFormat(this.#view, id, { focus: false, scrollIntoView: false, isolateHistory: true });
+        const selection = this.#view.state.selection.main;
+        if (this.#nativeTarget === target) target.restoreSelection(selection);
+      } finally {
+        this.#applyingNative = false;
+      }
+    } else {
+      applyInlineFormat(this.#view, id);
+    }
     this.sync(this.#view);
   }
 
+  setNativeTarget(target: NativeSelectionMenuTarget) {
+    this.#nativeTarget = target;
+    this.#blockPanelOpen = false;
+    this.sync(this.#view);
+  }
+
+  clearNativeTarget(target: NativeSelectionMenuTarget) {
+    if (this.#nativeTarget === target) this.hide();
+  }
+
+  #readRange() {
+    if (!this.#nativeTarget) return getSelectionRange(this.#view);
+    if (this.#view.state.readOnly || this.#view.composing) return null;
+    const range = this.#nativeTarget.read();
+    return range && range.from >= 0 && range.from < range.to && range.to <= this.#view.state.doc.length
+      ? range : null;
+  }
+
   runBlockAtIndex(index: number) {
+    if (!this.#visible || this.#nativeTarget) return;
     const item = this.#menuState.groups
       .flatMap((group) => group.items)
       .find((candidate) => candidate.index === index);
@@ -155,7 +200,24 @@ class SelectionMenuController {
       return;
     }
 
+    if (this.#nativeTarget && !event.isComposing) {
+      for (const [format, shortcut] of [
+        ['bold', 'editorBold'], ['italic', 'editorItalic'], ['link', 'editorLink']
+      ] as const) {
+        if (keyboardShortcutMatchesEvent(event, shortcut)) {
+          consumeMenuKeyEvent(event);
+          this.applyInline(format);
+          return;
+        }
+      }
+    }
+
     if (event.key === 'Escape') {
+      if (this.#nativeTarget) {
+        // The cell's native key handler also exits editing on this Escape.
+        this.hide();
+        return;
+      }
       consumeMenuKeyEvent(event);
       if (this.#blockPanelOpen) {
         this.#blockPanelOpen = false;
@@ -210,7 +272,7 @@ class SelectionMenuController {
   }
 
   #buildOpenSnapshot(view: EditorView, range?: { from: number; to: number }): SelectionMenuSnapshot {
-    const selection = range ?? getSelectionRange(view);
+    const selection = range ?? this.#readRange();
     if (!selection) {
       return { open: false };
     }
@@ -222,6 +284,7 @@ class SelectionMenuController {
       groups: this.#menuState.groups,
       hoverIndex: this.#hoverIndex,
       blockPanelOpen: this.#blockPanelOpen,
+      ...(this.#nativeTarget ? { nativeAnchor: this.#nativeTarget.anchor } : {}),
       activeInlineFormats: getActiveInlineFormats(
         view.state,
         selection.from,
@@ -292,7 +355,7 @@ export function createSelectionMenuPlugin() {
           }
           queueMicrotask(() => {
             if (!view.hasFocus) {
-              controller.hide();
+              controller.sync(view);
             }
           });
           return false;
@@ -313,4 +376,12 @@ export function createSelectionMenuPlugin() {
       selectionControllers.delete(view);
     }
   };
+}
+
+export function selectionMenuSetNativeTarget(view: EditorView, target: NativeSelectionMenuTarget) {
+  selectionControllers.get(view)?.setNativeTarget(target);
+}
+
+export function selectionMenuClearNativeTarget(view: EditorView, target: NativeSelectionMenuTarget) {
+  selectionControllers.get(view)?.clearNativeTarget(target);
 }

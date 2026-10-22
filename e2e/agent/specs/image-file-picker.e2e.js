@@ -21,14 +21,14 @@ async function openPicker() {
   await browser.waitUntil(() => browser.execute(() => !!document.querySelector('input[data-image-file-picker]')));
 }
 
-async function selectFile() {
-  await browser.execute(() => {
+async function selectFile(name = 'diagram.png', type = 'image/png') {
+  await browser.execute((name, type) => {
     const input = document.querySelector('input[data-image-file-picker]');
     const data = new DataTransfer();
-    data.items.add(new File([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='), c => c.charCodeAt(0))], 'diagram.png', { type: 'image/png' }));
+    data.items.add(new File([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='), c => c.charCodeAt(0))], name, { type }));
     input.files = data.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
-  });
+  }, name, type);
 }
 
 describe('slash image file picker', () => {
@@ -78,6 +78,19 @@ describe('slash image file picker', () => {
     expect(await body()).toBe('/image');
     expect(await $('input[data-image-file-picker]').isExisting()).toBe(false);
     expect(await $('.gn-image-upload-placeholder').isExisting()).toBe(false);
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__.invocations.filter(entry => entry.command === 'store_pasted_image').length)).toBe(0);
+  });
+
+  it('filters supported extensions and rejects an unsupported file even when its MIME claims PNG', async () => {
+    await replaceBody('/image');
+    await openPicker();
+    const accept = await $('input[data-image-file-picker]').getAttribute('accept');
+    expect(accept.split(',').filter(type => type.startsWith('.'))).toEqual(['.avif', '.bmp', '.gif', '.jpg', '.jpeg', '.png', '.svg', '.webp']);
+    expect(accept).not.toContain('image/*');
+    await selectFile('notes.txt', 'image/png');
+    await expect($('.gn-image-upload-placeholder')).toHaveText(expect.stringContaining('Choose an AVIF, BMP, GIF, JPEG, PNG, SVG or WebP image.'));
+    expect(await body()).toBe('/image');
+    expect(await $('.gn-image-embed').isExisting()).toBe(false);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__.invocations.filter(entry => entry.command === 'store_pasted_image').length)).toBe(0);
   });
 

@@ -339,6 +339,12 @@ Top-level GFM tables expose editable cells, row/column controls, alignment and
 keyboard navigation. Cell and structural edits use ordinary Markdown transactions
 and the document's shared Undo/Redo history. Moving a table moves all its rows.
 Composition, source replacement and widget disposal cannot publish stale input.
+Rendered cell selections use the same inline formatting popup and shared history
+as source selections while retaining cell focus. Block conversion remains a source
+editing action. Replaced cell DOM cannot retain an actionable selection or author
+late input. Table spacing participates in the editor's measured height; pointer
+placement and vertical cursor movement stay accurate across multiple tables.
+Entering and leaving a cell editor preserves rendered column widths.
 Source mode remains available; nested tables and irregular extra-cell rows retain
 literal editing so visual controls cannot discard authored content.
 
@@ -1221,6 +1227,9 @@ publication/conflict/proof requirements continue independently of that UI.
   maps through unrelated edits and retires on overlap, replacement, read-only
   takeover or view disposal. Cancelling the chooser or a failed import retains
   authored command text; a successful import remains one shared Undo step.
+- The desktop native image chooser filters to supported asset formats and revalidates
+  selected extensions before returning bytes. Mobile and browser selection checks
+  both extension and MIME compatibility; unsupported choices never reach storage.
 - The viewer shares the existing transient owner. Closing returns focus, scroll
   and selection only to a still-live origin. Image-list changes, replacement and
   history/review takeover invalidate it. Gallery navigation includes offscreen

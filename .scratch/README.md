@@ -45,6 +45,8 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Table interaction fixes](archive/table-interaction-fixes.md): accurate cursor movement/click mapping across multiple tables, rendered-cell formatting with shared Undo, stable cell geometry, safe popup teardown, and image picker filters. Browser, native helper and iOS compile coverage and limits are recorded.
+
 - [Editor input and task layout](archive/editor-input-bugs-2026-10-22.md): previous-note navigation releases stale WebKit editing focus before buffer swaps; task date actions no longer wrap onto an empty line; image drops use the existing upload jobs. Browser, native and repository checks are recorded with their evidence boundaries.
 
 - [Workspace improvements](archive/workspace-improvements.md): popup split actions,

@@ -248,7 +248,8 @@ export class PaneTransientUiController<TPaneId extends string> {
       groups: snapshot.groups,
       hoverIndex: snapshot.hoverIndex,
       blockPanelOpen: snapshot.blockPanelOpen,
-      activeInlineFormats: snapshot.activeInlineFormats
+      activeInlineFormats: snapshot.activeInlineFormats,
+      ...(snapshot.nativeAnchor ? { nativeAnchor: snapshot.nativeAnchor } : {})
     });
   }
 

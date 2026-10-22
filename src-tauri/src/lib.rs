@@ -373,6 +373,7 @@ pub fn run() {
             commands::asset_commands::resolve_image_asset_url,
             commands::asset_commands::read_image_asset_fingerprint,
             commands::asset_commands::store_pasted_image,
+            commands::asset_commands::choose_image_files,
             commands::set_vault_directory,
             commands::prepare_restart,
             commands::wikilink_commands::resolve_note_link,

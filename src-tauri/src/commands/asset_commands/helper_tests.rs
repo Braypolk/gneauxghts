@@ -14,7 +14,12 @@ fn image_asset_metadata_versions_replacements_and_rejects_unsafe_paths() {
     assert_eq!(image_asset_metadata(&assets, name).unwrap().1, first);
     fs::write(assets.join(name), b"replacement").unwrap();
     assert_ne!(image_asset_metadata(&assets, name).unwrap().1, first);
-    for invalid in ["../outside.svg", "/outside.svg", "photos\\outside.svg", "missing.svg"] {
+    for invalid in [
+        "../outside.svg",
+        "/outside.svg",
+        "photos\\outside.svg",
+        "missing.svg",
+    ] {
         assert!(image_asset_metadata(&assets, invalid).is_err(), "{invalid}");
     }
 }
@@ -32,6 +37,51 @@ fn asset_extension_from_mime_type_covers_common_images() {
     assert_eq!(asset_extension_from_mime_type("image/png"), Some("png"));
     assert_eq!(asset_extension_from_mime_type("image/jpeg"), Some("jpg"));
     assert_eq!(asset_extension_from_mime_type("application/json"), None);
+}
+
+#[test]
+fn native_picker_filter_matches_asset_mime_support() {
+    let extensions = IMAGE_ASSET_TYPES
+        .iter()
+        .map(|(extension, _)| *extension)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        extensions,
+        ["avif", "bmp", "gif", "jpg", "jpeg", "png", "svg", "webp"]
+    );
+    for (extension, mime) in IMAGE_ASSET_TYPES {
+        assert_eq!(
+            mime_type_from_asset_name(&format!("image.{extension}")),
+            *mime
+        );
+        assert!(asset_extension_from_mime_type(mime).is_some());
+    }
+}
+
+#[test]
+fn native_picker_reads_only_supported_nonempty_selected_files_without_importing() {
+    let root = TestDir::new("image-picker-read");
+    let selected = root.path().join("diagram.PNG");
+    fs::write(&selected, [1_u8, 2, 3]).unwrap();
+    let image = read_picked_image(&selected).unwrap();
+    assert_eq!(image.name, "diagram.PNG");
+    assert_eq!(image.mime_type, "image/png");
+    assert_eq!(image.bytes, [1, 2, 3]);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    assert!(read_picked_image(&root.path().join("unsupported.heic"))
+        .unwrap_err()
+        .contains("Choose an"));
+    assert!(read_picked_image(&root.path().join("notes.txt"))
+        .unwrap_err()
+        .contains("Choose an"));
+    assert!(read_picked_image(&root.path().join("noextension"))
+        .unwrap_err()
+        .contains("Choose an"));
+    assert!(read_picked_image(&root.path().join("empty-extension."))
+        .unwrap_err()
+        .contains("Choose an"));
+    fs::write(&selected, []).unwrap();
+    assert!(read_picked_image(&selected).unwrap_err().contains("empty"));
 }
 
 #[test]

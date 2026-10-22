@@ -1,6 +1,7 @@
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { isolateHistory } from '@codemirror/commands';
 import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
 import {
   defaultWrapById,
@@ -29,6 +30,12 @@ interface WrapSpec {
   after: string;
 }
 
+export interface InlineFormattingOptions {
+  focus?: boolean;
+  scrollIntoView?: boolean;
+  isolateHistory?: boolean;
+}
+
 interface DetectedWrap extends WrapSpec {
   unwrapped: string;
 }
@@ -42,13 +49,18 @@ interface EnclosingFormat {
 function applySpec(
   view: EditorView,
   changes: { from: number; to: number; insert: string },
-  selection: { anchor: number; head?: number }
+  selection: { anchor: number; head?: number },
+  options: InlineFormattingOptions
 ) {
-  return dispatchEditorChange(view, {
+  const spec = {
     changes,
     selection: { anchor: selection.anchor, head: selection.head ?? selection.anchor },
-    scrollIntoView: true
-  });
+    scrollIntoView: options.scrollIntoView ?? true,
+    ...(options.isolateHistory ? { annotations: isolateHistory.of('full') } : {})
+  };
+  if (options.focus !== false) return dispatchEditorChange(view, spec);
+  view.dispatch(spec);
+  return true;
 }
 
 function detectWrap(text: string, specs: readonly WrapSpec[]): DetectedWrap | null {
@@ -145,7 +157,8 @@ function toggleWrap(
   view: EditorView,
   specs: readonly WrapSpec[],
   fallback: WrapSpec,
-  syntaxNodeNames: readonly string[]
+  syntaxNodeNames: readonly string[],
+  options: InlineFormattingOptions
 ) {
   const selection = view.state.selection.main;
   if (selection.empty) {
@@ -160,7 +173,8 @@ function toggleWrap(
     return applySpec(
       view,
       { from, to, insert: directWrap.unwrapped },
-      { anchor: from, head: from + directWrap.unwrapped.length }
+      { anchor: from, head: from + directWrap.unwrapped.length },
+      options
     );
   }
 
@@ -171,7 +185,8 @@ function toggleWrap(
     return applySpec(
       view,
       { from: nodeFrom, to: nodeTo, insert: wrap.unwrapped },
-      mapped
+      mapped,
+      options
     );
   }
 
@@ -185,7 +200,8 @@ function toggleWrap(
   return applySpec(
     view,
     { from, to, insert: wrapped },
-    { anchor: from + wrapFallback.before.length, head: to + wrapFallback.before.length }
+    { anchor: from + wrapFallback.before.length, head: to + wrapFallback.before.length },
+    options
   );
 }
 
@@ -290,13 +306,14 @@ function findEnclosingLinkNode(
   return best;
 }
 
-function applyLink(view: EditorView) {
+function applyLink(view: EditorView, options: InlineFormattingOptions) {
   const selection = view.state.selection.main;
   if (selection.empty) {
     return applySpec(
       view,
       { from: selection.from, to: selection.to, insert: '[]()' },
-      { anchor: selection.from + 1 }
+      { anchor: selection.from + 1 },
+      options
     );
   }
 
@@ -304,7 +321,7 @@ function applyLink(view: EditorView) {
   const text = view.state.sliceDoc(from, to);
   const directInner = unwrapLinkText(text);
   if (directInner !== null && !text.startsWith('[[')) {
-    return applySpec(view, { from, to, insert: directInner }, { anchor: from, head: from + directInner.length });
+    return applySpec(view, { from, to, insert: directInner }, { anchor: from, head: from + directInner.length }, options);
   }
 
   const enclosing = findEnclosingLinkNode(view.state, from, to, 'link');
@@ -315,16 +332,17 @@ function applyLink(view: EditorView) {
     return applySpec(
       view,
       { from: enclosing.nodeFrom, to: enclosing.nodeTo, insert: enclosing.inner },
-      { anchor, head }
+      { anchor, head },
+      options
     );
   }
 
   const insert = `[${text}]()`;
   const urlStart = from + text.length + 3;
-  return applySpec(view, { from, to, insert }, { anchor: urlStart, head: urlStart });
+  return applySpec(view, { from, to, insert }, { anchor: urlStart, head: urlStart }, options);
 }
 
-function applyWikilink(view: EditorView) {
+function applyWikilink(view: EditorView, options: InlineFormattingOptions) {
   const selection = view.state.selection.main;
   if (selection.empty) {
     return false;
@@ -334,7 +352,7 @@ function applyWikilink(view: EditorView) {
   const text = view.state.sliceDoc(from, to);
   const directInner = unwrapLinkText(text);
   if (directInner !== null && text.startsWith('[[')) {
-    return applySpec(view, { from, to, insert: directInner }, { anchor: from, head: from + directInner.length });
+    return applySpec(view, { from, to, insert: directInner }, { anchor: from, head: from + directInner.length }, options);
   }
 
   const enclosing = findEnclosingLinkNode(view.state, from, to, 'wikilink');
@@ -345,14 +363,15 @@ function applyWikilink(view: EditorView) {
     return applySpec(
       view,
       { from: enclosing.nodeFrom, to: enclosing.nodeTo, insert: enclosing.inner },
-      { anchor, head }
+      { anchor, head },
+      options
     );
   }
 
   const trimmed = text.trim();
   const insert = trimmed ? `[[${trimmed}]]` : '[[]]';
   const anchor = from + 2;
-  return applySpec(view, { from, to, insert }, { anchor, head: anchor + (trimmed ? trimmed.length : 0) });
+  return applySpec(view, { from, to, insert }, { anchor, head: anchor + (trimmed ? trimmed.length : 0) }, options);
 }
 
 export function isInlineFormatActive(
@@ -395,13 +414,13 @@ export function getActiveInlineFormats(
     .filter((id) => isInlineFormatActive(state, from, to, id));
 }
 
-export function applyInlineFormat(view: EditorView, id: InlineFormatId) {
+export function applyInlineFormat(view: EditorView, id: InlineFormatId, options: InlineFormattingOptions = {}) {
   if (id === 'link') {
-    return applyLink(view);
+    return applyLink(view, options);
   }
 
   if (id === 'wikilink') {
-    return applyWikilink(view);
+    return applyWikilink(view, options);
   }
 
   const wrapId = id as WrapFormatId;
@@ -409,7 +428,8 @@ export function applyInlineFormat(view: EditorView, id: InlineFormatId) {
     view,
     wrapSpecsById[wrapId],
     defaultWrapById[wrapId],
-    syntaxNodesById[wrapId]
+    syntaxNodesById[wrapId],
+    options
   );
 }
 

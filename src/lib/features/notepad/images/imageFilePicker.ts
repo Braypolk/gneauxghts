@@ -1,5 +1,7 @@
 import { StateEffect, StateField } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { invoke } from '@tauri-apps/api/core';
+import { isTauriRuntime } from '#lib/tauriRuntime.js';
 
 export interface ImageImportTarget {
   id: symbol;
@@ -30,15 +32,18 @@ export const imagePickerTarget = StateField.define<ImageImportTarget | null>({
   }
 });
 
-const imageMimeTypes = new Set([
-  'image/avif', 'image/bmp', 'image/gif', 'image/jpeg', 'image/jpg',
-  'image/png', 'image/svg+xml', 'image/webp'
-]);
-const imageExtensions = /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i;
-export const imageFileAccept = '.avif,.bmp,.gif,.jpg,.jpeg,.png,.svg,.webp';
+// Mirrors the asset MIME contract used by the native chooser and renderer.
+const imageTypes: Record<string, string> = {
+  avif: 'image/avif', bmp: 'image/bmp', gif: 'image/gif', jpg: 'image/jpeg',
+  jpeg: 'image/jpeg', png: 'image/png', svg: 'image/svg+xml', webp: 'image/webp'
+};
+export const imageFileAccept = Object.entries(imageTypes).flatMap(([extension, mime]) => [`.${extension}`, mime]).join(',');
 
 export function isSupportedImageFile(file: Pick<File, 'name' | 'type'>): boolean {
-  return file.type ? imageMimeTypes.has(file.type.toLowerCase()) : imageExtensions.test(file.name);
+  const extension = /^.+\.([^.]+)$/.exec(file.name)?.[1].toLowerCase() ?? '';
+  const expectedMime = Object.hasOwn(imageTypes, extension) ? imageTypes[extension] : undefined;
+  const mime = file.type.toLowerCase().replace(/^image\/jpg$/, 'image/jpeg');
+  return !!expectedMime && (!mime || mime === expectedMime);
 }
 
 export interface ImageFileChoice {
@@ -46,8 +51,33 @@ export interface ImageFileChoice {
   cancel: () => void;
 }
 
-/** A file input opens the platform chooser and gives the existing importer File bytes on every platform. */
+interface PickedImageFile { name: string; mimeType: string; bytes: number[] }
+
+export function chooseNativeImageFiles(request: () => Promise<PickedImageFile[] | null> = () => invoke('choose_image_files')): ImageFileChoice {
+  let cancel!: () => void;
+  let canceled = false;
+  const result = new Promise<File[] | null>((resolve, reject) => {
+    cancel = () => { canceled = true; resolve(null); };
+    void request().then((images) => {
+      if (canceled) return null;
+      return images?.map((image) => new File([Uint8Array.from(image.bytes)], image.name, { type: image.mimeType })) ?? null;
+    }).then(resolve, reject);
+  });
+  return { result, cancel };
+}
+
+function isMobileFilePickerPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/** Desktop native dialogs enforce the image filter; WebView inputs preserve the same allowlist on mobile. */
 export function chooseImageFiles(ownerDocument: Document): ImageFileChoice {
+  // Mobile dialog providers may broaden exact image filters to a media library
+  // or return content:// handles. A WebView file input supplies usable File bytes
+  // without widening permissions, and the controller validates its selection.
+  if (isTauriRuntime() && import.meta.env.VITE_E2E_BROWSER !== 'true' && !isMobileFilePickerPlatform()) return chooseNativeImageFiles();
   const input = ownerDocument.createElement('input');
   input.type = 'file';
   input.accept = imageFileAccept;

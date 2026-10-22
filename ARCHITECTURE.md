@@ -456,6 +456,12 @@ undo root. Pane widgets retain focus and composition only, retiring stale input
 when source, read-only state or widget lifetime changes. Syntax changes own
 table inventory, including enclosing fences. Nested and irregular tables retain
 literal source editing to preserve container prefixes and extra cells.
+Widget spacing lives inside a measured block wrapper; cell inputs overlay an
+in-flow preview so entering edit mode does not alter column geometry. Native cell
+selections project current canonical offsets and a pane-local anchor through the
+existing selection-menu controller and transient owner. Inline commands retain
+input focus and use ordinary document transactions; replaced cells retire their
+selection and composition targets.
 
 ### Images
 
@@ -480,6 +486,10 @@ the editor selection. Chooser destinations and paste jobs preserve selected text
 success, map unaffected ranges, reuse partial successes, and discard results after
 replacement, navigation, read-only takeover or view destruction. Removing an
 embed never removes asset bytes.
+Desktop image selection uses a filtered native dialog and a read-only command that accepts
+no renderer-provided paths. Its supported extensions share the native asset MIME
+map; selected bytes return to the existing upload owner. Mobile and browser inputs
+declare the same formats and validate extensions and MIME types before submission.
 
 The modal viewer is a payload of `PaneTransientUiController.active`, alongside
 existing mutually exclusive editor surfaces. It pins the note's full image list,

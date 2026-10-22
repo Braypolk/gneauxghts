@@ -72,7 +72,7 @@
 
     const view = menu.view;
     const panel = panelEl;
-    const reference = buildSelectionReference(view, menu.selectionFrom, menu.selectionTo);
+    const reference = menu.nativeAnchor ?? buildSelectionReference(view, menu.selectionFrom, menu.selectionTo);
     const boundary = boundsElement ?? undefined;
 
     const { x, y } = await floatingUi.computePosition(reference, panel, {
@@ -128,7 +128,7 @@
     }
 
     const view = currentMenu.view;
-    const reference = buildSelectionReference(
+    const reference = currentMenu.nativeAnchor ?? buildSelectionReference(
       view,
       currentMenu.selectionFrom,
       currentMenu.selectionTo
@@ -195,35 +195,37 @@
         </button>
       {/each}
 
-      <span class="selection-divider" aria-hidden="true"></span>
+      {#if !menu.nativeAnchor}
+        <span class="selection-divider" aria-hidden="true"></span>
 
-      <button
-        type="button"
-        class="selection-action selection-action--turn-into"
-        class:selection-action--active={menu.blockPanelOpen}
-        aria-expanded={menu.blockPanelOpen}
-        aria-controls="selection-block-panel"
-        aria-label="Turn into block type"
-        onpointerdown={(event) => event.preventDefault()}
-        onclick={() => selectionMenuToggleBlockPanelFromUi(menu.view)}
-      >
-        <span class="selection-turn-into-label">Turn into</span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-          class:selection-chevron--open={menu.blockPanelOpen}
+        <button
+          type="button"
+          class="selection-action selection-action--turn-into"
+          class:selection-action--active={menu.blockPanelOpen}
+          aria-expanded={menu.blockPanelOpen}
+          aria-controls="selection-block-panel"
+          aria-label="Turn into block type"
+          onpointerdown={(event) => event.preventDefault()}
+          onclick={() => selectionMenuToggleBlockPanelFromUi(menu.view)}
         >
-          <polyline points="6 9 12 15 18 9"></polyline>
-        </svg>
-      </button>
+          <span class="selection-turn-into-label">Turn into</span>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            class:selection-chevron--open={menu.blockPanelOpen}
+          >
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+      {/if}
     </div>
 
     {#if menu.blockPanelOpen}

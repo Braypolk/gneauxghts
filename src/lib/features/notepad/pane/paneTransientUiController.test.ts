@@ -58,6 +58,20 @@ function createHarness() {
 }
 
 describe('PaneTransientUiController', () => {
+  it('routes native selection anchors through the existing pane formatting surface', () => {
+    const { controller, runtimes } = createHarness();
+    const view = {} as EditorView;
+    const nativeAnchor = { getBoundingClientRect: vi.fn(), contextElement: {} as Element };
+    controller.applySelectionMenuSnapshot('left', {
+      open: true, selectionFrom: 3, selectionTo: 8, groups: [], hoverIndex: 0,
+      blockPanelOpen: false, activeInlineFormats: [], nativeAnchor
+    }, view);
+    expect(controller.active).toEqual({ kind: 'selection-menu', paneId: 'left' });
+    expect(runtimes.left.setSelectionMenu).toHaveBeenLastCalledWith(expect.objectContaining({
+      open: true, view, nativeAnchor
+    }));
+  });
+
   it('retires link actions when their pane collapses or another transient opens', () => {
     const { controller } = createHarness();
     const session = {} as ExternalLinkActionsSession;

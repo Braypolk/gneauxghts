@@ -1,7 +1,8 @@
+.cm-gn .gn-table-block { display: flow-root; padding-block: 0.85rem; }
 .cm-gn .gn-table {
   contain: inline-size;
   max-width: calc(100% - var(--gn-editor-side-inset-left, 0px) - var(--gn-editor-side-inset-right, 0px));
-  margin: 0.85rem var(--gn-editor-side-inset-right, 0px) 0.85rem var(--gn-editor-side-inset-left, 0px);
+  margin: 0 var(--gn-editor-side-inset-right, 0px) 0 var(--gn-editor-side-inset-left, 0px);
   border: 1px solid var(--border);
   border-radius: 0.65rem;
   overflow: hidden;
@@ -38,7 +39,7 @@
 .cm-gn .gn-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .cm-gn .gn-table table { width: 100%; border-spacing: 0; border-collapse: collapse; table-layout: auto; }
 .cm-gn .gn-table th,
-.cm-gn .gn-table td { min-width: 8rem; max-width: 26rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0; vertical-align: top; }
+.cm-gn .gn-table td { position: relative; min-width: 8rem; max-width: 26rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0; vertical-align: top; }
 .cm-gn .gn-table th:last-child,
 .cm-gn .gn-table td:last-child { border-right: 0; }
 .cm-gn .gn-table tbody tr:last-child td { border-bottom: 0; }
@@ -62,8 +63,19 @@
 }
 .cm-gn .gn-table-cell-preview { cursor: text; overflow-wrap: anywhere; white-space: normal; }
 .cm-gn .gn-table-cell-preview:hover { background: color-mix(in oklab, var(--muted) 40%, transparent); }
-.cm-gn .gn-table-cell-input { outline: 2px solid var(--ring); outline-offset: -2px; background: var(--background); }
-.cm-gn .gn-table-cell-preview[hidden],
+.cm-gn .gn-table-cell-input {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  background: var(--background);
+}
+/* Auto table layout remains based on the rendered Markdown in both modes.
+   Native inputs have their own intrinsic width, so keep them out of sizing. */
+.cm-gn .gn-table-cell-preview[data-editing] { visibility: hidden; }
 .cm-gn .gn-table-cell-input[hidden] { display: none; }
 .cm-gn .gn-table-cell-preview code { border-radius: 0.2rem; background: var(--muted); padding: 0.1rem 0.2rem; font-family: var(--font-mono, monospace); font-size: 0.9em; }
 .cm-gn .gn-table-empty { opacity: 0; font-weight: normal; }

@@ -1,11 +1,15 @@
 import { EditorState, StateEffect } from '@codemirror/state';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { invoke } from '@tauri-apps/api/core';
 import { createCommandView } from '../editor/commandTestSupport';
 import { getSlashMenuState, runSlashMenuSelection } from '../editor/slashMenu';
 import {
-  ImageFilePickerController, chooseImageFiles, imageFileAccept, imagePickerTarget,
+  ImageFilePickerController, chooseImageFiles, chooseNativeImageFiles, imageFileAccept, imagePickerTarget,
   isSupportedImageFile, openImageFilePicker, type ImageFileChoice
 } from './imageFilePicker';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 const png = () => ({ name: 'diagram.png', type: 'image/png' }) as File;
 function fixture() {
@@ -112,11 +116,69 @@ describe('platform file input', () => {
     expect(second.input.remove).toHaveBeenCalledOnce();
   });
 
+  it('uses validated WebView File input on mobile instead of native content handles or broad media filters', async () => {
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
+    vi.stubEnv('VITE_E2E_BROWSER', 'false');
+    vi.mocked(invoke).mockClear();
+    for (const platform of [
+      { userAgent: 'iPhone', platform: 'iPhone', maxTouchPoints: 5 },
+      { userAgent: 'Android', platform: 'Linux', maxTouchPoints: 5 },
+      { userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 5 }
+    ]) {
+      vi.stubGlobal('navigator', platform);
+      const fixture = documentFixture();
+      const choice = chooseImageFiles(fixture.doc);
+      expect(fixture.input.click).toHaveBeenCalledOnce();
+      expect(fixture.input).toMatchObject({ accept: imageFileAccept });
+      choice.cancel();
+      expect(await choice.result).toBeNull();
+    }
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it('accepts backend-supported image types and falls back to filename only when MIME is absent', () => {
-    for (const type of ['image/avif', 'image/bmp', 'image/gif', 'image/jpeg', 'image/png', 'image/svg+xml', 'image/webp'])
-      expect(isSupportedImageFile({ name: 'image', type })).toBe(true);
+    for (const [extension, type] of [['avif', 'image/avif'], ['bmp', 'image/bmp'], ['gif', 'image/gif'], ['jpeg', 'image/jpeg'], ['png', 'image/png'], ['svg', 'image/svg+xml'], ['webp', 'image/webp']])
+      expect(isSupportedImageFile({ name: `image.${extension}`, type })).toBe(true);
     expect(isSupportedImageFile({ name: 'DIAGRAM.PNG', type: '' })).toBe(true);
+    expect(isSupportedImageFile({ name: 'photo.jpg', type: 'image/jpg' })).toBe(true);
     expect(isSupportedImageFile({ name: 'notes.png', type: 'text/plain' })).toBe(false);
+    expect(isSupportedImageFile({ name: 'notes.txt', type: 'image/png' })).toBe(false);
+    expect(isSupportedImageFile({ name: 'image.png', type: 'image/jpeg' })).toBe(false);
+    expect(isSupportedImageFile({ name: 'image.heic', type: 'image/heic' })).toBe(false);
+    expect(isSupportedImageFile({ name: 'png', type: 'image/png' })).toBe(false);
+    expect(isSupportedImageFile({ name: 'file.constructor', type: '' })).toBe(false);
     expect(isSupportedImageFile({ name: 'notes.txt', type: '' })).toBe(false);
+  });
+});
+
+describe('native filtered file chooser bridge', () => {
+  it('uses the native filtered command in Tauri instead of the advisory HTML input', async () => {
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
+    vi.stubEnv('VITE_E2E_BROWSER', 'false');
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    const ownerDocument = { createElement: vi.fn() } as unknown as Document;
+    expect(await chooseImageFiles(ownerDocument).result).toBeNull();
+    expect(invoke).toHaveBeenCalledWith('choose_image_files');
+    expect(ownerDocument.createElement).not.toHaveBeenCalled();
+  });
+
+  it('converts selected bytes into Files for the existing importer without writing assets', async () => {
+    const request = vi.fn(async () => [{ name: 'diagram.png', mimeType: 'image/png', bytes: [1, 2, 3] }]);
+    const choice = chooseNativeImageFiles(request);
+    const files = await choice.result;
+    expect(request).toHaveBeenCalledOnce();
+    expect(files?.[0]).toMatchObject({ name: 'diagram.png', type: 'image/png', size: 3 });
+    expect([...new Uint8Array(await files![0].arrayBuffer())]).toEqual([1, 2, 3]);
+  });
+
+  it('retires a late native selection after local cancellation and propagates native cancellation', async () => {
+    let finish!: (images: null | { name: string; mimeType: string; bytes: number[] }[]) => void;
+    const choice = chooseNativeImageFiles(() => new Promise(resolve => { finish = resolve; }));
+    choice.cancel();
+    expect(await choice.result).toBeNull();
+    finish([{ name: 'late.png', mimeType: 'image/png', bytes: [1] }]);
+    await settle();
+    expect(await choice.result).toBeNull();
+    expect(await chooseNativeImageFiles(async () => null).result).toBeNull();
   });
 });

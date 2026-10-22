@@ -2,6 +2,8 @@ import { EditorView, WidgetType } from '@codemirror/view';
 import MarkdownIt from 'markdown-it';
 import { changeTable, editTableCell, type TableOperation } from './tableCommands';
 import { tableSourceEffect, type MarkdownTable, type TableCellLocation } from './tableModel';
+import { selectionMenuSetNativeTarget, selectionMenuClearNativeTarget } from '../../editor/selectionMenu';
+import type { NativeSelectionMenuTarget } from '../../editor/selectionMenuTarget';
 
 const inline = new MarkdownIt({ html: false, linkify: false, breaks: false });
 // Cell activation edits its Markdown. Keep previews passive, including images:
@@ -10,6 +12,7 @@ inline.renderer.rules.link_open = inline.renderer.rules.link_close = () => '';
 inline.renderer.rules.image = (tokens: { content: string }[], index: number) => inline.utils.escapeHtml(tokens[index].content);
 
 interface MountedTable {
+  view: EditorView;
   ref: MarkdownTable;
   readOnly: boolean;
   active: { row: number; column: number };
@@ -18,6 +21,7 @@ interface MountedTable {
   status: HTMLElement;
   composing: HTMLInputElement | null;
   cancelledComposition: HTMLInputElement | null;
+  selectionTarget: NativeSelectionMenuTarget | null;
 }
 const mounted = new WeakMap<HTMLElement, MountedTable>();
 
@@ -54,45 +58,84 @@ function makeCell(view: EditorView, container: HTMLElement, data: MountedTable, 
   input.type = 'text'; input.className = 'gn-table-cell-input'; input.hidden = true;
   input.setAttribute('aria-label', `${row === 0 ? 'Header' : 'Row ' + (row + 1)}, column ${column + 1}`);
   input.autocomplete = 'off';
+  const target: NativeSelectionMenuTarget = {
+    read() {
+      const source = data.ref.rows[row]?.cells[column];
+      if (mounted.get(container) !== data || data.readOnly || data.composing || !input.isConnected || input.hidden ||
+        input.ownerDocument.activeElement !== input || !source || input.value !== source.value ||
+        view.state.sliceDoc(source.from, source.to) !== source.value) return null;
+      const start = input.selectionStart ?? 0, end = input.selectionEnd ?? start;
+      return start === end ? null : { from: source.from + start, to: source.from + end };
+    },
+    anchor: { getBoundingClientRect: () => input.getBoundingClientRect(), contextElement: input },
+    restoreSelection(range) {
+      const source = data.ref.rows[row]?.cells[column];
+      if (mounted.get(container) !== data || data.readOnly || !input.isConnected || input.hidden || !source) return;
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(Math.max(0, range.from - source.from), Math.max(0, range.to - source.from));
+    }
+  };
+  const syncSelectionMenu = () => {
+    if (mounted.get(container) !== data || input.hidden || !input.isConnected || input.ownerDocument.activeElement !== input) return;
+    data.selectionTarget = target;
+    selectionMenuSetNativeTarget(view, target);
+  };
   const activate = (select = true) => {
     if (mounted.get(container) !== data) return;
     data.active = { row, column }; updateToolbar(data);
     if (data.readOnly) return;
     for (const other of data.grid.querySelectorAll<HTMLInputElement>('input')) if (other !== input) {
-      other.hidden = true; other.previousElementSibling?.removeAttribute('hidden');
+      other.hidden = true;
+      other.previousElementSibling?.removeAttribute('data-editing');
+      other.previousElementSibling?.removeAttribute('aria-hidden');
     }
-    preview.hidden = true; input.hidden = false; input.focus({ preventScroll: true });
+    preview.setAttribute('data-editing', ''); preview.setAttribute('aria-hidden', 'true');
+    input.hidden = false; input.focus({ preventScroll: true });
     if (select) input.select();
+    syncSelectionMenu();
     input.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   };
   preview.onclick = event => { event.preventDefault(); event.stopPropagation(); activate(); };
-  input.onfocus = () => { data.active = { row, column }; updateToolbar(data); };
+  input.onfocus = () => { data.active = { row, column }; updateToolbar(data); syncSelectionMenu(); };
+  input.onselect = syncSelectionMenu;
+  input.onpointerup = syncSelectionMenu;
+  input.onkeyup = event => { if (event.key !== 'Escape') syncSelectionMenu(); };
   input.onblur = () => {
-    if (mounted.get(container) !== data) return;
-    input.hidden = true; preview.hidden = false;
+    // Blur can be caused by reactive pane teardown. Do not write transient UI
+    // until that read completes, and preserve a same-cell refocus in the meantime.
+    queueMicrotask(() => {
+      if (!input.isConnected || input.ownerDocument.activeElement !== input) selectionMenuClearNativeTarget(view, target);
+    });
+    if (data.selectionTarget === target) data.selectionTarget = null;
+    if (mounted.get(container) !== data || !input.isConnected) return;
+    input.hidden = true; preview.removeAttribute('data-editing'); preview.removeAttribute('aria-hidden');
     if (data.composing === input) { data.composing = null; editTableCell(view, data.ref, row, column, input.value); }
   };
   const commit = () => {
-    if (mounted.get(container) !== data || data.readOnly) return;
+    if (mounted.get(container) !== data || data.readOnly || !input.isConnected) return;
     const start = input.selectionStart ?? input.value.length, end = input.selectionEnd ?? start;
     const length = input.value.length;
     if (!editTableCell(view, data.ref, row, column, input.value)) return;
     const delta = input.value.length - length;
     input.setSelectionRange(Math.max(0, start + delta), Math.max(0, end + delta));
   };
-  input.oninput = event => { if (!(event as InputEvent).isComposing && data.composing !== input) commit(); };
-  input.addEventListener('compositionstart', () => { data.composing = input; data.cancelledComposition = null; });
+  input.oninput = event => { if (!(event as InputEvent).isComposing && data.composing !== input) { commit(); syncSelectionMenu(); } };
+  input.addEventListener('compositionstart', () => {
+    if (mounted.get(container) !== data || !input.isConnected) return;
+    data.composing = input; data.cancelledComposition = null; selectionMenuClearNativeTarget(view, target);
+  });
   input.addEventListener('compositionend', () => {
-    if (mounted.get(container) !== data) return;
+    if (mounted.get(container) !== data || !input.isConnected) return;
     data.composing = null;
     if (data.cancelledComposition === input) {
       input.value = data.ref.rows[row]?.cells[column]?.value ?? '';
       data.cancelledComposition = null; return;
     }
     commit();
+    syncSelectionMenu();
   });
   input.onkeydown = event => {
-    if (mounted.get(container) !== data) return;
+    if (mounted.get(container) !== data || !input.isConnected) return;
     if (event.isComposing || data.composing === input) return;
     if ((event.metaKey || event.ctrlKey) && ['z', 'y'].includes(event.key.toLowerCase())) {
       // Existing pane shortcuts route Undo/Redo to the shared document root.
@@ -128,12 +171,16 @@ export class MarkdownTableWidget extends WidgetType {
   constructor(readonly ref: MarkdownTable, readonly readOnly: boolean) { super(); }
   override eq(other: MarkdownTableWidget) { return this.ref.from === other.ref.from && this.ref.source === other.ref.source && this.readOnly === other.readOnly; }
   override toDOM(view: EditorView) {
+    // CodeMirror measures the widget's border box. Keep vertical spacing inside
+    // that box so repeated tables cannot accumulate unmeasured cursor offsets.
+    const block = document.createElement('div'); block.className = 'gn-table-block'; block.contentEditable = 'false';
     const container = document.createElement('div'); container.className = 'gn-table'; container.contentEditable = 'false';
+    block.append(container);
     const toolbar = document.createElement('div'); toolbar.className = 'gn-table-toolbar'; toolbar.setAttribute('role', 'group'); toolbar.setAttribute('aria-label', 'Table controls');
     const scroll = document.createElement('div'); scroll.className = 'gn-table-scroll';
     const grid = document.createElement('table'); grid.setAttribute('aria-label', 'Markdown table'); scroll.append(grid);
     const status = document.createElement('span'); status.className = 'gn-table-position';
-    const data: MountedTable = { ref: this.ref, readOnly: this.readOnly, active: { row: 0, column: 0 }, toolbar, grid, status, composing: null, cancelledComposition: null };
+    const data: MountedTable = { view, ref: this.ref, readOnly: this.readOnly, active: { row: 0, column: 0 }, toolbar, grid, status, composing: null, cancelledComposition: null, selectionTarget: null };
     mounted.set(container, data);
     const control = (label: string, text: string, operation: TableOperation) => {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = text;
@@ -151,10 +198,11 @@ export class MarkdownTableWidget extends WidgetType {
     const source = document.createElement('button'); source.type = 'button'; source.textContent = 'Source'; source.title = 'Edit table Markdown source';
     source.onclick = event => { event.preventDefault(); event.stopPropagation(); showSource(view, data.ref); };
     toolbar.append(alignment, source, status); container.append(toolbar, scroll);
-    this.updateDOM(container, view);
-    return container;
+    this.updateDOM(block, view);
+    return block;
   }
-  override updateDOM(container: HTMLElement, view: EditorView) {
+  override updateDOM(block: HTMLElement, view: EditorView) {
+    const container = block.firstElementChild as HTMLElement;
     const data = mounted.get(container);
     if (!data) return false;
     if (data.composing && (data.ref.source !== this.ref.source || this.readOnly)) {
@@ -182,13 +230,23 @@ export class MarkdownTableWidget extends WidgetType {
       preview.innerHTML = inline.renderInline(value) || '<span class="gn-table-empty">Empty</span>';
       if (input.value !== value && data.composing !== input) input.value = value;
       input.disabled = this.readOnly;
-      if (this.readOnly) { input.hidden = true; preview.hidden = false; }
+      if (this.readOnly) { input.hidden = true; preview.removeAttribute('data-editing'); preview.removeAttribute('aria-hidden'); }
     }
     updateToolbar(data);
     return true;
   }
   override ignoreEvent() { return true; }
-  override destroy(container: HTMLElement) { mounted.delete(container); }
+  override destroy(block: HTMLElement) {
+    const container = block.firstElementChild as HTMLElement;
+    const data = mounted.get(container);
+    mounted.delete(container);
+    // A pane can retire its editor while Svelte is reading a derived snapshot.
+    // Retire the DOM target now, then notify transient UI outside that read.
+    if (data?.selectionTarget) {
+      const target = data.selectionTarget;
+      queueMicrotask(() => selectionMenuClearNativeTarget(data.view, target));
+    }
+  }
 }
 
 export class TableSourceDoneWidget extends WidgetType {
