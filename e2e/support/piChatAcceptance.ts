@@ -132,6 +132,7 @@ export async function observePi() {
       const watches = new Map<number, WatchHandle<ConversationView>>(), attaching = new Set<number>();
       const progress = (id: number) => stats.conversations[id] ??= { observations: 0, textWhileBusy: false, reasoningWhileBusy: false, uiTextWhileBusy: false, uiReasoningWhileBusy: false, compactionObserved: false };
       const sample = (id: number, view: ConversationView) => {
+        if (disposed) return;
         const record = progress(id), state = view.docs['pi.live'] as {
           run?: unknown;
           generation?: {
@@ -162,14 +163,22 @@ export async function observePi() {
           record.firstTerminalAt ??= performance.now();
       };
       let disposed = false;
-      const attach = () => {
-        for (const pane of bridge.readPiChatState()) {
+      // The runtime is process-owned, but a workspace bridge closes over one
+      // mounted Notepad. Settings removes it; returning installs a fresh bridge.
+      const currentPanes = () => host.__GNEAUXGHTS_NATIVE_E2E__?.readPiChatState() ?? [];
+      const observe = (callback: () => void) => {
+        if (disposed) return;
+        try { callback(); } catch { stats.observerErrors++; }
+      };
+      const attach = (panes: Pane[]) => {
+        if (disposed) return;
+        for (const pane of panes) {
           const id = pane.conversationId;
           if (!id || watches.has(id) || attaching.has(id))
             continue;
           attaching.add(id);
           void runtime.harness.conversation(id as ConversationId, context).then(async (conversation) => {
-            if (!conversation)
+            if (disposed || !conversation)
               return;
             const watch = await conversation.watch(context);
             if (disposed) {
@@ -178,14 +187,15 @@ export async function observePi() {
             }
             watches.set(id, watch);
             sample(id, watch.value);
-            watch.start(async (view) => { sample(id, view); });
+            watch.start(async (view) => observe(() => sample(id, view)));
           }).catch(() => { stats.observerErrors++; }).finally(() => attaching.delete(id));
         }
       };
-      const unsubscribe = runtime.harness.subscribeCommits(() => queueMicrotask(attach));
-      const observer = new MutationObserver(() => {
-        attach();
-        for (const pane of bridge.readPiChatState()) {
+      const unsubscribe = runtime.harness.subscribeCommits(() => queueMicrotask(() => observe(() => attach(currentPanes()))));
+      const observer = new MutationObserver(() => observe(() => {
+        const panes = currentPanes();
+        attach(panes);
+        for (const pane of panes) {
           if (!pane.conversationId)
             continue;
           const record = progress(pane.conversationId);
@@ -195,12 +205,17 @@ export async function observePi() {
           if (document.querySelector('[data-testid="pi-reasoning"][data-streaming="true"] pre')?.textContent?.trim())
             record.uiReasoningWhileBusy = true;
         }
-      });
+      }));
       observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-streaming'] });
-      stats.stop = () => { disposed = true; unsubscribe(); observer.disconnect(); for (const watch of watches.values())
-        void watch.stop(); native.stop(); };
+      stats.stop = () => {
+        if (disposed) return;
+        disposed = true; unsubscribe(); observer.disconnect();
+        for (const watch of watches.values()) void watch.stop().catch(() => { stats.observerErrors++; });
+        watches.clear(); native.stop();
+      };
       host.__PI_CHAT_ACCEPTANCE__ = stats;
-      attach();
+      try { attach(currentPanes()); }
+      catch (error) { stats.stop(); throw error; }
     })().then(() => done(null), error => done(String(error)));
   })).then(error => { assert.equal(error, null); });
 }

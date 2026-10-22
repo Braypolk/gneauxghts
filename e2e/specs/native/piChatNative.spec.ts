@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { $, browser } from '@wdio/globals';
 import { invokeNative } from '../../support/liveNative';
+import { navigateAppTab } from '../../support/appNavigation';
 import { assistantText, configurePi, live, messages, newPiConversation, observePi, openPiPane, paneState, piDiagnostics, restartPiFixture, savePiFixtureNote, sendPiMessage, startPiProviderFixture, waitPiIdle, writePiReport } from '../../support/piChatAcceptance';
 
 describe('ordinary Pi native integration with deterministic provider faults', function () {
@@ -56,6 +57,63 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     await $('button[role="menuitem"]*=Pi idle title/list observation').waitForExist();
     await $('button[aria-label="Conversations"]').click();
     assert.equal(provider.requests, count, 'Idle title/list updates must not trigger inference');
+  });
+
+  it('keeps observing the current workspace across Settings navigation', async () => {
+    await browser.execute(() => {
+      const host = window as Window & {
+        __GNEAUXGHTS_NATIVE_E2E__?: { readPiChatState(): unknown };
+        __PI_OBSERVER_LIFETIME__?: { retiredReads: number; errors: string[]; cleanup(): void };
+      };
+      const bridge = host.__GNEAUXGHTS_NATIVE_E2E__!;
+      const read = bridge.readPiChatState;
+      const errors: string[] = [];
+      const onError = (event: ErrorEvent) => { errors.push(event.message); };
+      const evidence = { retiredReads: 0, errors, cleanup() {
+        window.removeEventListener('error', onError); bridge.readPiChatState = read;
+        delete host.__PI_OBSERVER_LIFETIME__;
+      } };
+      bridge.readPiChatState = () => {
+        if (host.__GNEAUXGHTS_NATIVE_E2E__ !== bridge) evidence.retiredReads++;
+        return read();
+      };
+      window.addEventListener('error', onError);
+      host.__PI_OBSERVER_LIFETIME__ = evidence;
+    });
+    const evidence = () => browser.execute(() => {
+      const value = (window as Window & { __PI_OBSERVER_LIFETIME__?: { retiredReads: number; errors: string[] } }).__PI_OBSERVER_LIFETIME__!;
+      return { retiredReads: value.retiredReads, errors: value.errors };
+    });
+    try {
+      const requests = provider.requests;
+      await navigateAppTab('Settings');
+      await $('[data-testid="note-editor"]').waitForExist({ reverse: true });
+      // Deliver a DOM mutation after the real workspace has unmounted.
+      await browser.execute(async () => {
+        const marker = document.createElement('span'); document.body.append(marker); marker.remove();
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+      assert.equal((await evidence()).retiredReads, 0, 'Observer read a destroyed workspace after Settings navigation');
+      await navigateAppTab('Gneauxght');
+      await $('[data-testid="note-editor"]').waitForExist(); await openPiPane();
+      assert.equal(provider.requests, requests, 'Navigation must not start inference');
+      await newPiConversation(); const id = await sendPiMessage('fixture-read observer navigation'); await waitPiIdle();
+      const progress = (await piDiagnostics()).progress;
+      assert.equal(progress.observerErrors, 0);
+      const observed = progress.conversations[id];
+      assert(observed?.textWhileBusy && observed.reasoningWhileBusy, 'Observer must follow the new workspace conversation');
+      assert(observed.uiTextWhileBusy && observed.uiReasoningWhileBusy, 'Observer must retain real DOM delivery evidence');
+      const final = await evidence(); assert.equal(final.retiredReads, 0);
+      assert(!final.errors.some(message => message.includes('Unknown workspace pane')), 'Navigation emitted a stale workspace observer error');
+    } finally {
+      try {
+        if (await browser.execute(() => location.pathname) !== '/') {
+          await navigateAppTab('Gneauxght'); await $('[data-testid="note-editor"]').waitForExist();
+        }
+      } finally {
+        await browser.execute(() => (window as Window & { __PI_OBSERVER_LIFETIME__?: { cleanup(): void } }).__PI_OBSERVER_LIFETIME__?.cleanup());
+      }
+    }
   });
 
   it('parses a valid SSE stream with a missing Content-Type header through Pi', async () => {

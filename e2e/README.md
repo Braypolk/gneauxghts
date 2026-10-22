@@ -157,6 +157,13 @@ fixture; these checks make no live-model claim. `piChatLocal.spec.ts` is the
 separate live local-model lane. Every native suite writes only its generated
 fixture vault and starts on the ordinary `/` route.
 
+The process-local Pi observer follows the currently mounted workspace bridge.
+Settings has no workspace to sample; returning resumes observations without
+resetting process totals. Stopping observation retires queued callbacks and late
+watch deliveries. Callback failures increment `observerErrors` without retaining
+raw exceptions. The native navigation regression verifies both safe departure
+and streamed runtime/DOM observations after returning.
+
 `piChatHosted.spec.ts` is the opt-in live OpenAI lane, pinned to `gpt-6-luna`.
 With `OPENAI_API_KEY` supplied to the debug native process, run
 `GNEAUX_PI_HOSTED_ACCEPTANCE=1 node e2e/support/nativeSuite.mjs hosted`.

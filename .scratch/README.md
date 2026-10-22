@@ -11,6 +11,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 - [Bottom bar animation inventory](workspace-dock-motion/animation-inventory.md): current surface variants, editor/chat journeys, local exchanges, split layouts, display-size rules, timing, and the acceptance checklist for animation cleanup. The [existing motion spec](workspace-dock-motion/spec.md) supplies implementation context.
 
+- [Pane-motion wait after unmount](workspace-dock-motion/issues/01-motion-wait-after-unmount.md): `needs-triage`; a passing native Settings journey warns when a resumed motion wait reads destroyed workspace state. Stack capture distinguishes this from the corrected Pi observer.
+
 - [T3 Code provider authentication research](t3-provider-auth/research.md): completed source comparison of managed ChatGPT OAuth, existing CLI accounts and sensitive API-key storage, with a proposed Pi-backed connection experience. Research only; no authentication changes are implemented by this record.
 
 - [Historical Pi vault editing assessment](pi-vault-editing-assessment/assessment.md): public API comparison and six-case staging probe. Its recommendation is now implemented and verified by the [Pi note editing slice](archive/pi-note-editing.md).
@@ -44,6 +46,8 @@ and reproducible fixtures belong in Git.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.
 
 ## Completed work and local tools
+
+- [Pi observer lifetime](archive/pi-observer-lifetime.md): acceptance observation follows the mounted workspace across Settings, safely retires late callbacks/watches and accounts for callback failures. Four support regressions and real native navigation cover the fix; 55 native tests, 143 support tests, 1,418 frontend tests, type checks and production build pass.
 
 - [Native pane-motion sampling](archive/native-pane-motion-admission.md): corrected the false 319px mismatch by checking source wrapping before split admission and destination wrapping from the first layout frame; a controlled regression preserves strict drift detection and the original foreground native journey passes.
 
