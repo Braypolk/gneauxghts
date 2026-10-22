@@ -894,6 +894,9 @@
 
   async function waitForPaneMotion() {
     await paneLayoutMotion.wait();
+    // Unmount cancels motion and releases waiters too. Do not read component
+    // derived state after its workspace has left the document.
+    if (!workspaceShell?.isConnected) return;
     // Native inert/style propagation settles with paint after retained frames
     // change sides. Focus only after that boundary and recheck activation.
     if (compactPanes) {

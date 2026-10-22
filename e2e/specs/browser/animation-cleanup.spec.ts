@@ -1,5 +1,7 @@
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
+import { navigateAppTab } from '../../support/appNavigation';
+import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 
 async function ready(width = 1440) {
   await browser.setWindowSize(width, 1000);
@@ -9,6 +11,70 @@ async function ready(width = 1440) {
 }
 
 describe('animation interruptions and controls', () => {
+  for (const width of [1440, 640]) {
+    it(`retires pane-motion waits when Settings replaces the workspace at ${width}px`, async () => {
+      await resetBrowserWorkspace();
+      await browser.setWindowSize(width, 1000);
+      await waitForWorkspaceAnimationSettled();
+      await browser.execute(() => document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
+        .dispatchEvent(new PointerEvent('pointerenter')));
+      await $('button[aria-label="Split with current location"]').waitForClickable();
+      try {
+        const result = await browser.execute(() => new Promise<{
+          started: boolean; warnings: number; cancelled: boolean; settingsFocused: boolean; error?: string;
+        }>(done => {
+          const shell = document.querySelector<HTMLElement>('.notepad-shell')!;
+          const warn = console.warn;
+          let warnings = 0, started = false, finished = false;
+          let animations: Animation[] = [];
+          console.warn = (...args) => {
+            if (args.some(value => typeof value === 'string' && value.includes('derived_inert'))) warnings++;
+            warn(...args);
+          };
+          const finish = (error?: string) => {
+            if (finished) return;
+            finished = true; clearTimeout(deadline); observer.disconnect();
+            shell.removeEventListener('workspace-pane-layout-ready', leave);
+            console.warn = warn;
+            done({ started, warnings, cancelled: animations.length > 0 && animations.every(animation => animation.playState === 'idle'),
+              settingsFocused: document.activeElement?.matches('[data-settings-section]') ?? false, ...(error ? { error } : {}) });
+          };
+          const leave = () => {
+            started = shell.hasAttribute('data-pane-motion');
+            animations = shell.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity);
+            // Request real route navigation as soon as pane effects start.
+            // Keep the motion clock real so teardown owns cancellation.
+            document.querySelector<HTMLAnchorElement>('a[aria-label="Settings"]')!.click();
+          };
+          const observer = new MutationObserver(() => {
+            if (shell.isConnected) return;
+            observer.disconnect();
+            const settings = document.querySelector<HTMLButtonElement>('[data-settings-section]');
+            settings?.focus();
+            // Let released motion waiters and their focus continuations finish.
+            requestAnimationFrame(() => requestAnimationFrame(() => finish()));
+          });
+          const deadline = setTimeout(() => finish('Workspace did not unmount during pane motion'), 5000);
+          observer.observe(document.body, { subtree: true, childList: true });
+          shell.addEventListener('workspace-pane-layout-ready', leave, { once: true });
+          document.querySelector<HTMLElement>('button[aria-label="Split with current location"]')!.click();
+        }));
+        expect(result.error).toBeUndefined();
+        expect(result.started).toBe(true);
+        expect(result.cancelled).toBe(true);
+        expect(result.warnings).toBe(0);
+        expect(result.settingsFocused).toBe(true);
+        await navigateAppTab('Gneauxght');
+        await browser.$$('[data-testid="workspace-pane"]:not([data-pane-collapsed]) [data-testid="note-editor"] .cm-content')[0].waitForDisplayed();
+        await waitForWorkspaceAnimationSettled();
+        await $('[data-testid="note-search-input"]').setValue('Alpha');
+        await expect($('[data-testid="note-search-input"]')).toBeFocused();
+      } finally {
+        await resetBrowserWorkspace();
+      }
+    });
+  }
+
   it('unmounts closed Related results and keeps hidden split controls out of keyboard focus', async () => {
     await ready();
     await expect($('[role="dialog"][aria-label="Related notes"]')).not.toExist();
@@ -32,11 +98,13 @@ describe('animation interruptions and controls', () => {
       toggled: boolean;
       widths: number[];
       settled: boolean;
+      completedWhileMounted: boolean;
       error?: string;
     }>((done) => {
       const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]')!;
       const startWidth = pane.getBoundingClientRect().width;
       let toggled = false;
+      let watchingCompletion = false, completedWhileMounted = false;
       const widths: number[] = [];
       let frameId = 0;
       let finished = false;
@@ -46,7 +114,7 @@ describe('animation interruptions and controls', () => {
         finished = true;
         clearTimeout(deadline);
         cancelAnimationFrame(frameId);
-        done({ toggled, widths, settled: !pane.isConnected && !document.querySelector('[data-pane-motion]'),
+        done({ toggled, widths, completedWhileMounted, settled: !pane.isConnected && !document.querySelector('[data-pane-motion]'),
           ...(error ? { error } : {}) });
       };
       const deadline = setTimeout(() => finish('Pane collapse did not settle'), 3000);
@@ -60,6 +128,15 @@ describe('animation interruptions and controls', () => {
           else
             frameId = requestAnimationFrame(sample);
           return;
+        }
+        if (!watchingCompletion) {
+          const motion = pane.getAnimations().find(animation => animation.playState === 'running');
+          if (motion) {
+            watchingCompletion = true;
+            // The last rAF sample can precede the final animation frame. Check
+            // actual completion before removal instead of that sample's width.
+            void motion.finished.then(() => { completedWhileMounted = pane.isConnected; }, () => {});
+          }
         }
         const width = pane.getBoundingClientRect().width;
         if (toggled)
@@ -76,7 +153,7 @@ describe('animation interruptions and controls', () => {
     expect(result.toggled).toBe(true);
     expect(result.settled).toBe(true);
     expect(result.widths.length).toBeGreaterThan(3);
-    expect(result.widths.at(-1)).toBeLessThanOrEqual(1);
+    expect(result.completedWhileMounted).toBe(true);
     expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(1);
   });
 

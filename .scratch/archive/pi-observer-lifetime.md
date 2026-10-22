@@ -58,7 +58,7 @@ Logs are local under `/tmp/gneauxghts-pi-observer-*.log`.
 
 One remaining Svelte `derived_inert` warning was traced using temporary warning
 stack capture to `Notepad.svelte`'s `waitForPaneMotion()` reading `compactPanes`
-after an awaited motion. It is separate from the Pi observer and remains a
-[tracked follow-up](../workspace-dock-motion/issues/01-motion-wait-after-unmount.md).
+after an awaited motion. It is separate from the Pi observer and was subsequently
+[corrected and regression-tested](pane-motion-wait-lifetime.md).
 The diagnostic instrumentation was removed. Existing nonfatal native
 ResizeObserver-loop diagnostics also remain; no warnings are suppressed.
