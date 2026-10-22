@@ -18,6 +18,40 @@ describe('native image interaction lifecycle', () => {
     await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
     await $('span=Loading editor').waitForExist({ reverse: true });
   });
+  it('imports a WebKit file drop at its pointer and persists real asset bytes', async () => {
+    await $('[data-testid="note-title"]').setValue('Native dropped image journey');
+    await browser.execute(() => {
+      const element = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
+      element.focus(); const bridge = (window as any).__GNEAUXGHTS_NATIVE_E2E__;
+      bridge.setEditorSelection(0, bridge.readEditorState().editor.markdown.length);
+      const text = new DataTransfer(); text.setData('text/plain', 'Before\n\nAfter');
+      element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: text, bubbles: true, cancelable: true }));
+      bridge.setEditorSelection(8, 13);
+    });
+    const admission = await browser.execute(() => {
+      const content = document.querySelector('[data-testid="note-editor"] .cm-content')!;
+      const line = [...content.querySelectorAll('.cm-line')].find(line => !line.textContent?.trim())!;
+      const rect = line.getBoundingClientRect(); const data = new DataTransfer();
+      data.items.add(new File(['<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70"><rect width="100" height="70" fill="green"/></svg>'], 'dropped.svg', { type: 'image/svg+xml' }));
+      const init = { dataTransfer: data, clientX: rect.left + 3, clientY: rect.top + rect.height / 2, bubbles: true, cancelable: true };
+      const over = new DragEvent('dragover', init); content.dispatchEvent(over);
+      const drop = new DragEvent('drop', init); content.dispatchEvent(drop);
+      return { over: over.defaultPrevented, drop: drop.defaultPrevented };
+    });
+    expect(admission).toEqual({ over: true, drop: true });
+    await $('.gn-image-embed img').waitForDisplayed();
+    await browser.waitUntil(async () => !!(await state()).noteId);
+    const { noteId, editor: { markdown } } = await state();
+    expect(markdown).toMatch(/^Before\n!\[\[[^\]]+\]\]\nAfter$/);
+    const asset = markdown.match(/!\[\[([^\]]+)\]\]/)![1];
+    expect(await invoke('read_image_asset_data_url', { fileName: asset })).toBe(
+      `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70"><rect width="100" height="70" fill="green"/></svg>').toString('base64')}`
+    );
+    await browser.waitUntil(async () => (await invoke('read_note', { noteId, path: null })).markdown === markdown, { timeout: 20_000 });
+    await key('z', true);
+    await browser.waitUntil(async () => (await state()).editor.markdown === 'Before\n\nAfter');
+    expect(await invoke('read_image_asset_data_url', { fileName: asset })).toContain('data:image/svg+xml;base64,');
+  });
   it('imports a WebKit clipboard file, resizes, opens the viewer, and persists on reopen', async () => {
     const title = await $('[data-testid="note-title"]'); await title.setValue('Native image journey');
     const content = await $('[data-testid="note-editor"] .cm-content');

@@ -47,16 +47,36 @@ export function createImagePasteExtension(config: ImagesConfig) {
     }
     destroy() { views.clear(); }
   });
+  function importFiles(view: EditorView, files: File[], from: number, to: number) {
+    const id = Symbol('image import');
+    const job: Upload = { id, from, to, original: view.state.sliceDoc(from, to), files,
+      assets: files.map(() => null), error: false, pending: false };
+    views.set(id, view); view.dispatch({ effects: setUpload.of(job) }); void run(view, id);
+  }
   return [uploads, placeholders, lifecycle, cleanup, EditorView.domEventHandlers({
     paste(event, view) {
       if (view.state.readOnly || view.composing || view.state.selection.ranges.length !== 1) return false;
       const files = Array.from(event.clipboardData?.files ?? []).filter(file => file.type.startsWith('image/'));
       if (!files.length) return false;
       event.preventDefault();
-      const selection = view.state.selection.main, id = Symbol('image import');
-      const job: Upload = { id, from: selection.from, to: selection.to, original: view.state.sliceDoc(selection.from, selection.to), files,
-        assets: files.map(() => null), error: false, pending: false };
-      views.set(id, view); view.dispatch({ effects: setUpload.of(job) }); void run(view, id); return true;
+      const selection = view.state.selection.main;
+      importFiles(view, files, selection.from, selection.to); return true;
+    },
+    dragover(event, view) {
+      if (view.state.readOnly || view.composing || !event.dataTransfer?.types.includes('Files')) return false;
+      event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; return true;
+    },
+    drop(event, view) {
+      const files = Array.from(event.dataTransfer?.files ?? []).filter(file => file.type.startsWith('image/'));
+      if (!files.length) return false;
+      // Consume image files before CodeMirror's default file drop reads their bytes as text.
+      event.preventDefault();
+      if (view.state.readOnly || view.composing) return true;
+      const position = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+      if (position !== null) {
+        view.focus(); importFiles(view, files, position, position);
+      }
+      return true;
     }
   })];
 }

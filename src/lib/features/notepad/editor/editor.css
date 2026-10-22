@@ -383,7 +383,14 @@
   text-decoration-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
 }
 .cm-gn-date-chip:focus-visible, .cm-gn-date-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.cm-gn-date-add { margin-left: 1.5rem; color: var(--muted-foreground); opacity: 0; }
+/* An absolute inline's static position follows the final text fragment without
+   contributing width or a break opportunity to the task's line layout. */
+.cm-gn-date-add {
+  position: absolute;
+  margin-left: 1.5rem;
+  color: var(--muted-foreground);
+  opacity: 0;
+}
 .cm-line:hover .cm-gn-date-add, .cm-gn-date-add:focus-visible { opacity: 1; }
 .cm-gn-date-add-label { display: none; }
 @media (any-pointer: coarse) {

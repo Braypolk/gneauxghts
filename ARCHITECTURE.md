@@ -464,7 +464,9 @@ authors size suffixes or dirties the note. Size hints expire with the document.
 
 Width, reset, deletion, cut and successful imports dispatch ordinary isolated
 editor transactions through `EditorDocumentRuntime`; they share its undo root and
-the existing save/Editing Window path. Paste jobs preserve selected text until
+the existing save/Editing Window path. Paste and file-drop imports share the same
+view-owned upload jobs; drops insert at their pointer without replacing the editor
+selection. Paste jobs preserve selected text until
 success, map unaffected ranges, reuse partial successes, and discard results after
 replacement, navigation, read-only takeover or view destruction. Removing an
 embed never removes asset bytes.

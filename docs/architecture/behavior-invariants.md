@@ -140,6 +140,11 @@ it reuses the active retained-context pane and reveals its editor. Navigation
 always passes through the editor lifecycle before content synchronization is
 considered complete.
 
+Previous-note navigation restores keyboard editing at the pane's saved cursor.
+The outgoing document releases native editing focus before its mounted editor
+is hidden and rebound; destination focus follows completed presentation and
+still yields to newer user interaction.
+
 Committed selections in the shared discovery popup (Search, Related, pinned
 notes, images and Recent) open in the active pane, replacing its chat view when
 necessary. The selected pane is captured before asynchronous navigation; other
@@ -462,6 +467,9 @@ syntax. Like ordinary inline dates, its picker has no date textbox and closes
 on note edits. Direct typing uses ordinary saving and undo; calendar Apply and
 deadline removal keep their existing task-date transform. Adding a deadline or
 editing from the master task list retains the popup date input.
+Opening an editor task's add-date picker establishes the invoked task position
+as its selection before Apply. Its undo/redo restores a position on that task,
+rather than an unrelated caret left elsewhere in the note.
 
 ### Save completion has a consistency boundary
 
@@ -1184,6 +1192,9 @@ publication/conflict/proof requirements continue independently of that UI.
 - Paste keeps the selected authored text until every file has saved. A failed or
   canceled job retains it; retry reuses successful files. Results from a retired
   view or a changed replacement range cannot insert into a different document.
+- Image file drops insert at the drop position through the same upload jobs,
+  asset storage, shared undo and save paths; they never import binary bytes as text
+  or replace an unrelated selected range. Failed drops retain the authored text.
 - The viewer shares the existing transient owner. Closing returns focus, scroll
   and selection only to a still-live origin. Image-list changes, replacement and
   history/review takeover invalidate it. Gallery navigation includes offscreen

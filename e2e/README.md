@@ -51,6 +51,10 @@ Covered regressions:
 - Repeated note A / note B switching with assertions that editor documents never cross-contaminate.
 - Note → chat → note lifecycle with scroll restoration.
 
+The foreground native `previous-note-focus` regression verifies WebKit text
+insertion at saved cursors after Cmd+L and the previous-note button. DOM focus
+alone cannot establish that WebKit's native editing context accepts typing.
+
 Use this layer for note operations, Pi chat rendering, pane transitions, settings, and external-sync UI states when backend behavior can be deterministic.
 
 ## Native Tauri layer

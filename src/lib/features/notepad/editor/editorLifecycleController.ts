@@ -136,6 +136,11 @@ export function createEditorLifecycleController({
       return false;
     }
 
+    // End the old document's native editing focus before hiding and replacing
+    // its DOM. WebKit otherwise retains a stale editing context: focus and
+    // selection look correct after setState, but native typing is rejected.
+    // Workspace navigation restores focus once the new document is presented.
+    controller.view.contentDOM.blur();
     setIsEditorReady(false);
     await tick();
 

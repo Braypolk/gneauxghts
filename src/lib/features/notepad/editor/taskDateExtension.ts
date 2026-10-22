@@ -44,6 +44,10 @@ export function openTaskDueDatePicker(view: EditorView, pos: number, token?: { f
   });
   pickerClosers.set(view, { close, editInNote });
   if (editInNote) view.dispatch({ selection: { anchor: dateFrom, head: dateFrom + annotation.date.length } });
+  // A widget can be clicked while the caret is elsewhere in the note. History
+  // records the pre-edit selection, so establish the invoked task position before
+  // Apply rather than letting undo restore (and scroll to) that unrelated caret.
+  else view.dispatch({ selection: { anchor: pos } });
   return close;
 }
 
@@ -92,9 +96,8 @@ class DateChip extends WidgetType {
   }
   coordsAt(dom: HTMLElement) {
     if (this.label !== '+') return null;
-    // This zero-length control sits after the task text. Its button box
-    // includes line-height and a margin, so measuring it makes the caret
-    // taller and shifts it away from the actual insertion point.
+    // This zero-length control floats after the task text. Measuring
+    // its button box would shift the caret away from the authored text.
     const line = dom.closest('.cm-line');
     if (!line) return null;
     const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);

@@ -25,6 +25,22 @@ function pickerOptions() {
 describe('editor task date commits', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each(['before', 'after'])('anchors date assignment history on the task when the old cursor is %s it', (location) => {
+    const doc = 'Before\n- [ ] Task\nAfter';
+    const { view, undo, redo } = editor(doc);
+    const taskEnd = doc.indexOf('\nAfter');
+    view.dispatch({ selection: { anchor: location === 'before' ? 0 : doc.length } });
+    openTaskDueDatePicker(view, taskEnd);
+    pickerOptions().onCommit({ date: '2026-10-02', time: null });
+    const dated = view.state.doc.toString();
+    expect(undo()).toBe(true);
+    expect(view.state.doc.toString()).toBe(doc);
+    expect(view.state.selection.main.head).toBe(taskEnd);
+    expect(redo()).toBe(true);
+    expect(view.state.doc.toString()).toBe(dated);
+    expect(view.state.selection.main.head).toBe(dated.indexOf('\nAfter'));
+  });
+
   it('rejects a concurrent document edit without changing either task', () => {
     const { view } = editor('- [ ] Parent\n  - [ ] Child');
     openTaskDueDatePicker(view, 0);

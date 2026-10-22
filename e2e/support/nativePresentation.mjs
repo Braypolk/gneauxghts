@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 
 export const foregroundNativeSpecs = [
-  'search-focus', 'pane-animation', 'chat-pane-animation', 'workspace-dock-outline',
+  'search-focus', 'previous-note-focus', 'pane-animation', 'chat-pane-animation', 'workspace-dock-outline',
   'note-timeline-phase-1-3', 'editing-windows'
 ];
 
