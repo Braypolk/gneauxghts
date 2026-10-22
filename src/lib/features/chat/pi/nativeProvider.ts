@@ -66,6 +66,8 @@ const nativeFailures: Record<string, string> = {
   provider_rate_limit: 'rate limit: the model server asked to retry',
   provider_limit: 'insufficient_quota: the model account cannot accept this request',
   connection: 'network error: native provider connection failed',
+  connection_timeout: 'network error: The model request timed out. Check the server and try again.',
+  connection_dns: 'network error: The model server hostname could not be resolved. Check the server address and network connection.',
   stream: 'network error: native provider stream failed',
   cancelled: 'Native inference cancelled',
   retired_authority: 'This conversation has retired access. Start a new conversation.',
@@ -78,13 +80,21 @@ const nativeFailures: Record<string, string> = {
 };
 const safeFailures = new Set([...Object.values(nativeFailures), 'Native provider did not return SSE',
   'Native stream ended before headers', 'Citation admission is unavailable']);
+function ownString(value: unknown, key: string): string | undefined {
+  try {
+    if (!value || typeof value !== 'object') return;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor && typeof descriptor.value === 'string' ? descriptor.value : undefined;
+  } catch { return; }
+}
 function safeFailure(error: unknown, original?: AssistantMessage): string {
   // Pi's public classifiers run before redaction; their canonical categories preserve
   // standard retry/overflow recovery without retaining server echoes or credentials.
-  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
-    return nativeFailures[error.code] ?? 'The model request could not complete. Start a new attempt.';
+  const code = ownString(error, 'code');
+  if (code !== undefined) {
+    return Object.hasOwn(nativeFailures, code) ? nativeFailures[code] : 'The model request could not complete. Start a new attempt.';
   }
-  const value = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error);
+  const value = typeof error === 'string' ? error : ownString(error, 'message') ?? '';
   // A plan limit is terminal even if it arrives in a 429/streamed error that
   // would otherwise match Pi's generic transient-error classifier.
   if (value.includes('subscription_sharing_usage_limit_exceeded')) return 'insufficient_quota: ChatGPT usage limit reached. Check your ChatGPT plan usage.';

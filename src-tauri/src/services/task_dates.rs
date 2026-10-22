@@ -1,11 +1,5 @@
 //! Portable authored task deadlines; no timestamp or storage authority.
-use regex::Regex;
-use std::sync::LazyLock;
-
-static ANNOTATION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"@due\((\d{4}-\d{2}-\d{2})\)").unwrap());
-static PROTECTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
-static DUE_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|\s)due$").unwrap());
+use regex::regex;
 
 pub(crate) fn valid_calendar_date(value: &str) -> bool {
     let bytes = value.as_bytes();
@@ -41,7 +35,7 @@ pub(crate) fn valid_calendar_date(value: &str) -> bool {
 }
 
 fn protected_ranges(text: &str) -> Vec<(usize, usize)> {
-    let mut ranges: Vec<_> = PROTECTED
+    let mut ranges: Vec<_> = regex!(r"<[^>]*>")
         .find_iter(text)
         .map(|m| (m.start(), m.end()))
         .collect();
@@ -149,7 +143,7 @@ fn balanced_text_end(
 
 pub(crate) fn due_annotations(text: &str) -> Vec<(usize, usize, String)> {
     let protected = protected_ranges(text);
-    ANNOTATION
+    regex!(r"@due\((\d{4}-\d{2}-\d{2})\)")
         .captures_iter(text)
         .filter_map(|capture| {
             let annotation = capture.get(0)?;
@@ -198,7 +192,7 @@ pub(crate) fn set_task_line_due_date(text: &str, date: Option<&str>) -> Result<S
     Ok(match date {
         Some(date) => {
             let content = result.trim_end();
-            let wording = if DUE_WORD.is_match(content) {
+            let wording = if regex!(r"(?i)(?:^|\s)due$").is_match(content) {
                 ""
             } else {
                 " due"

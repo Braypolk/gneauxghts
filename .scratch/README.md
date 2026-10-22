@@ -7,6 +7,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [Upgraded-package capability outcome](archive/package-capabilities-2026-10-21.md): all ready items assigned to this chat are implemented or have a completed bounded no-change experiment. Combined verification passed, including 65 browser specs and 12 native specs; explicit measurement/restart skips and inspector limits are recorded in the outcome. Historical execution tickets are archived; the [plan](package-capabilities/spec.md) retains scope/dispositions. [Image delivery](package-capabilities/issues/05-native-image-delivery.md) belongs to the separate image chat, and [watcher health](package-capabilities/issues/09-watcher-diagnostics.md) and the newly observed [inspector activation limits](package-capabilities/issues/12-inspector-native-activation.md) remain `needs-triage`.
+
 - [Bottom bar animation inventory](workspace-dock-motion/animation-inventory.md): current surface variants, editor/chat journeys, local exchanges, split layouts, display-size rules, timing, and the acceptance checklist for animation cleanup. The [existing motion spec](workspace-dock-motion/spec.md) supplies implementation context.
 
 - [T3 Code provider authentication research](t3-provider-auth/research.md): completed source comparison of managed ChatGPT OAuth, existing CLI accounts and sensitive API-key storage, with a proposed Pi-backed connection experience. Research only; no authentication changes are implemented by this record.

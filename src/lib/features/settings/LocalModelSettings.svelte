@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import {
     Check,
     Brain,
@@ -56,6 +57,22 @@
   let loadingCapabilitiesFor = $state<string | null>(null);
   let isSavingCapabilities = $state(false);
 
+  let disposed = false;
+  let discoveryGeneration = 0;
+  let endpointGeneration = 0;
+  onDestroy(() => { disposed = true; discoveryGeneration++; endpointGeneration++; });
+  $effect(() => {
+    // Endpoint edits retire only this view's results; they never start discovery.
+    baseUrl;
+    discoveryGeneration++;
+    endpointGeneration++;
+    discoveredModels = [];
+    capabilitiesByModel = {};
+    metadataByModel = {};
+    discoveryError = null;
+    isDiscovering = false;
+  });
+
   const models = $derived(mergeLocalModels(discoveredModels, selectedModel));
   const reasoningOptions = $derived(
     editingModel ? chatReasoningChoices('local', editingModel, metadataByModel[editingModel]) : []
@@ -81,8 +98,9 @@
 
   async function loadCapabilities(model: string) {
     const endpoint = baseUrl;
+    const generation = endpointGeneration;
     const metadata = await api.getModelCapabilities('local', model, endpoint);
-    if (endpoint !== baseUrl) throw new Error('Server endpoint changed while loading model capabilities.');
+    if (disposed || generation !== endpointGeneration || endpoint !== baseUrl) throw new Error('Server endpoint changed while loading model capabilities.');
     metadataByModel = { ...metadataByModel, [model]: metadata };
     const capabilities = capabilitySelection(metadata);
     capabilitiesByModel = { ...capabilitiesByModel, [model]: capabilities };
@@ -96,10 +114,14 @@
       discoveryError = 'Enter a local endpoint before refreshing models.';
       return;
     }
+    const endpoint = baseUrl;
+    const generation = ++discoveryGeneration;
+    const current = () => !disposed && endpoint === baseUrl && generation === discoveryGeneration;
     isDiscovering = true;
     discoveryError = null;
     try {
-      const discovered = await api.listLocalModels(baseUrl);
+      const discovered = await api.listLocalModels(endpoint);
+      if (!current()) return;
       discoveredModels = discovered;
       const nextModels = mergeLocalModels(discovered, selectedModel);
       if (!selectedModel.trim() && nextModels[0]) onSelect(nextModels[0].id);
@@ -112,15 +134,16 @@
           }
         })
       );
+      if (!current()) return;
       onStatus?.(
         discovered.length
           ? `Found ${discovered.length} local model${discovered.length === 1 ? '' : 's'}.`
           : 'The local endpoint is reachable, but it returned no models.'
       );
     } catch (refreshError) {
-      discoveryError = errorText(refreshError, 'Unable to reach the local model endpoint.');
+      if (current()) discoveryError = errorText(refreshError, 'Unable to reach the local model endpoint.');
     } finally {
-      isDiscovering = false;
+      if (current()) isDiscovering = false;
     }
   }
 
@@ -136,18 +159,22 @@
   }
 
   async function openEditor(model: string) {
+    if (disposed) return;
+    const endpoint = baseUrl;
+    const generation = endpointGeneration;
+    const current = () => !disposed && endpoint === baseUrl && generation === endpointGeneration && editingModel === model;
     editingModel = model;
     loadingCapabilitiesFor = model;
     draftCapabilities = capabilitiesByModel[model] ?? { ...defaultCapabilities };
     try {
       const capabilities = await loadCapabilities(model);
-      if (editingModel === model) draftCapabilities = capabilities;
+      if (current()) draftCapabilities = capabilities;
     } catch (loadError) {
-      if (editingModel === model) {
+      if (current()) {
         onError?.(errorText(loadError, 'Unable to load this model’s capabilities.'));
       }
     } finally {
-      if (loadingCapabilitiesFor === model) loadingCapabilitiesFor = null;
+      if (!disposed && loadingCapabilitiesFor === model) loadingCapabilitiesFor = null;
     }
   }
 

@@ -367,3 +367,37 @@ it.each([
   }
   expect(requests).toHaveLength(2);
 });
+
+it.each([
+  ['connection', 'network error: native provider connection failed'],
+  ['connection_dns', 'network error: The model server hostname could not be resolved. Check the server address and network connection.'],
+  ['connection_timeout', 'network error: The model request timed out. Check the server and try again.']
+])('keeps %s failures actionable, redacted and eligible for Pi recovery', async (code, expected) => {
+  native.invoke.mockImplementation(async (command) => {
+    if (command === 'pi_chat_model_configuration') return { contextWindow: 8192, maxTokens: 2048, images: false, tools: true, reasoningEffort: 'off', reasoningWireEffort: null };
+    if (command === 'pi_chat_validate_authority') return;
+    if (command === 'pi_chat_fetch') throw { code, message: 'SECRET_ENDPOINT_PROMPT', stack: 'SECRET_STACK', cause: 'SECRET_TOKEN' };
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const binding: NativeBinding = { authorityId: 'authority', conversationId: 1, providerSessionId: 'session' };
+  const admit = vi.fn(async (_binding: NativeBinding, message: AssistantMessage) => message);
+  const models = createNativeModels(new Map([['session', binding]]), admit);
+  const model = await models.registerModel('local', 'fixture');
+  const result = await models.completeSimple(model, { messages: [{ role: 'user', content: 'Find themes', timestamp: 1 }] }, { sessionId: 'session' });
+  expect(result.stopReason).toBe('error');
+  expect(result.errorMessage).toBe(expected);
+  const { isRetryableAssistantError } = await import('@earendil-works/pi-ai');
+  expect(isRetryableAssistantError(result)).toBe(true);
+  expect(JSON.stringify(result)).not.toContain('SECRET');
+  expect(admit).not.toHaveBeenCalled();
+});
+
+it.each(['unknown_code', 'constructor', '__proto__'])('rejects unallowlisted %s codes without inspecting arbitrary properties', async code => {
+  const touched = vi.fn(() => { throw Error('SECRET'); });
+  const error = { code };
+  for (const key of ['message', 'stack', 'cause', 'endpoint', 'payload']) Object.defineProperty(error, key, { get: touched });
+  native.invoke.mockRejectedValue(error);
+  await expect(nativeFetch({ authorityId: 'a', conversationId: 1, providerSessionId: 's' }, 'local', 'm')('http://unused.invalid', { method: 'POST', body: '{}' }))
+    .rejects.toThrow('The model request could not complete. Start a new attempt.');
+  expect(touched).not.toHaveBeenCalled();
+});

@@ -4,6 +4,8 @@ const catalog = {
   runtime_report: ['warning', 'report', 'Chat reported a problem. Some updates or extensions may be unavailable.'],
   session_problem: ['warning', 'report', 'Chat reported a storage or runtime problem.'],
   provider_connection: ['warning', 'provider', 'The model connection reported a problem.'],
+  provider_connection_dns: ['warning', 'provider', 'The model server hostname could not be resolved. Check the server address and network connection.'],
+  provider_connection_timeout: ['warning', 'provider', 'The model request timed out. Check the server and try again.'],
   provider_capacity: ['warning', 'provider', 'The model reported a context capacity problem.'],
   provider_limit: ['warning', 'provider', 'The model account reported a usage limit.'],
   provider_credential: ['warning', 'provider', 'The model credential is unavailable. Check Settings.'],
@@ -21,6 +23,7 @@ export type PiDiagnostic = Readonly<{
 export type PiDiagnosticSnapshot = Readonly<{ state: 'open' | 'closing' | 'closed' | 'failed'; notices: readonly PiDiagnostic[] }>;
 export const MAX_PI_DIAGNOSTICS = 12;
 const nativeCodes = new Map<string, PiDiagnosticCode>([
+  ['connection_timeout', 'provider_connection_timeout'], ['connection_dns', 'provider_connection_dns'],
   ['connection', 'provider_connection'], ['stream', 'provider_connection'], ['provider_transient', 'provider_connection'],
   ['provider_context_overflow', 'provider_capacity'], ['provider_limit', 'provider_limit'], ['provider_rate_limit', 'provider_limit'],
   ['credential', 'provider_credential'], ['retired_authority', 'authority_changed'], ['stale_authority', 'authority_changed'],

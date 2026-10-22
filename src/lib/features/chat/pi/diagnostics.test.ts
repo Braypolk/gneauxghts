@@ -76,3 +76,18 @@ describe('Pi diagnostic privacy boundary', () => {
     expect(late).toHaveBeenCalledOnce();
   });
 });
+
+it.each([
+  ['connection_dns', 'provider_connection_dns', 'The model server hostname could not be resolved. Check the server address and network connection.'],
+  ['connection_timeout', 'provider_connection_timeout', 'The model request timed out. Check the server and try again.']
+])('coalesces %s as a curated observational warning', (nativeCode, code, message) => {
+  const sink = createPiDiagnostics();
+  const touched = vi.fn(() => { throw Error(canary); });
+  const failure = { code: nativeCode };
+  for (const key of ['message', 'stack', 'cause', 'endpoint', 'payload']) Object.defineProperty(failure, key, { get: touched });
+  sink.report(failure); sink.report(failure);
+  expect(get(sink)).toEqual({ state: 'open', notices: [{ code, severity: 'warning', stage: 'provider', message, count: 2 }] });
+  expect(touched).not.toHaveBeenCalled();
+  sink.dispose(); sink.report(failure);
+  expect(get(sink)).toEqual({ state: 'closed', notices: [] });
+});

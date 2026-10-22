@@ -30,6 +30,8 @@ jobs:
       - run: pnpm build
       - name: Replay agent verification regressions
         run: pnpm agent:test
+      - name: Verify SvelteKit client error boundaries
+        run: pnpm test:client-errors
       - name: Upload agent replay failure screenshots
         if: failure()
         uses: actions/upload-artifact@v4

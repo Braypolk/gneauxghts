@@ -709,10 +709,11 @@ async fn dispatch(
     if let Some(key) = &configuration.credential {
         request = request.bearer_auth(key);
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|_| transport_error("connection", "Native provider connection failed"))?;
+    let response = request.send().await.map_err(|error| {
+        let failure =
+            crate::provider_config::connection_failure::ConnectionFailure::from_reqwest(&error);
+        transport_error(failure.code(), failure.message())
+    })?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
         // Error bodies are untrusted and may echo prompts or credentials. Inspect only

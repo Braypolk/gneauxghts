@@ -164,6 +164,126 @@ describe('searchable settings workspace', () => {
     expect(calls).not.toContain('chat_list_openai_models');
   });
 
+  it('presents curated local connection failures while preserving manual setup and later refresh', async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      const failures = [
+        'The model server hostname could not be resolved. Check the server address and network connection.',
+        'The model request timed out. Check the server and try again.',
+        'The model server could not be reached. Check its address and connection.'
+      ];
+      native.invoke = async (command, args) => {
+        if (command === 'chat_get_settings') return { ...await original(command, args) as Record<string, unknown>, provider: 'local', localModel: 'saved-local-model' };
+        if (command === 'chat_list_local_models') {
+          const failure = failures.shift();
+          if (failure) throw failure;
+          return [{ id: 'refreshed-model' }];
+        }
+        return original(command, args);
+      };
+    });
+    await category('ai').click();
+    const refresh = () => $('button[aria-label="Refresh server models"]');
+    for (const message of ['hostname could not be resolved', 'request timed out', 'could not be reached']) {
+      await refresh().click();
+      await browser.waitUntil(async () => (await $('[data-settings-anchor="chat-model"]').getText()).includes(message));
+      await $('button[aria-label="Configure saved-local-model"]').waitForDisplayed();
+    }
+    await $('button[aria-label="Add a model manually"]').click();
+    await $('#manual-local-model').setValue('manual-model');
+    await $('button=Add').click();
+    await $('[role="dialog"][aria-labelledby="local-model-editor-title"]').waitForDisplayed();
+    await $('[role="dialog"] button[aria-label="Close model editor"]').click();
+    await $('button[aria-label="Configure manual-model"]').waitForDisplayed();
+    await refresh().click();
+    await $('button[aria-label="Configure refreshed-model"]').waitForDisplayed();
+    expect(await $('[data-settings-anchor="chat-model"]').getText()).not.toContain('could not be reached');
+  });
+
+  it('retires delayed local discovery results after endpoint edits and Settings disposal', async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      const fixture = { calls: 0, resolve: (_models: unknown) => {}, reject: (_reason: string) => {} };
+      native.invoke = async (command, args) => {
+        if (command === 'chat_get_settings') return { ...await original(command, args) as Record<string, unknown>, provider: 'local', localModel: 'saved-local-model' };
+        if (command === 'chat_list_local_models') {
+          fixture.calls++;
+          return new Promise((resolve, reject) => { fixture.resolve = resolve; fixture.reject = reject; });
+        }
+        return original(command, args);
+      };
+      (window as unknown as { __delayedDiscovery: typeof fixture }).__delayedDiscovery = fixture;
+    });
+    await category('ai').click();
+    const refresh = () => $('button[aria-label="Refresh server models"]');
+    const endpoint = () => $('[data-settings-anchor="chat-endpoint"] input');
+    const settle = async (failure: boolean) => browser.execute((failure) => {
+      const fixture = (window as unknown as { __delayedDiscovery: { resolve: (models: unknown) => void; reject: (reason: string) => void } }).__delayedDiscovery;
+      if (failure) fixture.reject('OLD_ENDPOINT_ERROR'); else fixture.resolve([{ id: 'OLD_ENDPOINT_MODEL' }]);
+    }, failure);
+    for (const failure of [false, true]) {
+      await refresh().click();
+      await endpoint().setValue(`http://new-endpoint-${failure}.invalid/v1`);
+      await refresh().waitForEnabled();
+      await settle(failure);
+      await browser.execute(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(await $('[data-settings-anchor="chat-model"]').getText()).not.toContain('OLD_ENDPOINT');
+      expect(await $('body').getText()).not.toContain('Found 1 local model');
+    }
+    await refresh().click();
+    await category('appearance').click();
+    await settle(false);
+    await category('ai').click();
+    await refresh().waitForEnabled();
+    expect(await $('[data-settings-anchor="chat-model"]').getText()).not.toContain('OLD_ENDPOINT');
+    expect(await browser.execute(() => (window as unknown as { __delayedDiscovery: { calls: number } }).__delayedDiscovery.calls)).toBe(3);
+  });
+
+  for (const failure of [false, true]) it(`retires a delayed local capability ${failure ? 'failure' : 'success'} after switching provider`, async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      const fixture = { settle: async (_failure: boolean) => {} };
+      native.invoke = async (command, args) => {
+        if (command === 'chat_get_settings') return { ...await original(command, args) as Record<string, unknown>, provider: 'local', localModel: 'saved-local-model' };
+        if (command === 'chat_get_model_capabilities') {
+          return new Promise((resolve, reject) => {
+            fixture.settle = async (failure) => {
+              if (failure) reject('Retired local model capability failure');
+              else resolve(await original(command, args));
+            };
+          });
+        }
+        return original(command, args);
+      };
+      (window as unknown as { __delayedCapabilities: typeof fixture }).__delayedCapabilities = fixture;
+    });
+    await category('ai').click();
+    await $('button[aria-label="Configure saved-local-model"]').click();
+    await $('[role="dialog"][aria-labelledby="local-model-editor-title"]').waitForDisplayed();
+
+    // The plain dialog leaves background controls keyboard-accessible. Switching
+    // provider unmounts LocalModelSettings while its parent still shows feedback.
+    const provider = () => $('[data-settings-anchor="chat-provider"] select');
+    for (let attempts = 0; attempts < 8 && !await provider().isFocused(); attempts++) {
+      await browser.keys(['Shift', 'Tab']);
+    }
+    await expect(provider()).toBeFocused();
+    await browser.keys('OpenAI Responses API');
+    await browser.keys('Tab');
+    await expect(provider()).toHaveValue('openai');
+    await expect($('[role="dialog"][aria-labelledby="local-model-editor-title"]')).not.toExist();
+    await expect($('[role="alert"]')).not.toExist();
+    await browser.execute(async (failure) => {
+      await (window as unknown as { __delayedCapabilities: { settle: (failure: boolean) => Promise<void> } }).__delayedCapabilities.settle(failure);
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, failure);
+    await expect($('[role="alert"]')).not.toExist();
+    await expect($('input[list="openai-chat-models"]')).toBeDisplayed();
+  });
+
   it('retains native sign-in across Settings navigation and supports reopen, cancel and pasted callbacks', async () => {
     await browser.execute(() => {
       const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };

@@ -123,7 +123,9 @@ describe('composed notepad commands', () => {
     const other = createNoteDraftState(createSessionSnapshot(persistedSession('b')));
     f.state.documentsByHandle[other.handle] = other;
     const left = deferred<NoteSession>(); const right = deferred<NoteSession>();
-    vi.mocked(readNoteSession).mockImplementation(id => id === 'a' ? left.promise : right.promise);
+    using reads = vi.when(readNoteSession, { onUnmatched: 'throw' });
+    reads.calledWith('a', '/vault/a.md').thenReturn(left.promise);
+    reads.calledWith('b', '/vault/b.md').thenReturn(right.promise);
     const a = f.commands.refreshDocumentFromDisk(f.initialDocument);
     const b = f.commands.refreshDocumentFromDisk(other);
     expect(readNoteSession).toHaveBeenCalledTimes(2);

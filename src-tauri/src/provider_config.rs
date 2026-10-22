@@ -1,5 +1,6 @@
 //! Provider routing and metadata; contains no model execution.
 use url::Url;
+pub(crate) mod connection_failure;
 pub(crate) mod local_reasoning;
 pub(crate) mod model_metadata;
 pub(crate) fn ensure_compatible_chat_supported() -> Result<(), String> {

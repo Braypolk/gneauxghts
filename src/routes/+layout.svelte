@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount, setContext } from 'svelte';
-  import { workspaceTitleSlotKey } from '#lib/ui/workspaceTitleSlot.js';
+  import { onMount } from 'svelte';
+  import { setWorkspaceTitleSlot } from '#lib/ui/workspaceTitleSlot.js';
   import { isTauriRuntime } from '#lib/tauriRuntime.js';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import "../app.css";
@@ -30,7 +30,7 @@
   let nativeWindowControlsHeight = $state(0);
   let nativeWindowControlsWidth = $state(0);
   let workspaceTitleSlot = $state<HTMLDivElement | null>(null);
-  setContext(workspaceTitleSlotKey, () => workspaceTitleSlot);
+  setWorkspaceTitleSlot(() => workspaceTitleSlot);
 
   onMount(() => {
     const disposeBackgroundPersistence = installBackgroundPersistence();

@@ -237,22 +237,26 @@ pub(crate) async fn chat_list_local_models(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
-        .map_err(|error| format!("Unable to configure local model client: {error}"))?;
+        .map_err(|_| "Unable to configure the local model connection".to_string())?;
     let mut request = client.get(format!("{}/models", base_url.trim_end_matches('/')));
     if let Some(api_key) = crate::secrets::read_provider_api_key(&app, "local")? {
         request = request.bearer_auth(api_key);
     }
-    let models = request
-        .send()
-        .await
-        .map_err(|error| format!("Unable to reach the local model server: {error}"))?;
+    let models = request.send().await.map_err(|error| {
+        crate::provider_config::connection_failure::ConnectionFailure::from_reqwest(&error)
+            .message()
+            .to_string()
+    })?;
     if !models.status().is_success() {
-        return Err(format!("Local model server returned {}", models.status()));
+        return Err(format!(
+            "Local model server returned {}",
+            models.status().as_u16()
+        ));
     }
     let response = models
         .json::<OpenAiModelsResponse>()
         .await
-        .map_err(|error| format!("Unable to read local models: {error}"))?;
+        .map_err(|_| "Unable to read the local model catalog".to_string())?;
     let mut available = response
         .data
         .into_iter()
@@ -276,7 +280,7 @@ pub(crate) async fn chat_list_openai_models(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|error| format!("Unable to configure OpenAI model client: {error}"))?;
+        .map_err(|_| "Unable to configure the OpenAI model connection".to_string())?;
     let response = client
         .get(format!(
             "{}/models",
@@ -285,7 +289,11 @@ pub(crate) async fn chat_list_openai_models(
         .bearer_auth(&api_key)
         .send()
         .await
-        .map_err(|error| format!("Unable to check available OpenAI models: {error}"))?;
+        .map_err(|error| {
+            crate::provider_config::connection_failure::ConnectionFailure::from_reqwest(&error)
+                .message()
+                .to_string()
+        })?;
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
             && method == crate::chatgpt_auth::AuthMethod::Chatgpt
@@ -294,13 +302,13 @@ pub(crate) async fn chat_list_openai_models(
         }
         return Err(format!(
             "OpenAI model availability returned {}",
-            response.status()
+            response.status().as_u16()
         ));
     }
     let models = response
         .json::<serde_json::Value>()
         .await
-        .map_err(|error| format!("Unable to read available OpenAI models: {error}"))?;
+        .map_err(|_| "Unable to read the available OpenAI model catalog".to_string())?;
     if method == crate::chatgpt_auth::AuthMethod::Chatgpt {
         subscription_models(&models)
     } else {

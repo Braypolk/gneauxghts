@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { getContext, type Snippet } from 'svelte';
+  import type { Snippet } from 'svelte';
   import { mountInSlot } from './mountInSlot';
-  import { workspaceTitleSlotKey, type WorkspaceTitleSlot } from './workspaceTitleSlot';
+  import { getWorkspaceTitleSlot, hasWorkspaceTitleSlot } from './workspaceTitleSlot';
   import { MediaQuery } from 'svelte/reactivity';
 
   // Match the note card's edge-to-edge breakpoint.
@@ -27,7 +27,7 @@
     titleShell = $bindable(null), titleMeasureTestId,
     workspace = false, split = false, mobileTitleActive = true
   }: Props = $props();
-  const getTitleSlot = getContext<WorkspaceTitleSlot | undefined>(workspaceTitleSlotKey);
+  const getTitleSlot = hasWorkspaceTitleSlot() ? getWorkspaceTitleSlot() : undefined;
   const titleSlot = $derived(compact.current && workspace && mobileTitleActive ? getTitleSlot?.() : null);
   let titleOverflows = $state(false);
 
