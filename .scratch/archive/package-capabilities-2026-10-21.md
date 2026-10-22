@@ -188,8 +188,10 @@ Follow-up logs use `/tmp/gneauxghts-settings-retirement-*.log`.
 
 Watcher health remains a design/triage task. Root-shell containment and safe
 unsaved-state recovery require a separate ownership/settlement design. The
-pre-existing native pane content-width mismatch remains separately tracked;
-passing smoke checks do not establish that the entire measurement lane passes.
+pre-existing native pane content-width mismatch was still separately tracked at
+this point; passing smoke checks did not establish that the entire measurement
+lane passed. Its [later resolution](native-pane-motion-admission.md) corrects a
+pre-admission assertion error and verifies the unchanged native motion journey.
 The initial implementation turn did not request a commit. The user subsequently
 authorized committing the capability changes after this audit correction and its
 verification; unrelated editor upgrades and the other chat's image work remain

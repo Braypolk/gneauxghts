@@ -16,6 +16,42 @@ async function chooseCurrent() {
 }
 
 describe('coordinated pane layout motion', () => {
+  it('retains source wrapping while split admission is pending, then holds destination wrapping', async () => {
+    await ready();
+    await browser.execute(async () => {
+      const recent = await window.__TAURI_INTERNALS__!.invoke('list_recent_notes', {});
+      window.__GNEAUXGHTS_E2E_COMMANDS__!.list_recent_notes = async () => {
+        // The real workspace command awaits this lookup before adding a pane.
+        // Guarantee old-layout frames rather than relying on native IPC timing.
+        for (let frame = 0; frame < 6; frame++) {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        }
+        return recent;
+      };
+    });
+    try {
+      const opening = await samplePaneMotion('open');
+      const pendingFrames = opening.frames.findIndex(frame => frame.moving || frame.panes.length === 2);
+      expect(pendingFrames).toBeGreaterThan(1);
+      expect(opening.frames.slice(0, pendingFrames).every(frame =>
+        frame.panes.length === 1 && frame.panes[0].content?.width === opening.before.panes[0].content?.width
+      )).toBe(true);
+      expectContinuousMotion(opening);
+      expectStableEntrance(opening);
+      // Correct admission handling must still reject real content drift in
+      // both phases, including the very first observed motion frame.
+      const firstMovingFrame = opening.frames.findIndex(frame => frame.moving);
+      expect(firstMovingFrame).toBeGreaterThanOrEqual(0);
+      for (const frame of [0, firstMovingFrame]) {
+        const drifted = structuredClone(opening);
+        drifted.frames[frame].panes[0].content!.width += 2;
+        expect(() => expectContinuousMotion(drifted)).toThrow();
+      }
+    } finally {
+      await browser.execute(() => { delete window.__GNEAUXGHTS_E2E_COMMANDS__!.list_recent_notes; });
+    }
+  });
+
   for (const action of ['open-current', 'open-chat'] as const) {
     it(`keeps the new pane layout stable during ${action}`, async () => {
       await ready();

@@ -39,9 +39,10 @@ Verified together with the remaining patched CodeMirror/Lezer upgrade against
   performance improvement is claimed from them.
 
 The full browser/native suites were not rerun for this final integration pass.
-The pre-existing native pane-motion width assertion remains open in its
-[baseline issue](../../.scratch/pane-animation/issues/04-native-content-width-baseline.md);
-it reproduces with both editor dependency graphs and is not reported as passing.
+At this verification point the pre-existing native pane-motion width assertion
+was still open and was not reported as passing. It reproduced with both editor
+dependency graphs; the [later resolution](../../.scratch/archive/native-pane-motion-admission.md)
+corrects a pre-admission assertion error and passes the unchanged native journey.
 Native image-loading observations here establish behavior, not foreground
 latency guarantees. The [editor upgrade report](codemirror-lezer-upgrade-2026-10-21.md)
 retains the matched large-document performance evidence and its limits.

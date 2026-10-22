@@ -39,12 +39,13 @@ and reproducible fixtures belong in Git.
 - [Architecture cleanup](architecture-cleanup/spec.md): mixed resolved and deferred tickets; older source locations and proposed designs require revalidation. This is not an automatically approved execution queue.
 - [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is historical and its UI is retired by the Pi rebuild.
 - [Settings checkpoint](settings-redesign/README.md): further design deferred.
-- [Native pane content-width assertion](pane-animation/issues/04-native-content-width-baseline.md): triage the identical 319-pixel mismatch reproduced on both old and upgraded editor dependencies.
 - [Pane animation](pane-animation/validation.md#remaining-profiling): completed corrections with explicitly limited native verification and remaining profiling suggestions.
 - [Atlas research](atlas-research/report.md) and [embedding alternatives](embedding-model-alternatives/research.md): retained planning/research; verify current implementation before reuse.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.
 
 ## Completed work and local tools
+
+- [Native pane-motion sampling](archive/native-pane-motion-admission.md): corrected the false 319px mismatch by checking source wrapping before split admission and destination wrapping from the first layout frame; a controlled regression preserves strict drift detection and the original foreground native journey passes.
 
 - [Immutable draft bodies](archive/immutable-draft-bodies.md): synchronous body adoption removes full-string edit callbacks and Related JSON keys; saves pin exact versions, dirty/undo semantics and headless ownership remain intact. Isolated measurements and the remaining consumer audit are recorded. [Native app comparison](archive/draft-body-app-benchmark/README.md) runs before/after/after/before: long split-pane prose improves about 3 ms, smaller notes/fences stay similar, and giant-quote typing still accumulates backlog.
 

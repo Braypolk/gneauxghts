@@ -1,0 +1,389 @@
+{
+  "date": "2026-10-21",
+  "baselineCommit": "2dd5d42d",
+  "description": "Selected original foreground macOS WebKit frames; other frames omitted, not a full performance trace. All content is a synthetic temporary-vault fixture.",
+  "action": "open",
+  "side": "right",
+  "before": {
+    "border": null,
+    "card": 1024,
+    "chatBusy": false,
+    "dock": {
+      "easing": null,
+      "left": 528,
+      "materialLeft": 528,
+      "materialRight": 912,
+      "right": 912
+    },
+    "focused": true,
+    "messages": 0,
+    "moving": false,
+    "panes": [
+      {
+        "content": {
+          "opacity": 1,
+          "width": 1022
+        },
+        "controlsOpacity": [
+          1,
+          1
+        ],
+        "id": "notepad-pane-1",
+        "layout": {
+          ".pane-header": {
+            "height": 64,
+            "left": 0,
+            "top": 0,
+            "width": 1022
+          },
+          ".pane-header-title-wrap": {
+            "height": 32,
+            "left": 64,
+            "top": 16,
+            "width": 894
+          }
+        },
+        "left": 209,
+        "motion": null,
+        "opacity": 1,
+        "sameEditor": true,
+        "width": 1022
+      }
+    ],
+    "time": 373,
+    "visible": true
+  },
+  "selectedFrames": [
+    {
+      "index": 0,
+      "elapsedMs": 4,
+      "border": null,
+      "card": 1024,
+      "chatBusy": false,
+      "dock": {
+        "easing": null,
+        "left": 528,
+        "materialLeft": 528,
+        "materialRight": 912,
+        "right": 912
+      },
+      "focused": true,
+      "messages": 0,
+      "moving": false,
+      "panes": [
+        {
+          "content": {
+            "opacity": 1,
+            "width": 1022
+          },
+          "controlsOpacity": [
+            1,
+            1
+          ],
+          "id": "notepad-pane-1",
+          "layout": {
+            ".pane-header": {
+              "height": 64,
+              "left": 0,
+              "top": 0,
+              "width": 1022
+            },
+            ".pane-header-title-wrap": {
+              "height": 32,
+              "left": 64,
+              "top": 16,
+              "width": 894
+            }
+          },
+          "left": 209,
+          "motion": null,
+          "opacity": 1,
+          "sameEditor": true,
+          "width": 1022
+        }
+      ],
+      "time": 377,
+      "visible": true
+    },
+    {
+      "index": 1,
+      "elapsedMs": 38.00000000000006,
+      "border": {
+        "id": "notepad-pane-2",
+        "left": 1229.421875,
+        "opacity": 1,
+        "width": 2.15625
+      },
+      "card": 1025.171875,
+      "chatBusy": false,
+      "dock": {
+        "easing": "editor",
+        "left": 528,
+        "materialLeft": 528,
+        "materialRight": 912,
+        "right": 912
+      },
+      "focused": true,
+      "messages": 0,
+      "moving": true,
+      "panes": [
+        {
+          "content": {
+            "opacity": 1,
+            "width": 703
+          },
+          "controlsOpacity": [
+            1,
+            1
+          ],
+          "id": "notepad-pane-1",
+          "layout": {
+            ".pane-header": {
+              "height": 64,
+              "left": 0,
+              "top": 0,
+              "width": 1021.015625
+            },
+            ".pane-header-title-wrap": {
+              "height": 32,
+              "left": 64,
+              "top": 16,
+              "width": 893.015625
+            }
+          },
+          "left": 208.40625,
+          "motion": {
+            "duration": 367,
+            "elapsed": 13
+          },
+          "opacity": 1,
+          "sameEditor": true,
+          "width": 1021.015625
+        },
+        {
+          "content": {
+            "opacity": 1,
+            "width": 703
+          },
+          "controlsOpacity": [
+            1,
+            1,
+            1
+          ],
+          "id": "notepad-pane-2",
+          "layout": {
+            ".pane-header": {
+              "height": 64,
+              "left": 0,
+              "top": 0,
+              "width": 703
+            },
+            ".pane-header-title-wrap": {
+              "height": 32,
+              "left": 64,
+              "top": 16,
+              "width": 575
+            },
+            "[data-pane-command]": {
+              "height": 175,
+              "left": 127.5,
+              "top": 220.796875,
+              "width": 448
+            }
+          },
+          "left": 1229.421875,
+          "motion": {
+            "duration": 367,
+            "elapsed": 13
+          },
+          "opacity": 1,
+          "sameEditor": true,
+          "width": 2.15625
+        }
+      ],
+      "time": 411.00000000000006,
+      "visible": true
+    },
+    {
+      "index": 29,
+      "elapsedMs": 539,
+      "border": {
+        "id": "notepad-pane-2",
+        "left": 720,
+        "opacity": 1,
+        "width": 703
+      },
+      "card": 1408,
+      "chatBusy": false,
+      "dock": {
+        "easing": null,
+        "left": 528,
+        "materialLeft": 528,
+        "materialRight": 912,
+        "right": 912
+      },
+      "focused": true,
+      "messages": 0,
+      "moving": false,
+      "panes": [
+        {
+          "content": {
+            "opacity": 1,
+            "width": 703
+          },
+          "controlsOpacity": [
+            1,
+            1
+          ],
+          "id": "notepad-pane-1",
+          "layout": {
+            ".pane-header": {
+              "height": 64,
+              "left": 0,
+              "top": 0,
+              "width": 703
+            },
+            ".pane-header-title-wrap": {
+              "height": 32,
+              "left": 64,
+              "top": 16,
+              "width": 575
+            }
+          },
+          "left": 17,
+          "motion": null,
+          "opacity": 1,
+          "sameEditor": true,
+          "width": 703
+        },
+        {
+          "content": {
+            "opacity": 1,
+            "width": 703
+          },
+          "controlsOpacity": [
+            1,
+            1,
+            1
+          ],
+          "id": "notepad-pane-2",
+          "layout": {
+            ".pane-header": {
+              "height": 64,
+              "left": 0,
+              "top": 0,
+              "width": 703
+            },
+            ".pane-header-title-wrap": {
+              "height": 32,
+              "left": 64,
+              "top": 16,
+              "width": 575
+            },
+            "[data-pane-command]": {
+              "height": 175,
+              "left": 127.5,
+              "top": 220.796875,
+              "width": 448
+            }
+          },
+          "left": 720,
+          "motion": null,
+          "opacity": 1,
+          "sameEditor": true,
+          "width": 703
+        }
+      ],
+      "time": 912,
+      "visible": true
+    }
+  ],
+  "verification": {
+    "description": "Three fresh corrected native invocations; observed sample gaps are diagnostic only, not latency thresholds or performance guarantees.",
+    "profile": "debug",
+    "nativeBinarySha256": "6bb1c9ceb97c2db9210dda859db5b7a9a131d08b8c3437080045bfdf2d0ab206",
+    "paneMotionRuns": [
+      {
+        "invocation": 1,
+        "directions": [
+          {
+            "side": "right",
+            "openingFocused": true,
+            "closingFocused": true,
+            "openingMaxGap": 30,
+            "closingMaxGap": 25
+          },
+          {
+            "side": "left",
+            "openingFocused": true,
+            "closingFocused": true,
+            "openingMaxGap": 27,
+            "closingMaxGap": 20
+          }
+        ],
+        "finalFocus": {
+          "nativeFocused": true,
+          "dom": {
+            "activeIsEditor": true,
+            "focused": true,
+            "visible": "visible"
+          }
+        }
+      },
+      {
+        "invocation": 2,
+        "directions": [
+          {
+            "side": "right",
+            "openingFocused": true,
+            "closingFocused": true,
+            "openingMaxGap": 32,
+            "closingMaxGap": 26
+          },
+          {
+            "side": "left",
+            "openingFocused": true,
+            "closingFocused": true,
+            "openingMaxGap": 31,
+            "closingMaxGap": 22
+          }
+        ],
+        "finalFocus": {
+          "nativeFocused": true,
+          "dom": {
+            "activeIsEditor": true,
+            "focused": true,
+            "visible": "visible"
+          }
+        }
+      },
+      {
+        "invocation": 3,
+        "directions": [
+          {
+            "side": "right",
+            "openingFocused": true,
+            "closingFocused": true,
+            "openingMaxGap": 33,
+            "closingMaxGap": 26
+          },
+          {
+            "side": "left",
+            "openingFocused": true,
+            "closingFocused": true,
+            "openingMaxGap": 31.000000000000227,
+            "closingMaxGap": 20
+          }
+        ],
+        "finalFocus": {
+          "nativeFocused": true,
+          "dom": {
+            "activeIsEditor": true,
+            "focused": true,
+            "visible": "visible"
+          }
+        }
+      }
+    ]
+  }
+}

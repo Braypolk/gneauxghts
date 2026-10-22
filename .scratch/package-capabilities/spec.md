@@ -39,7 +39,7 @@ Archived tickets retain their original plans and chronological comments for cont
 
 ## Execution coordination retained for integration
 
-**Preparation:** establish a fixed baseline and record the current dirty checkout/lockfile. The previous native pane content-width mismatch is separately tracked in [its existing issue](../pane-animation/issues/04-native-content-width-baseline.md); do not hide it, silently absorb it into this effort, or call the whole native measurement lane green while it remains unresolved. Preserve the three editor patches and unrelated work. No commit was requested for this implementation turn.
+**Preparation:** establish a fixed baseline and record the current dirty checkout/lockfile. The previous native pane content-width mismatch was separately tracked and [resolved in a later follow-up](../archive/native-pane-motion-admission.md); the original scope required that it not be hidden, silently absorbed into this effort, or reported as a passing native measurement while unresolved. Preserve the three editor patches and unrelated work. No commit was requested for this implementation turn.
 
 **Original first wave (now implemented except separately owned 05):** 01, 02, 03, 04's diagnostic stage, 05 Stage A and 06's offline comparison have separate production owners and can be developed independently. With six concurrency slots, the integrator may own one stream and delegate the other five. Reserve each issue's listed files to its owner. Share only narrow implementation-independent result types/fixture conventions that are actually necessary; do not delay unrelated work for a generic framework.
 

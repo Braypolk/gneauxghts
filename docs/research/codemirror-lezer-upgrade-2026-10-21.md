@@ -172,7 +172,7 @@ was added.
   each**, pass after the fixture corrections. Native editor cursor: **12 pass**;
   visible Markdown: **7 pass**; dock outline: **2 pass**; giant quote: **2 pass**.
 
-### Existing native pane-motion failure
+### Historical native pane-motion failure
 
 An additional foreground `pane-animation.spec.ts` check fails at
 `expectContinuousMotion` (`paneMotion.ts:234`): sampled content width differs from
@@ -182,8 +182,9 @@ application code and corrected logical fixture dimensions. It is not introduced
 by this dependency upgrade. No product motion change or relaxed assertion is
 included. The existing pane-animation validation already acknowledges live text
 reflow during width animation. A local `needs-triage` issue records reproduction
-and acceptance at `.scratch/pane-animation/issues/04-native-content-width-baseline.md`.
-This additional native spec must not be reported as passing.
+and acceptance, now archived with its [later resolution](../../.scratch/archive/native-pane-motion-admission.md).
+That additional native run failed. The follow-up identifies a pre-admission
+assertion error and verifies the unchanged native spec after correcting it.
 
 
 ### Review and cleanup
@@ -193,8 +194,9 @@ patches found no introduced correctness or repository-standard issues. All three
 editor patches retain identical added/removed code in both module formats;
 active package files contain no retired patch keys. Fixture corrections preserve
 behavioral, geometry and timing assertions rather than relaxing their bounds.
-The additional native pane-width failure remains explicitly outside the passing
-acceptance, with its old-version reproduction recorded above.
+The additional native pane-width failure was explicitly outside that passing
+acceptance, with its old-version reproduction recorded above. Its later
+resolution is linked above.
 
 All owned browser, agent, native Vite and embedded-driver listeners were closed
 after verification (ports 1421, 1423, 1430 and 4457). `git diff --check` passes.
@@ -230,7 +232,8 @@ selection/scroll continuity. Raw samples are included under
 observations are consistent with the earlier matched comparison; they are not
 a new controlled old/new experiment or a latency guarantee.
 
-The known native pane-motion width failure above remains open and is excluded
-from this passing acceptance. Native/browser fixtures still emit their existing
+At this integration verification point, the native pane-motion width failure
+above was still open and excluded from passing acceptance; see its linked later
+resolution. Native/browser fixtures still emit their existing
 ResizeObserver or unsupported-Pi-command diagnostics; no assertion was relaxed
 to suppress them.

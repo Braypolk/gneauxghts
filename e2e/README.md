@@ -390,6 +390,12 @@ chat, reduced motion and interruption. It asserts intermediate geometry,
 consistent direction and stable cleanup rather than a fixed frame count.
 It also checks activation during entrance; the chat suite checks that a direct
 chat split neither mounts a temporary editor nor republishes unchanged insets.
+Split admission can await IPC before membership changes. The shared continuity
+assertion checks captured source wrapping in those pending frames, then fixed
+destination wrapping from the first motion marker or changed pane geometry/
+membership through the settled tail. It retains every sample and the one-pixel
+content-width tolerance. A controlled recent-note lookup regression covers this
+boundary and verifies that actual width drift still fails in both phases.
 
 For the native WebKit check, build with `node e2e/support/buildNative.mjs`, then
 run `GNEAUXGHTS_E2E_FOREGROUND=1 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/pane-animation.spec.ts`.

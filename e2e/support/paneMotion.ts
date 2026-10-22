@@ -203,6 +203,15 @@ export function expectStableEntrance(result: MotionResult) {
 export function expectContinuousMotion(result: Awaited<ReturnType<typeof samplePaneMotion>>) {
   const end = result.frames.at(-1)!;
   expect(end.moving).toBe(false);
+  // Split commands can await IPC before admitting membership or starting motion.
+  // Those visible source-layout frames must retain their original wrapping. Once
+  // any motion/layout change is observed, require destination wrapping even after
+  // the motion marker disappears; never skip the first changed or settled frame.
+  const firstLayoutFrame = result.frames.findIndex(frame => frame.moving ||
+    frame.panes.length !== result.before.panes.length || frame.panes.some(pane => {
+      const before = result.before.panes.find(previous => previous.id === pane.id);
+      return !before || Math.abs(pane.width - before.width) > 1 || Math.abs(pane.left - before.left) > 1;
+    }));
   const ids = new Set([...result.before.panes, ...end.panes].map(pane => pane.id));
   const all = [result.before, ...result.frames];
   for (const frame of all) {
@@ -221,14 +230,15 @@ export function expectContinuousMotion(result: Awaited<ReturnType<typeof sampleP
     if (Math.abs(finalWidth - startWidth) > 5) {
       expect(widths.filter(value => value > Math.min(startWidth, finalWidth) + 1 &&
         value < Math.max(startWidth, finalWidth) - 1).length).toBeGreaterThan(1);
-      for (const frame of result.frames) {
+      for (const [index, frame] of result.frames.entries()) {
         const pane = frame.panes.find(pane => pane.id === id);
         if (!pane) continue;
-        // Content stays visible, with final wrapping from the first frame.
+        // Content stays visible before admission and throughout actual motion.
         expect(pane.content?.opacity).toBe(1);
         const initialContent = result.before.panes.find(pane => pane.id === id)?.content;
         const finalContent = end.panes.find(pane => pane.id === id)?.content;
-        const expectedWidth = finalContent?.width ?? initialContent?.width;
+        const pending = firstLayoutFrame < 0 || index < firstLayoutFrame;
+        const expectedWidth = pending ? initialContent?.width : finalContent?.width ?? initialContent?.width;
         if (pane.content && expectedWidth !== undefined) {
           expect(Math.abs(pane.content.width - expectedWidth))
             .toBeLessThanOrEqual(1);
