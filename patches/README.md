@@ -1,6 +1,6 @@
 # Dependency patches
 
-## `@codemirror/view@6.43.1`
+## `@codemirror/view@6.43.15`
 
 `enforceCursorAssoc()` corrects the native DOM selection at soft line wraps
 from a deferred measurement. It must only write that selection while its editor
@@ -14,6 +14,18 @@ this path; rerun `e2e/specs/native/search-focus.spec.ts` before removing it.
 That native test uses the mounted editor's wrapping and deferred measurement,
 checks repeated editor-to-search focus transfers, and checks focused typing at
 the same wrap boundary.
+
+## `@lezer/common@1.5.3`
+
+`StructureCursor.hasNode()` checks whether a node can reuse an old mixed-parser
+structure. Buffered nodes have no standalone tree identity, so seeking the old
+structure before rejecting them repeats work that cannot succeed.
+
+The patch returns before `moveTo()` when the queried cursor has no tree, in both
+distributed module formats. Preserve 1.5.3's upstream `ExcludeBuffers` traversal
+improvement alongside this guard. Keep the patch until upstream adds the early
+rejection; rerun `e2e/support/mixedParserReuse.test.mjs` for syntax/mount parity,
+partial parsing, incremental edits and deterministic traversal-work bounds.
 
 ## `@earendil-works/pi-ai@1.3.0`
 
@@ -36,7 +48,7 @@ Token request errors also retain the provider's structured OAuth error code as
 terminal refresh failures, allowing native credential retirement after confirmed
 revocation without treating temporary failures as a request for another login.
 
-## `@lezer/markdown@1.6.4`
+## `@lezer/markdown@1.8.1`
 
 `injectMarks()` merges blockquote/list markers into inline syntax. Repeated
 insertion into a growing sibling array shifts the remaining elements for every
@@ -48,6 +60,12 @@ existing recursive behavior. It does not split paragraphs or change the dialect.
 Large inline containers with many nested markers can still require repeated
 recursive copying; this patch addresses the measured sibling insertion cost.
 
+The same patch retains identity-based dispatch buckets for built-in inline
+parsers and an equivalent ASCII previous-character check for GFM Autolink.
+Custom/replaced parsers retain their configured order and non-ASCII behavior.
+`e2e/support/markdownInlineDispatch.test.mjs` and
+`e2e/support/markdownAutolink.test.mjs` protect those semantics in ESM and CommonJS.
+
 `e2e/support/markdownParserPatch.test.mjs` checks frozen unmodified-parser trees,
 opaque-tree properties, incremental edits and a deterministic array-work bound
 through both ESM and CommonJS. Before removing or replacing the patch, run those
@@ -55,3 +73,6 @@ checks, `e2e/specs/native/markdown-marker-merge.spec.ts`, the visible-Markdown a
 foreground cursor suites, and the full-app quote benchmark. Upstream 1.8.1 keeps
 this insertion loop; its grouping-node reuse improvement addresses other shapes
 of document. See [the investigation](../docs/research/markdown-giant-quote-parsing.md).
+
+All three editor/parser patches were rebased together; exact overrides and patch
+keys must match their versions. See the [upgrade and measured acceptance](../docs/research/codemirror-lezer-upgrade-2026-10-21.md).

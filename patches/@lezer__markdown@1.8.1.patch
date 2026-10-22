@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf21013f114da0 100644
+index 4a361b0d..d147f25f 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -1109,6 +1109,7 @@ class MarkdownParser extends common.Parser {
+@@ -1120,6 +1120,7 @@ class MarkdownParser extends common.Parser {
          this.endLeafBlock = endLeafBlock;
          this.skipContextMarkup = skipContextMarkup;
          this.inlineParsers = inlineParsers;
@@ -10,7 +10,7 @@ index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf2101
          this.inlineNames = inlineNames;
          this.wrappers = wrappers;
          /**
-@@ -1229,14 +1230,13 @@ class MarkdownParser extends common.Parser {
+@@ -1240,14 +1241,13 @@ class MarkdownParser extends common.Parser {
          let cx = new InlineContext(this, text, offset);
          outer: for (let pos = offset; pos < cx.end;) {
              let next = cx.char(pos);
@@ -31,7 +31,7 @@ index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf2101
              pos++;
          }
          return cx.resolveMarkers(0);
-@@ -1514,6 +1514,28 @@ const DefaultInline = {
+@@ -1526,6 +1526,28 @@ const DefaultInline = {
          return -1;
      }
  };
@@ -60,7 +60,7 @@ index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf2101
  function finishLink(cx, content, type, start, startPos) {
      let { text } = cx, next = cx.char(startPos), endPos = startPos;
      content.unshift(elt(Type.LinkMark, start, start + (type == Type.Image ? 2 : 1)));
-@@ -1825,20 +1847,24 @@ function injectMarks(elements, marks) {
+@@ -1846,20 +1868,24 @@ function injectMarks(elements, marks) {
          return elements;
      if (!elements.length)
          return marks;
@@ -89,7 +89,7 @@ index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf2101
  }
  // These are blocks that can span blank lines, and should thus only be
  // reused if their next sibling is also being reused.
-@@ -2232,7 +2258,12 @@ const Autolink = {
+@@ -2275,7 +2301,12 @@ const Autolink = {
              name: "Autolink",
              parse(cx, next, absPos) {
                  let pos = absPos - cx.offset;
@@ -104,10 +104,10 @@ index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf2101
                  autolinkRE.lastIndex = pos;
                  let m = autolinkRE.exec(cx.text), end = -1;
 diff --git a/dist/index.js b/dist/index.js
-index 69b51a5d70112ccf18f596578fe899ddefc478cb..16afa2ea7e083dd25b483ced8cb32137f270551c 100644
+index bcaae772..beb038ad 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -1107,6 +1107,7 @@ class MarkdownParser extends Parser {
+@@ -1118,6 +1118,7 @@ class MarkdownParser extends Parser {
          this.endLeafBlock = endLeafBlock;
          this.skipContextMarkup = skipContextMarkup;
          this.inlineParsers = inlineParsers;
@@ -115,7 +115,7 @@ index 69b51a5d70112ccf18f596578fe899ddefc478cb..16afa2ea7e083dd25b483ced8cb32137
          this.inlineNames = inlineNames;
          this.wrappers = wrappers;
          /**
-@@ -1227,14 +1228,13 @@ class MarkdownParser extends Parser {
+@@ -1238,14 +1239,13 @@ class MarkdownParser extends Parser {
          let cx = new InlineContext(this, text, offset);
          outer: for (let pos = offset; pos < cx.end;) {
              let next = cx.char(pos);
@@ -136,7 +136,7 @@ index 69b51a5d70112ccf18f596578fe899ddefc478cb..16afa2ea7e083dd25b483ced8cb32137
              pos++;
          }
          return cx.resolveMarkers(0);
-@@ -1512,6 +1512,28 @@ const DefaultInline = {
+@@ -1524,6 +1524,28 @@ const DefaultInline = {
          return -1;
      }
  };
@@ -165,7 +165,7 @@ index 69b51a5d70112ccf18f596578fe899ddefc478cb..16afa2ea7e083dd25b483ced8cb32137
  function finishLink(cx, content, type, start, startPos) {
      let { text } = cx, next = cx.char(startPos), endPos = startPos;
      content.unshift(elt(Type.LinkMark, start, start + (type == Type.Image ? 2 : 1)));
-@@ -1823,20 +1845,24 @@ function injectMarks(elements, marks) {
+@@ -1844,20 +1866,24 @@ function injectMarks(elements, marks) {
          return elements;
      if (!elements.length)
          return marks;
@@ -194,7 +194,7 @@ index 69b51a5d70112ccf18f596578fe899ddefc478cb..16afa2ea7e083dd25b483ced8cb32137
  }
  // These are blocks that can span blank lines, and should thus only be
  // reused if their next sibling is also being reused.
-@@ -2230,7 +2256,12 @@ const Autolink = {
+@@ -2273,7 +2299,12 @@ const Autolink = {
              name: "Autolink",
              parse(cx, next, absPos) {
                  let pos = absPos - cx.offset;

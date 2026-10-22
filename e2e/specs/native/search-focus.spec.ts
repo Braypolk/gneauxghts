@@ -1,5 +1,6 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { invokeNative } from '../../support/liveNative';
+import { waitForTwoAnimationFrames } from '../../support/animationFrames';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 
 // Use CodeMirror's public DOM lookup on the mounted editor, including its real
@@ -56,11 +57,17 @@ describe('native search focus at wrapped cursor boundaries', () => {
     await invokeNative('mark_note_opened', { noteId: note.noteId });
     await browser.refresh();
     await browser.waitUntil(async () => (await $('[data-testid="note-title"]').getValue()) === 'Wrapped cursor search focus');
-    const scale = await browser.execute(() => devicePixelRatio);
-    await browser.setWindowRect(60, 80, 417 * scale, 800 * scale);
+    // The embedded driver accepts logical CSS pixels, including on Retina.
+    await browser.setWindowRect(60, 80, 417, 800);
     await invokeNative('plugin:window|show', { label: 'main' });
     await invokeNative('plugin:window|set_focus', { label: 'main' });
-    await browser.waitUntil(async () => browser.execute(() => document.hasFocus() && innerWidth < 450));
+    await browser.waitUntil(async () => browser.execute(() => document.hasFocus() && innerWidth < 450)).catch(async error => {
+      const geometry = await browser.execute(() => ({
+        focused: document.hasFocus(), visibility: document.visibilityState,
+        innerWidth, innerHeight, outerWidth, outerHeight, scale: devicePixelRatio
+      }));
+      throw new Error(`Native wrapped-cursor fixture was not admitted: ${JSON.stringify(geometry)}`, { cause: error });
+    });
     await waitForWorkspaceAnimationSettled();
   });
 
@@ -75,6 +82,9 @@ describe('native search focus at wrapped cursor boundaries', () => {
       await $('[data-testid="note-search-input"]').setValue('paragraph');
       await expect($('[data-testid="note-search-input"]')).toHaveValue('paragraph');
       await $('button[aria-label="Clear search"]').click();
+      // Clearing search queues an intentional next-frame input focus. Let that
+      // handoff finish before beginning the separate editor-focus scenario.
+      await waitForTwoAnimationFrames();
       await $('[data-testid="note-editor"] .cm-content').click();
       await waitForWorkspaceAnimationSettled();
     }
@@ -89,7 +99,10 @@ describe('native search focus at wrapped cursor boundaries', () => {
     const expected = before.slice(0, result.wrap) + 'x' + before.slice(result.wrap);
     await browser.waitUntil(async () =>
       (await $('[data-testid="note-editor"] .cm-content').getText()).trimEnd() === expected.trimEnd()
-    );
+    ).catch(async error => {
+      const actual = await $('[data-testid="note-editor"] .cm-content').getText();
+      throw new Error(`Wrapped cursor insertion mismatch: ${JSON.stringify({ wrap: result.wrap, before, expected, actual })}`, { cause: error });
+    });
     expect(await browser.execute(() => document.activeElement?.classList.contains('cm-content'))).toBe(true);
   });
 });

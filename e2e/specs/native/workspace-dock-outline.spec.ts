@@ -21,8 +21,8 @@ describe('native dock outline', () => {
   });
   it('keeps the material aligned in WebKit during search/chat exchange and editor return', async () => {
     await $('[data-testid="note-editor"] .cm-content').waitForExist({ timeout: 30_000 });
-    const scale = await browser.execute(() => devicePixelRatio);
-    await browser.setWindowRect(60, 80, 1440 * scale, 900 * scale);
+    // The embedded driver accepts logical CSS pixels, including on Retina.
+    await browser.setWindowRect(60, 80, 1440, 900);
     const focusError = await browser.execute(() => new Promise<string | null>((done) => {
       const native = window as typeof window & {
         __TAURI_INTERNALS__: {
@@ -86,7 +86,8 @@ describe('native dock outline', () => {
         }, 0);
         requestAnimationFrame(sample);
       }), selector, dockMorphDuration + 320);
-      expect(result.failure).toBeUndefined();
+      // The embedded JSON transport represents an absent field as null.
+      expect(result.failure ?? undefined).toBeUndefined();
       const samples = result.samples;
       expect(samples.length).toBeGreaterThan(10);
       expect(Math.max(...samples.flatMap(frame => frame.slice(0, 4).map(Math.abs)))).toBeLessThanOrEqual(1);
@@ -216,7 +217,8 @@ describe('native dock outline', () => {
         }, 0);
         frameId = requestAnimationFrame(sample);
       }), selector, reverse);
-      expect(result.failure).toBeUndefined();
+      // The embedded JSON transport represents an absent field as null.
+      expect(result.failure ?? undefined).toBeUndefined();
       expect(result.frames.length).toBeGreaterThan(15);
       // WebKit can drop document focus while an outgoing input becomes inert.
       // Check actual OS focus separately from that content-focus handoff.
@@ -253,8 +255,8 @@ describe('native dock outline', () => {
     };
     const comparisons: { width: number; baseline: ReturnType<typeof metrics>[]; related: ReturnType<typeof metrics>[] }[] = [];
     for (const width of [1440, 417]) {
-      const scale = await browser.execute(() => devicePixelRatio);
-      await browser.setWindowRect(60, 80, width * scale, 900 * scale);
+      // The embedded driver accepts logical CSS pixels, including on Retina.
+      await browser.setWindowRect(60, 80, width, 900);
       await invokeNative('plugin:window|show', { label: 'main' });
       await invokeNative('plugin:window|set_focus', { label: 'main' });
       await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.visibilityState === 'visible'));

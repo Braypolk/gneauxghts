@@ -1,6 +1,7 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { openBrowserPiPane } from '../../support/browserPi';
+import { waitForTwoAnimationFrames } from '../../support/animationFrames';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 
 async function expectActiveNote(paneId: string, title: string) {
@@ -68,7 +69,11 @@ describe('search selections from a split chat', () => {
           await $('button[aria-label="Expand search"]').click();
           const input = await $('[data-testid="note-search-input"]');
           await $('button[aria-label="Search all notes"]').click();
+          // Scope changes restore the caret on the next frame. Finish that
+          // handoff before automated typing begins.
+          await waitForTwoAnimationFrames();
           await input.setValue(title);
+          await expect(input).toHaveValue(title);
           const result = await $(`button[aria-label="Open search result: ${title}.md"]`);
           await result.waitForDisplayed();
           await waitForWorkspaceAnimationSettled();

@@ -39,6 +39,7 @@ and reproducible fixtures belong in Git.
 - [Architecture cleanup](architecture-cleanup/spec.md): mixed resolved and deferred tickets; older source locations and proposed designs require revalidation. This is not an automatically approved execution queue.
 - [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is historical and its UI is retired by the Pi rebuild.
 - [Settings checkpoint](settings-redesign/README.md): further design deferred.
+- [Native pane content-width assertion](pane-animation/issues/04-native-content-width-baseline.md): triage the identical 319-pixel mismatch reproduced on both old and upgraded editor dependencies.
 - [Pane animation](pane-animation/validation.md#remaining-profiling): completed corrections with explicitly limited native verification and remaining profiling suggestions.
 - [Atlas research](atlas-research/report.md) and [embedding alternatives](embedding-model-alternatives/research.md): retained planning/research; verify current implementation before reuse.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.

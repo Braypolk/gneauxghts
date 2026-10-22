@@ -30,7 +30,7 @@ The four npm patches and vendored `corenn-kernels` patch remain intact. Explicit
 
 ## Deliberately retained versions
 
-Follow-ups: [retained dependency review and Bits UI/Vitest migration](retained-dependency-review-2026-10-21.md) supersedes the Bits UI and Vitest retention below; the table records the initial refresh decision.
+Follow-ups: [retained dependency review and Bits UI/Vitest migration](retained-dependency-review-2026-10-21.md) supersedes the Bits UI and Vitest retention below; the [CodeMirror/Lezer patch rebase](codemirror-lezer-upgrade-2026-10-21.md) supersedes editor-version retention. The table records the initial refresh decision.
 
 | Dependency | Reason |
 | --- | --- |
@@ -68,7 +68,7 @@ No unsupported transitive major overrides were introduced merely to suppress the
 - **Tantivy snippet ranges and richer ordering/query options** may help search presentation; any performance claim needs the app's real workload measured.
 - **Svelte reactive-map/context helpers** and Tokio abort-on-drop utilities may simplify future implementation work, but adopting them should follow the existing ownership/lifetime boundaries.
 
-These are opportunities, not additional features implemented in this refresh. The linked research notes cite the owning upstream changelogs.
+These were opportunities, not additional features implemented in the initial refresh. The [capability follow-up](upgraded-package-capabilities-2026-10-21.md) revisits every item after the subsequent upgrades, separates automatic/already adopted improvements from remaining work, and prioritizes additional opportunities. In particular, selection-history availability is distinct from ordinary text Undo/Redo, and the IPC image loader at the initial refresh did not automatically use Tauri's asynchronous asset protocol. The later image work adopts versioned asset URLs.
 
 ## Validation
 

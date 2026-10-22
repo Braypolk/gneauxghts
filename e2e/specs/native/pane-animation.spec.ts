@@ -30,9 +30,8 @@ describe('native pane motion', () => {
     await browser.refresh();
     await $('[data-testid="note-editor"] .cm-content').waitForExist({ timeout: 30_000 });
     await browser.waitUntil(async () => (await $('[data-testid="note-title"]').getValue()) === 'Pane motion fixture', { timeout: 30_000 });
-    // The embedded macOS driver takes physical pixels on Retina displays.
-    const scale = await browser.execute(() => devicePixelRatio);
-    await browser.setWindowRect(60, 80, 1440 * scale, 900 * scale);
+    // The embedded driver accepts logical CSS pixels, including on Retina.
+    await browser.setWindowRect(60, 80, 1440, 900);
     await browser.waitUntil(async () => browser.execute(() => innerWidth >= 1000 && innerHeight >= 560));
     await invoke('plugin:window|show', { label: 'main' });
     await invoke('plugin:window|set_focus', { label: 'main' });

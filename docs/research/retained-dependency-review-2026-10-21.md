@@ -12,6 +12,8 @@ The initial review below was research only. The implementation follow-up records
 
 ## Editor patch rebase
 
+Implemented in the [CodeMirror/Lezer upgrade follow-up](codemirror-lezer-upgrade-2026-10-21.md), including patch rebases, native focus and matched performance acceptance. The research below records the rationale at the initial review.
+
 The latest published versions remain view **6.43.15**, common **1.5.3**, Markdown **1.8.1**. Each adds relevant fixes; none contains the exact local protection, verified against tagged source:
 
 | Package | Value of updating | Protection to retain |

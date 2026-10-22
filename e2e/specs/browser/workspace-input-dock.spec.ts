@@ -536,7 +536,7 @@ describe('shared workspace input dock', () => {
       '[data-pane-kind="chat"] button[aria-label="Close pane"]']) {
       const capture = await browser.execute((button: string, duration: number) => new Promise<number[][]>((done) => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
-        const read = (frameTime = performance.now()) => {
+        const read = (frameTime: number) => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
           const left = dock.querySelector('[data-container-shell="search"]')!, right = dock.querySelector('[data-container-shell="chat"], [data-container-shell="related"]')!;
           const leftRect = left.getBoundingClientRect(), rightRect = right.getBoundingClientRect();
@@ -544,8 +544,8 @@ describe('shared workspace input dock', () => {
           return [body.left, body.width, leftRect.left, rightRect.right, glyph.left + glyph.width / 2,
             leftRect.height, rightRect.height, Number(getComputedStyle(left).opacity), Number(getComputedStyle(right).opacity), frameTime];
         };
-        const frames = [read()], started = performance.now();
-        document.querySelector<HTMLElement>(button)!.click();
+        const frames: number[][] = [];
+        let started = 0;
         // Sample the committed frame after both pane WAAPI and dock rAF updates.
         // A callback registered before Svelte starts the dock reads a mixture
         // of this frame's pane bounds and the previous frame's dock offsets.
@@ -558,7 +558,14 @@ describe('shared workspace input dock', () => {
           else
             done(frames);
         }, 0);
-        requestAnimationFrame(sample);
+        // Baseline and samples must use the same frame clock. A RAF timestamp
+        // can precede performance.now() read earlier in that frame.
+        requestAnimationFrame(frameTime => {
+          frames.push(read(frameTime));
+          started = performance.now();
+          document.querySelector<HTMLElement>(button)!.click();
+          requestAnimationFrame(sample);
+        });
       }), selector, motionCaptureDuration);
       for (const column of [0, 1, 2, 3, 4]) {
         const values = capture.map(frame => frame[column]);

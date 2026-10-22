@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 732c5935f9474646bed546d9d9431f654b295005..67ba6d3854bc1c653b5e6f9be868472c110f26d3 100644
+index a75cdaf6..709fdae8 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -3115,7 +3115,9 @@ class DocView {
+@@ -3185,7 +3185,9 @@ class DocView {
              this.posFromDOM(sel.focusNode, sel.focusOffset) == cursor.head;
      }
      enforceCursorAssoc() {
@@ -14,10 +14,10 @@ index 732c5935f9474646bed546d9d9431f654b295005..67ba6d3854bc1c653b5e6f9be868472c
          let { view } = this, cursor = view.state.selection.main;
          let sel = getSelection(view.root);
 diff --git a/dist/index.js b/dist/index.js
-index 0c0b3ee0a2923f3b3b581e146ed6d3f436497e52..c6af03d487ace8174c7408cfbc927d9b3984486a 100644
+index bda68ef3..d42ad018 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -3111,7 +3111,9 @@ class DocView {
+@@ -3181,7 +3181,9 @@ class DocView {
              this.posFromDOM(sel.focusNode, sel.focusOffset) == cursor.head;
      }
      enforceCursorAssoc() {
