@@ -20,7 +20,7 @@ export function createSharedEditorResources({
   initialBody,
   assetRootPath,
   onStorePastedImage,
-  onReadImageAsset = (fileName) => invoke<string>('read_image_asset_data_url', { fileName })
+  onReadImageAsset = (fileName) => invoke<string>('resolve_image_asset_url', { fileName })
 }: CreateSharedEditorResourcesOptions): SharedEditorResources {
   const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
   const runtime = new EditorDocumentRuntime(initialBody ?? '');

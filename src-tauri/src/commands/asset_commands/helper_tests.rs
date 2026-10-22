@@ -3,6 +3,23 @@ use crate::test_support::TestDir;
 use std::fs;
 
 #[test]
+fn image_asset_metadata_versions_replacements_and_rejects_unsafe_paths() {
+    let temp = TestDir::new("commands-image-metadata");
+    let assets = temp.path().join("assets");
+    fs::create_dir_all(assets.join("photos")).unwrap();
+    let name = "photos/été #100%.svg";
+    fs::write(assets.join(name), b"first").unwrap();
+    let (path, first) = image_asset_metadata(&assets, name).unwrap();
+    assert_eq!(path, assets.join(name).canonicalize().unwrap());
+    assert_eq!(image_asset_metadata(&assets, name).unwrap().1, first);
+    fs::write(assets.join(name), b"replacement").unwrap();
+    assert_ne!(image_asset_metadata(&assets, name).unwrap().1, first);
+    for invalid in ["../outside.svg", "/outside.svg", "photos\\outside.svg", "missing.svg"] {
+        assert!(image_asset_metadata(&assets, invalid).is_err(), "{invalid}");
+    }
+}
+
+#[test]
 fn sanitize_asset_file_stem_normalizes_invalid_characters() {
     assert_eq!(
         sanitize_asset_file_stem(r#" ../Pasted:image*2024?.png "#),

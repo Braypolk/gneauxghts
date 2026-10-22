@@ -97,6 +97,26 @@ still rejects the samples. Run sequentially with other native checks and
 benchmarks. The visible-Markdown and foreground cursor suites cover appearance,
 concealment, remount, caret geometry and WebKit selection separately.
 
+### Image delivery measurements
+
+The native smoke lane checks asset protocol admission, encoded paths, replacement
+refresh and real editor loading of large and multiple raster images. For latency
+measurements, obtain permission to take desktop focus, build the native E2E app,
+then run this separately from other tests or benchmarks:
+
+```sh
+GNEAUXGHTS_E2E_FOREGROUND=1 IMAGE_LOADING_OUTPUT=/tmp/image-loading.json pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/image-loading.spec.ts
+```
+
+This collects five fresh loads per scenario with deterministic distinct pixels:
+one 24 MiB raster, sixteen 0.75 MiB rasters, and a nearly 1 MiB Markdown note
+with a 24 MiB raster. It requires focus before and after each sample. Fixture
+generation and writes are untimed; OS file caches remain warm. Completion means
+all mounted images report `complete` and nonzero `naturalWidth`; timer gaps are a responsiveness
+proxy, not physical paint or input latency. No machine-specific latency budget
+is imposed on routine smoke tests. `IMAGE_LOADING_BASELINE=1` accepts data URLs
+when comparing an explicitly restored pre-migration loader and pinned binary.
+
 ### Synchronous paragraph diagnostics
 
 `markdown-synchronous-paragraph.spec.ts` is an opt-in foreground comparison of the

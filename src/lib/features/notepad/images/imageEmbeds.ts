@@ -64,7 +64,7 @@ function imageClipboard(event: ClipboardEvent, view: EditorView, cut: boolean) {
   return true;
 }
 export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (view: EditorView) => ImageCallbacks | null = () => null) {
-  const fallbackLoader = config.loadImage ? null : createImageAssetLoader(name => invoke<string>('read_image_asset_data_url', { fileName: name }), () => config.assetRootPath);
+  const fallbackLoader = config.loadImage ? null : createImageAssetLoader(name => invoke<string>('resolve_image_asset_url', { fileName: name }), () => config.assetRootPath);
   const listeners = new Set<() => void>();
   const viewListeners = new Set<(update: import('@codemirror/view').ViewUpdate | null) => void>();
   const invalidate = () => { for (const listener of [...listeners]) listener(); };

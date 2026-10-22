@@ -453,7 +453,9 @@ tag values; embeddings and Atlas structure hashes remain content-based.
 complete-document inventory. Each pane owns its direct CodeMirror decorations,
 DOM, rendered/source selection and pointer gestures. Image elements are never
 shared between views. Document resources own only the bounded asset loader,
-which coalesces reads and checks file metadata within the immutable Running Vault.
+which coalesces URL resolutions and checks file metadata within the immutable
+Running Vault. Native rendering uses versioned Tauri asset URLs, admitting only
+individual contained files. The cache bounds URL strings, not decoded image memory.
 
 Width, reset, deletion, cut and successful imports dispatch ordinary isolated
 editor transactions through `EditorDocumentRuntime`; they share its undo root and

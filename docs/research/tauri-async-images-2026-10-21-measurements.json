@@ -1,0 +1,1716 @@
+{
+  "metadata": {
+    "baselineCommit": "84fea1a4cda5f04c8056c87ec567b3e0f4c59a71",
+    "baselineBinarySha256": "89f9b33fc4f9c1743a42086d124df7916237a9bc0ffd62a57a10bbd87ad83cf6",
+    "candidateBinarySha256": "d308c823fc07cdc3540bb5f76430148695e345a8726776b87e11a714df12ff61",
+    "profile": "debug (unoptimized + debuginfo), e2e-wdio, Vite native dev frontend",
+    "os": "macOS 26.6.2 (25G83)",
+    "tauri": "2.12.5",
+    "wdio": "10.1.0",
+    "packageJsonSha256": "d0833827d92ee34de884293490f2ad29bc40f59d2b3a2ca23384d8e775d650e5",
+    "pnpmLockSha256": "87173fd65dbc73506aef9fbba026053ef94727588cb659cd2eddbff46ae026aa",
+    "pixelSeeds": "scenario offset (large=0,many=1000,large-note=10000) + 17 + trial*assetCount + assetIndex",
+    "comparison": "Same current working frontend and dependency graph (includes preceding uncommitted CodeMirror/Lezer upgrade and parallel capability changes). Only two image IPC call sites and pinned native image backend switched between stages. Candidate restored in finally.",
+    "metric": "loadedMs from Markdown construction and production editor dispatch through all img.complete && img.naturalWidth > 0. Does not await img.decode(), animation frames, physical paint or input acknowledgement.",
+    "samplePolicy": "5 sequential distinct-pixel fresh-name assets per scenario; warm OS file cache; app remains focused before/after every sample; PNG generation and writes outside timing. No concurrent owned builds/tests/benchmarks.",
+    "excluded": "Initial background-timer calibration, repeated-pixel preliminary measurements, and focus-lost preliminary attempt are excluded; these rows are only from final unique-pixel comparison."
+  },
+  "summary": [
+    {
+      "scenario": "large",
+      "assetCount": 1,
+      "assetBytesEach": 25171775,
+      "markdownCharacters": 54,
+      "before": {
+        "loadMedianMs": 976,
+        "loadMaxMs": 994,
+        "dispatchMedianMs": 6,
+        "timerGapMedianMs": 89,
+        "timerGapMaxMs": 93.99999999999909,
+        "imageSourceCharacters": 33562390
+      },
+      "after": {
+        "loadMedianMs": 17,
+        "loadMaxMs": 33,
+        "dispatchMedianMs": 3,
+        "timerGapMedianMs": 38,
+        "timerGapMaxMs": 41.99999999999909,
+        "imageSourceCharacters": 202
+      }
+    },
+    {
+      "scenario": "many",
+      "assetCount": 16,
+      "assetBytesEach": 787127,
+      "markdownCharacters": 509,
+      "before": {
+        "loadMedianMs": 452,
+        "loadMaxMs": 458,
+        "dispatchMedianMs": 12,
+        "timerGapMedianMs": 21.99999999999818,
+        "timerGapMaxMs": 30,
+        "imageSourceCharacters": 16792416
+      },
+      "after": {
+        "loadMedianMs": 32,
+        "loadMaxMs": 42.99999999999909,
+        "dispatchMedianMs": 6,
+        "timerGapMedianMs": 24,
+        "timerGapMaxMs": 32,
+        "imageSourceCharacters": 3190
+      }
+    },
+    {
+      "scenario": "large-note",
+      "assetCount": 1,
+      "assetBytesEach": 25171775,
+      "markdownCharacters": 1000059,
+      "before": {
+        "loadMedianMs": 1042,
+        "loadMaxMs": 1052.9999999999964,
+        "dispatchMedianMs": 83,
+        "timerGapMedianMs": 89.00000000000364,
+        "timerGapMaxMs": 95,
+        "imageSourceCharacters": 33562390
+      },
+      "after": {
+        "loadMedianMs": 96,
+        "loadMaxMs": 120,
+        "dispatchMedianMs": 82.00000000000182,
+        "timerGapMedianMs": 83.00000000000182,
+        "timerGapMaxMs": 87,
+        "imageSourceCharacters": 207
+      }
+    }
+  ],
+  "before": {
+    "description": "Native foreground macOS WebKit; real production editor and disposable vault. Five fresh-name loads per scenario, warm OS cache. Timer observations are not physical paint/input latency. PNG generation and filesystem writes are outside timing.",
+    "rows": [
+      {
+        "scenario": "large",
+        "trial": 0,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 6,
+        "focused": true,
+        "loadedMs": 967,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 74,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 1,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 2,
+        "focused": true,
+        "loadedMs": 976,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 93.99999999999909,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 2,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 3,
+        "focused": true,
+        "loadedMs": 968,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 90.00000000000091,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 3,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 7,
+        "focused": true,
+        "loadedMs": 991.0000000000018,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 71,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 4,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 6.000000000001819,
+        "focused": true,
+        "loadedMs": 994,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 89,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 0,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 13,
+        "focused": true,
+        "loadedMs": 452,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 30,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 1,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 10,
+        "focused": true,
+        "loadedMs": 448.0000000000018,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 29,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 2,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 13,
+        "focused": true,
+        "loadedMs": 458,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 21.99999999999818,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 3,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 7.999999999998181,
+        "focused": true,
+        "loadedMs": 454.9999999999982,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 21,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 4,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 12,
+        "focused": true,
+        "loadedMs": 447,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 21,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "data:",
+            "urlCharacters": 1049526,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 0,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 87.99999999999636,
+        "focused": true,
+        "loadedMs": 1052.9999999999964,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 88.99999999999636,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 1,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 83,
+        "focused": true,
+        "loadedMs": 1042,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 90,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 2,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 81.00000000000364,
+        "focused": true,
+        "loadedMs": 1038,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 95,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 3,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 83,
+        "focused": true,
+        "loadedMs": 1043,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 85.00000000000364,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 4,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 82,
+        "focused": true,
+        "loadedMs": 1039,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 89.00000000000364,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "data:",
+            "urlCharacters": 33562390,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      }
+    ]
+  },
+  "after": {
+    "description": "Native foreground macOS WebKit; real production editor and disposable vault. Five fresh-name loads per scenario, warm OS cache. Timer observations are not physical paint/input latency. PNG generation and filesystem writes are outside timing.",
+    "rows": [
+      {
+        "scenario": "large",
+        "trial": 0,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 7,
+        "focused": true,
+        "loadedMs": 33,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 32,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 202,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 1,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 3,
+        "focused": true,
+        "loadedMs": 17,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 34,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 202,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 2,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 4,
+        "focused": true,
+        "loadedMs": 18,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 41,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 202,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 3,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 0.9999999999990905,
+        "focused": true,
+        "loadedMs": 12.99999999999909,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 41.99999999999909,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 202,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large",
+        "trial": 4,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 2,
+        "focused": true,
+        "loadedMs": 14,
+        "markdownCharacters": 54,
+        "maxTimerGapMs": 38,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 202,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 0,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 6.9999999999990905,
+        "focused": true,
+        "loadedMs": 42.99999999999909,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 23,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 1,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 5.9999999999990905,
+        "focused": true,
+        "loadedMs": 18.99999999999909,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 18.99999999999909,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 2,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 4.000000000001819,
+        "focused": true,
+        "loadedMs": 32,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 32,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 3,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 6,
+        "focused": true,
+        "loadedMs": 41,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 24,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "many",
+        "trial": 4,
+        "assetCount": 16,
+        "assetBytes": 787127,
+        "dispatchMs": 7,
+        "focused": true,
+        "loadedMs": 28,
+        "markdownCharacters": 509,
+        "maxTimerGapMs": 32,
+        "sources": [
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 199,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          },
+          {
+            "height": 512,
+            "scheme": "asset:",
+            "urlCharacters": 200,
+            "width": 512
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 0,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 85,
+        "focused": true,
+        "loadedMs": 97,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 87,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 207,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 1,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 82,
+        "focused": true,
+        "loadedMs": 120,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 83.00000000000182,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 207,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 2,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 82.00000000000182,
+        "focused": true,
+        "loadedMs": 93,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 83,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 207,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 3,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 80,
+        "focused": true,
+        "loadedMs": 91,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 81,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 207,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      },
+      {
+        "scenario": "large-note",
+        "trial": 4,
+        "assetCount": 1,
+        "assetBytes": 25171775,
+        "dispatchMs": 85.00000000000182,
+        "focused": true,
+        "loadedMs": 96,
+        "markdownCharacters": 1000059,
+        "maxTimerGapMs": 87,
+        "sources": [
+          {
+            "height": 2048,
+            "scheme": "asset:",
+            "urlCharacters": 207,
+            "width": 4096
+          }
+        ],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "viewport": [
+          1200,
+          800
+        ]
+      }
+    ]
+  }
+}

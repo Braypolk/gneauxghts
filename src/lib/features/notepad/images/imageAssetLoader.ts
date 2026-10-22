@@ -1,4 +1,5 @@
-/** Document-owned bytes only. DOM, selections and gestures belong to each view. */
+/** Document-owned URLs only. DOM, selections and gestures belong to each view.
+ * Limits bound retained URL strings, not WebView image buffers or decoded pixels. */
 export function createImageAssetLoader(read: (name: string) => Promise<string>, root: () => string | null,
   fingerprint?: (name: string) => Promise<string>,
   limits = { entries: 128, bytes: 24 * 1024 * 1024 }) {

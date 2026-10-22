@@ -1,5 +1,6 @@
 use super::{
-    prepare_notes_dir, StoredImageAsset, ASSETS_DIRECTORY_NAME, DEFAULT_PASTED_IMAGE_NAME,
+    on_app_worker, prepare_notes_dir, StoredImageAsset, ASSETS_DIRECTORY_NAME,
+    DEFAULT_PASTED_IMAGE_NAME,
 };
 use crate::index::AppState;
 use crate::path_utils::unique_path_in_dir;
@@ -10,22 +11,55 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
+use tauri::Manager;
 
 #[tauri::command]
-pub(crate) fn read_image_asset_fingerprint(
-    state: tauri::State<'_, AppState>,
+pub(crate) async fn read_image_asset_fingerprint<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     file_name: String,
 ) -> Result<String, String> {
-    let assets_dir = prepare_notes_dir(&state, false)?.join(ASSETS_DIRECTORY_NAME);
+    on_app_worker(app, move |state| {
+        let assets_dir = state.running_vault().root().join(ASSETS_DIRECTORY_NAME);
+        image_asset_metadata(&assets_dir, &file_name).map(|(_, fingerprint)| fingerprint)
+    })
+    .await?
+}
+
+fn image_asset_metadata(assets_dir: &Path, file_name: &str) -> Result<(PathBuf, String), String> {
     let path = resolve_asset_image_path(&assets_dir, &file_name)?;
-    let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
+    let metadata = fs::metadata(&path).map_err(|err| err.to_string())?;
     let modified = metadata
         .modified()
         .map_err(|err| err.to_string())?
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|err| err.to_string())?
         .as_nanos();
-    Ok(format!("{}:{modified}", metadata.len()))
+    Ok((path, format!("{}:{modified}", metadata.len())))
+}
+
+/// Admit one contained asset, then let Tauri's async protocol deliver its bytes.
+/// Metadata/versioning is resolved off the IPC executor; no image bytes cross JSON.
+#[tauri::command]
+pub(crate) async fn resolve_image_asset_url<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
+    file_name: String,
+) -> Result<String, String> {
+    let (path, fingerprint) = on_app_worker(app.clone(), move |state| {
+        image_asset_metadata(
+            &state.running_vault().root().join(ASSETS_DIRECTORY_NAME),
+            &file_name,
+        )
+    })
+    .await??;
+    let url = webview
+        .convert_file_src(&path, None)
+        .map_err(|error| error.to_string())?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|error| error.to_string())?;
+    // Distinct versions must not reuse the WebView's old decoded image.
+    Ok(format!("{url}?v={fingerprint}"))
 }
 
 #[tauri::command]

@@ -533,7 +533,8 @@ function historicalDiff(
       if (!asset) throw new Error('Image asset was not found');
       return asset;
     }
-    if (command === 'read_image_asset_data_url') {
+    // Browser fixtures retain data URLs; native delivery is covered by native specs.
+    if (command === 'resolve_image_asset_url' || command === 'read_image_asset_data_url') {
       const asset = imageAssets.get(String(args.fileName));
       if (!asset) throw new Error('Image asset was not found');
       return asset;

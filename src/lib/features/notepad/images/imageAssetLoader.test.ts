@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createImageAssetLoader } from './imageAssetLoader';
-describe('image asset bytes cache', () => {
+describe('image asset URL cache', () => {
   it('coalesces requests, separates vault roots, refreshes changed files and retries errors', async () => {
     let root = 'one', fingerprint = 'old';
     const read = vi.fn(async () => `${root}:${fingerprint}`);
@@ -14,7 +14,7 @@ describe('image asset bytes cache', () => {
     await expect(loader.load('bad.png')).rejects.toThrow('missing');
     await expect(loader.load('bad.png')).resolves.toBe('two:new');
   });
-  it('does not retain stale pending bytes after disposal', async () => {
+  it('does not retain stale pending URLs after disposal', async () => {
     let release!: (url: string) => void;
     const read = vi.fn(() => new Promise<string>(resolve => { release = resolve; }));
     const loader = createImageAssetLoader(read, () => 'vault');

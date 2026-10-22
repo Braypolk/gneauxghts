@@ -32,7 +32,7 @@ test('focus-dependent specs and measurements fail before launch without explicit
     assert.throws(() => admitNativePresentation([[`e2e/specs/native/${name}.spec.ts`]], {}), /No native app was launched/);
     assert.doesNotThrow(() => admitNativePresentation([`${name}.spec.ts`], {GNEAUXGHTS_E2E_FOREGROUND: '1'}));
   }
-  for (const key of ['GNEAUXGHTS_E2E_SUSTAINED_MEASUREMENT', 'GNEAUXGHTS_RELEASE_SCALE_RUN']) {
+  for (const key of ['IMAGE_LOADING_OUTPUT', 'GNEAUXGHTS_E2E_SUSTAINED_MEASUREMENT', 'GNEAUXGHTS_RELEASE_SCALE_RUN']) {
     assert.throws(() => admitNativePresentation([], {[key]: '1'}), /requires actual OS focus/);
   }
   for (const spec of ['./specs/native/**/*.spec.ts', 'editing-window-native-scale.spec.ts', 'markdown-marker-merge.spec.ts', 'draft-body-latency.spec.ts']) {
