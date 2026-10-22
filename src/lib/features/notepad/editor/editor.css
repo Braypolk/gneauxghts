@@ -394,7 +394,7 @@
 
 /* Each editor view owns its image elements; block widgets have no vertical margins. */
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed {
-  position: relative; display: inline-block; width: fit-content; max-width: 100%; vertical-align: middle; border-radius: 4px; cursor: pointer; line-height: 0;
+  position: relative; display: inline-block; box-sizing: border-box; max-width: 100%; vertical-align: middle; border-radius: 4px; cursor: pointer; line-height: 0;
 }
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn div.gn-image-embed {
   display: block;
@@ -403,7 +403,24 @@
   max-width: calc(100% - var(--gn-editor-side-inset-left, 0px) - var(--gn-editor-side-inset-right, 0px));
 }
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed img {
-  display: block; width: 100%; max-width: 100%; height: auto; object-fit: contain;
+  position: absolute; inset: 0; display: block; width: 100%; max-width: 100%; height: 100%; object-fit: contain; border-radius: inherit;
+}
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed[data-loading="true"] img {
+  /* WebKit derives SVG natural dimensions from the first rendering viewport.
+     Keep that viewport intrinsic while the separate skeleton reserves space. */
+  position: fixed; inset: auto; width: auto; height: auto; max-width: none; visibility: hidden;
+}
+.gn-image-embed[data-loading="true"]::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: var(--muted); animation: gn-image-skeleton-pulse 1.5s ease-in-out infinite;
+}
+@keyframes gn-image-skeleton-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  .gn-image-embed[data-loading="true"]::before { animation: none; }
+}
+.gn-image-embed[data-loading="true"] .gn-image-status {
+  position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
 }
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed[data-selected="true"] { outline: 2px solid var(--ring, #829aff); outline-offset: 2px; cursor: zoom-in; }
 .gn-image-toolbar { position: absolute; left: 6px; top: 6px; display: flex; gap: 4px; opacity: 0; line-height: 1.4; }
@@ -413,11 +430,12 @@
 }
 .gn-image-toolbar .gn-image-size-step { display: none; }
 .gn-image-embed[data-selected="true"][data-readonly="false"] .gn-image-size-step { display: block; }
-.gn-image-status { line-height: 1.5; font-size: 12px; color: var(--muted-foreground); }
+.gn-image-status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: .5em; line-height: 1.5; font-size: 12px; color: var(--muted-foreground); }
+.gn-image-status:empty { display: none; }
 .gn-image-embed[data-broken="true"] { min-width: 48px; min-height: 64px; border: 1px dashed var(--border); padding: 8px; }
 .gn-image-embed[data-broken="true"] img { display: none !important; }
 .gn-image-resize-handle { position:absolute; width:12px; height:12px; padding:0; border:1px solid var(--background); border-radius:2px; background:var(--ring, #829aff); display:none; z-index:2; }
-.gn-image-embed[data-selected="true"] .gn-image-resize-handle { display:block; }
+.gn-image-embed[data-selected="true"][data-readonly="false"][data-loading="false"][data-broken="false"] .gn-image-resize-handle { display:block; }
 .gn-image-embed[data-readonly="true"] .gn-image-resize-handle { display:none; }
 .gn-image-resize-nw { top:-5px; left:-5px; cursor:nwse-resize; }
 .gn-image-resize-ne { top:-5px; right:-5px; cursor:nesw-resize; }

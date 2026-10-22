@@ -1,6 +1,7 @@
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import type { ImageEmbedMatch } from './imageEmbedParser';
 import { selectedImage } from './imageState';
+import type { ImageDimensionCache, ImageDimensions } from './imageDimensions';
 export interface ImageEmbedRange { from: number; to: number }
 export function selectionIntersectsImageEmbed(selection: { from: number; to: number }, ranges: readonly ImageEmbedRange[]) {
   return ranges.some(range => selection.from < range.to && selection.to > range.from);
@@ -19,6 +20,7 @@ export interface ImageWidgetActions {
   resizeStep(view: EditorView, image: ImageEmbedMatch, direction: -1 | 1): void;
   open(view: EditorView, image: ImageEmbedMatch): void;
   load(name: string, refresh?: boolean): Promise<string>;
+  dimensions: ImageDimensionCache;
   listen(cancel: () => void): () => void;
 }
 interface MountedImage {
@@ -26,8 +28,18 @@ interface MountedImage {
   image: HTMLImageElement; status: HTMLElement; load(refresh?: boolean): void;
   suppressClick: boolean;
   selectedOnPointerDown: boolean | null;
+  dimensions?: ImageDimensions;
 }
 const mounted = new WeakMap<HTMLElement, MountedImage>();
+function applyImageLayout(dom: HTMLElement, data: MountedImage) {
+  const { width, height } = data.ref.target;
+  const intrinsic = data.dimensions;
+  const ratio = intrinsic ? intrinsic.width / intrinsic.height : 16 / 9;
+  const renderedWidth = width ?? (height ? height * ratio : intrinsic?.width ?? 320);
+  const renderedHeight = height ?? renderedWidth / ratio;
+  dom.style.width = `${renderedWidth}px`;
+  dom.style.aspectRatio = `${renderedWidth} / ${renderedHeight}`;
+}
 export class ImageEmbedWidget extends WidgetType {
   constructor(readonly ref: ImageEmbedMatch, readonly selected: boolean,
     readonly block: boolean, readonly actions: ImageWidgetActions, readonly readOnly = false) { super(); }
@@ -42,26 +54,40 @@ export class ImageEmbedWidget extends WidgetType {
     container.className = 'gn-image-embed'; container.contentEditable = 'false';
     const image = document.createElement('img'); image.draggable = false;
     const status = document.createElement('span'); status.className = 'gn-image-status';
+    status.setAttribute('role', 'status');
     const data: MountedImage = { ref: this.ref, alive: true, generation: 0, cancel: null, image, status, suppressClick: false, selectedOnPointerDown: null,
       load: (refresh = false) => {
         const generation = ++data.generation;
         status.replaceChildren(); status.textContent = 'Loading image…'; container.dataset.loading = 'true';
+        container.dataset.broken = 'false'; container.setAttribute('aria-busy', 'true');
         const name = data.ref.assetName;
         const fail = () => {
           if (!data.alive || generation !== data.generation) return;
           container.dataset.loading = 'false'; container.dataset.broken = 'true';
+          container.setAttribute('aria-busy', 'false');
           status.textContent = data.ref.error ?? 'Image unavailable. ';
           if (name) {
             const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry';
             retry.onclick = event => { event.stopPropagation(); data.load(true); }; status.append(retry);
           }
+          view.requestMeasure();
         };
         if (!name) { fail(); return; }
-        image.onload = () => { if (!data.alive || generation !== data.generation) return;
-          status.replaceChildren(); container.dataset.loading = 'false'; container.dataset.broken = 'false'; view.requestMeasure(); };
         image.onerror = fail;
         void this.actions.load(name, refresh).then(url => {
-          if (data.alive && generation === data.generation) image.src = url;
+          if (!data.alive || generation !== data.generation) return;
+          data.dimensions = this.actions.dimensions.get(name, url);
+          if (!data.cancel) applyImageLayout(container, data);
+          image.onload = () => {
+            if (!data.alive || generation !== data.generation) return;
+            data.dimensions = { width: image.naturalWidth, height: image.naturalHeight };
+            this.actions.dimensions.set(name, url, data.dimensions);
+            if (!data.cancel) applyImageLayout(container, data);
+            status.replaceChildren(); container.dataset.loading = 'false'; container.dataset.broken = 'false';
+            container.setAttribute('aria-busy', 'false'); view.requestMeasure();
+          };
+          image.src = url;
+          view.requestMeasure();
         }, fail);
       }
     };
@@ -113,7 +139,7 @@ export class ImageEmbedWidget extends WidgetType {
       handle.tabIndex = -1;
       handle.onpointerdown = event => {
         event.preventDefault(); event.stopPropagation();
-        if (event.button !== 0 || view.state.readOnly || view.state.selection.ranges.length !== 1) return;
+        if (event.button !== 0 || container.dataset.loading === 'true' || container.dataset.broken === 'true' || view.state.readOnly || view.state.selection.ranges.length !== 1) return;
         data.suppressClick = true;
         this.actions.select(view, data.ref);
         data.cancel?.();
@@ -128,11 +154,10 @@ export class ImageEmbedWidget extends WidgetType {
         const stopListening = this.actions.listen(() => cancel(false));
         const reset = () => { gesture.abort(); stopListening(); data.cancel = null;
           if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
-          container.style.width = data.ref.target.width ? `${data.ref.target.width}px` : '';
-          image.style.height = data.ref.target.height ? `${data.ref.target.height}px` : 'auto'; view.requestMeasure(); };
+          applyImageLayout(container, data); view.requestMeasure(); };
         const cancel = (restoreFocus = true) => { reset(); if (restoreFocus && data.alive) view.focus(); };
         data.cancel = () => cancel(false);
-        image.style.height = 'auto';
+        container.style.aspectRatio = `${start.width} / ${start.height}`;
         if (event.isTrusted) handle.setPointerCapture(event.pointerId);
         handle.addEventListener('lostpointercapture', () => cancel(), { signal: gesture.signal });
         window.addEventListener('pointermove', move => {
@@ -153,6 +178,7 @@ export class ImageEmbedWidget extends WidgetType {
       };
       container.append(handle);
     }
+    data.dimensions = this.ref.assetName ? this.actions.dimensions.get(this.ref.assetName) : undefined;
     this.updateDOM(container, view); data.load(); return container;
   }
   override updateDOM(dom: HTMLElement, view: EditorView) {
@@ -163,8 +189,7 @@ export class ImageEmbedWidget extends WidgetType {
     dom.dataset.readonly = String(this.readOnly);
     for (const control of dom.querySelectorAll<HTMLButtonElement>('.gn-image-size-step')) control.disabled = this.readOnly;
     if (!data.cancel) {
-      dom.style.width = this.ref.target.width ? `${this.ref.target.width}px` : '';
-      data.image.style.height = this.ref.target.height ? `${this.ref.target.height}px` : 'auto';
+      applyImageLayout(dom, data);
     }
     data.image.alt = this.ref.syntax === 'markdown' ? view.state.sliceDoc(this.ref.labelFrom, this.ref.sizeFrom) : this.ref.target.fileName;
     return true;

@@ -8,6 +8,7 @@ import type {
 import { EditorDocumentRuntime } from './editorDocumentRuntime';
 import { invoke } from '@tauri-apps/api/core';
 import { createImageAssetLoader } from '../images/imageAssetLoader';
+import { createImageDimensionCache } from '../images/imageDimensions';
 
 export interface CreateSharedEditorResourcesOptions {
   initialBody?: DocumentBody;
@@ -24,7 +25,8 @@ export function createSharedEditorResources({
 }: CreateSharedEditorResourcesOptions): SharedEditorResources {
   const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
   const runtime = new EditorDocumentRuntime(initialBody ?? '');
-  const imagesConfig = { assetRootPath, storePastedImage: onStorePastedImage, loadImage: loaderLoad };
+  const dimensions = createImageDimensionCache(() => imagesConfig.assetRootPath);
+  const imagesConfig = { assetRootPath, storePastedImage: onStorePastedImage, loadImage: loaderLoad, imageDimensions: dimensions };
   const loader = createImageAssetLoader(onReadImageAsset, () => imagesConfig.assetRootPath,
     (fileName) => invoke<string>('read_image_asset_fingerprint', { fileName }));
   function loaderLoad(name: string, refresh?: boolean) { return loader.load(name, refresh); }
@@ -41,6 +43,7 @@ export function createSharedEditorResources({
     runtime,
     destroy: () => {
       loader.destroy();
+      dimensions.clear();
       runtime.destroy();
     }
   };

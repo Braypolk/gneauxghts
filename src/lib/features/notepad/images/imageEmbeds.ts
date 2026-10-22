@@ -4,6 +4,7 @@ import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
 import { invoke } from '@tauri-apps/api/core';
 import type { ImagesConfig } from './imageConfig';
 import { createImageAssetLoader } from './imageAssetLoader';
+import { createImageDimensionCache } from './imageDimensions';
 import { ImageEmbedWidget, imageDecoration, availableImageWidth, type ImageWidgetActions } from './imageEmbedWidgets';
 import { imageWidthChanges, type ImageEmbedMatch } from './imageEmbedParser';
 import { imageSourceEffect, imageShowsSource, imageState, selectedImage } from './imageState';
@@ -65,12 +66,14 @@ function imageClipboard(event: ClipboardEvent, view: EditorView, cut: boolean) {
 }
 export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (view: EditorView) => ImageCallbacks | null = () => null) {
   const fallbackLoader = config.loadImage ? null : createImageAssetLoader(name => invoke<string>('resolve_image_asset_url', { fileName: name }), () => config.assetRootPath);
+  const dimensions = config.imageDimensions ?? createImageDimensionCache(() => config.assetRootPath);
   const listeners = new Set<() => void>();
   const viewListeners = new Set<(update: import('@codemirror/view').ViewUpdate | null) => void>();
   const invalidate = () => { for (const listener of [...listeners]) listener(); };
   const actions: ImageWidgetActions = {
     select: selectRenderedImage, source: editImageSource, resize: resizeRenderedImage, resizeStep: stepRenderedImageSize,
     load: config.loadImage ?? fallbackLoader!.load,
+    dimensions,
     listen(cancel) { listeners.add(cancel); return () => listeners.delete(cancel); },
     open(view, image) {
       if (view.composing) return;
@@ -130,7 +133,7 @@ export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (vie
       if (update.docChanged || update.state.readOnly !== update.startState.readOnly || update.transactions.some(tr => tr.reconfigured)) invalidate();
       if (update.docChanged || update.transactions.some(tr => tr.reconfigured)) for (const listener of [...viewListeners]) listener(update);
     }
-    destroy() { invalidate(); for (const listener of [...viewListeners]) listener(null); viewListeners.clear(); listeners.clear(); fallbackLoader?.destroy(); }
+    destroy() { invalidate(); for (const listener of [...viewListeners]) listener(null); viewListeners.clear(); listeners.clear(); fallbackLoader?.destroy(); if (!config.imageDimensions) dimensions.clear(); }
   });
   return [imageState, sizeEntryField, decorations, lifecycle,
     EditorView.atomicRanges.of(view => view.state.field(decorations)),

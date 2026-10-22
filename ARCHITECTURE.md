@@ -452,10 +452,15 @@ tag values; embeddings and Atlas structure hashes remain content-based.
 `images/` projects wiki and Markdown image embeds from authored Markdown into a
 complete-document inventory. Each pane owns its direct CodeMirror decorations,
 DOM, rendered/source selection and pointer gestures. Image elements are never
-shared between views. Document resources own only the bounded asset loader,
+shared between views. Document resources own the bounded asset loader,
 which coalesces URL resolutions and checks file metadata within the immutable
 Running Vault. Native rendering uses versioned Tauri asset URLs, admitting only
 individual contained files. The cache bounds URL strings, not decoded image memory.
+Document resources also retain up to 128 intrinsic-size hints, scoped by vault,
+asset name and resolved URL version. Pane widgets reserve authored dimensions or
+these hints and show a skeleton until the image loads. Unseen unsized images use
+a 320px-wide, 16:9 fallback until their natural size is known; loading never
+authors size suffixes or dirties the note. Size hints expire with the document.
 
 Width, reset, deletion, cut and successful imports dispatch ordinary isolated
 editor transactions through `EditorDocumentRuntime`; they share its undo root and
