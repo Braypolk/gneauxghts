@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language';
-import { StateField, type EditorState } from '@codemirror/state';
+import { ChangeSet, EditorState, StateField, type ChangeSpec } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
 import { markdownTables, tableFocusEffect, tableSourceEffect, type MarkdownTable } from './tableModel';
 import { focusTableCell, MarkdownTableWidget, TableSourceDoneWidget } from './tableWidget';
@@ -7,7 +7,10 @@ import { focusTableCell, MarkdownTableWidget, TableSourceDoneWidget } from './ta
 function decorations(state: EditorState, tables: MarkdownTable[], sourceFrom: number | null) {
   return Decoration.set(tables.map(table => sourceFrom === table.from
     ? Decoration.widget({ widget: new TableSourceDoneWidget(table.from, table.to), block: true, side: 1 }).range(table.to)
-    : Decoration.replace({ widget: new MarkdownTableWidget(table, state.readOnly), block: true }).range(table.from, table.to)), true);
+    // The first blank separator belongs to the rendered block's spacing. Hide
+    // it so adding Markdown separation on input does not move the typing line.
+    : Decoration.replace({ widget: new MarkdownTableWidget(table, state.readOnly), block: true })
+      .range(table.from, table.to + (state.sliceDoc(table.to, table.to + 2) === '\n\n' ? 1 : 0))), true);
 }
 
 function hasPipe(text: import('@codemirror/state').Text) {
@@ -44,8 +47,30 @@ export const tablePresentation = StateField.define({
   provide: field => EditorView.decorations.from(field, value => value.decorations)
 });
 
+const separateTableParagraph = EditorState.transactionFilter.of(tr => {
+  if (!tr.docChanged || tr.startState.readOnly ||
+    !(tr.isUserEvent('input.type') || tr.isUserEvent('input.paste')) || tr.isUserEvent('input.type.table')) return tr;
+  const { tables, sourceFrom } = tr.startState.field(tablePresentation);
+  const separators: ChangeSpec[] = [];
+  tr.changes.iterChanges((from, to, newFrom, _newTo, inserted) => {
+    if (from !== to || !inserted.line(1).length) return;
+    const line = tr.startState.doc.lineAt(from);
+    if (line.number === 1 || line.text.trim()) return;
+    const previousEnd = tr.startState.doc.line(line.number - 1).to;
+    if (tables.some(table => table.from !== sourceFrom && table.to === previousEnd)) {
+      separators.push({ from: newFrom, insert: '\n' });
+    }
+  });
+  if (!separators.length) return tr;
+  // GFM absorbs a nonempty line immediately after a table as another row.
+  // Author the paragraph boundary with the input so rendering never swallows
+  // the caret, and the existing document root records a single undoable edit.
+  const changes = ChangeSet.of(separators, tr.newDoc.length);
+  return [tr, { changes, selection: tr.newSelection.map(changes), sequential: true }];
+});
+
 export function createTableExtension() {
-  return [tablePresentation,
+  return [tablePresentation, separateTableParagraph,
     EditorView.atomicRanges.of(view => view.state.field(tablePresentation).decorations),
     ViewPlugin.fromClass(class {
       alive = true;

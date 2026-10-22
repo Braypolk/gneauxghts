@@ -2,12 +2,17 @@
   import type { Snippet } from 'svelte';
   import { searchResultsReveal } from './searchResultsReveal';
 
-  let { children, navigationMode }: { children: Snippet; navigationMode: string } = $props();
+  let { children, navigationMode, onkeydown }: { children: Snippet; navigationMode: string; onkeydown?: (event: KeyboardEvent) => void } = $props();
 </script>
 
+<!-- Arrow keys are delegated from the focusable result buttons within this group. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="search-results-panel absolute bottom-[calc(var(--search-results-anchor-height,100%)+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(var(--search-results-anchor-height,100%)+0.85rem)] sm:rounded-[1.5rem]"
   data-search-navigation-mode={navigationMode}
+  role="group"
+  aria-label="Note discovery results"
+  {onkeydown}
   transition:searchResultsReveal|global
 >
   {@render children()}
@@ -32,5 +37,16 @@
   }
   .search-results-panel[data-search-navigation-mode='pointer'] :global(.search-result-item:hover) {
     background: var(--accent);
+  }
+  .search-results-panel :global(.search-result-item:focus-visible),
+  .search-results-panel :global(.image-search-result:focus-visible),
+  .search-results-panel :global([data-search-split-action]:focus-visible),
+  .search-results-panel :global([data-browse-mode]:focus-visible) {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+  .search-results-panel:has(:global([data-browse-mode]:focus)) :global(.search-result-item),
+  .search-results-panel :global([data-search-result-row]:has([data-search-split-action]:focus) .search-result-item) {
+    background: transparent;
   }
 </style>

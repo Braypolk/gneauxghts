@@ -108,6 +108,75 @@ describe('createNotepadCommandBarState', () => {
     expect(onSearchSelect).toHaveBeenCalledWith(second);
   });
 
+  it('moves Up from the first browse row to the mode switch, including an empty list', () => {
+    for (const items of [[], [{ kind: 'location' as const, item: locationEntry() }]]) {
+      const onBrowseModeFocus = vi.fn();
+      const state = createState({ getVisibleItems: () => items, onBrowseModeFocus });
+      const preventDefault = vi.fn();
+      state.handleSearchKeydown({ key: 'ArrowUp', preventDefault } as unknown as KeyboardEvent);
+      expect(onBrowseModeFocus).toHaveBeenCalledOnce();
+      expect(state.activeIndex).toBe(0);
+      expect(state.searchNavigationMode).toBe('keyboard');
+      expect(preventDefault).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('reaches the mode switch only above the first row in empty-query browsing', () => {
+    const onBrowseModeFocus = vi.fn();
+    const items = [locationEntry(), locationEntry()].map(item => ({ kind: 'location' as const, item }));
+    const state = createState({ getVisibleItems: () => items, onBrowseModeFocus });
+    const key = (key: string) => state.handleSearchKeydown({ key, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    key('ArrowDown');
+    key('ArrowUp');
+    expect(state.activeIndex).toBe(0);
+    expect(onBrowseModeFocus).not.toHaveBeenCalled();
+    key('ArrowUp');
+    expect(onBrowseModeFocus).toHaveBeenCalledOnce();
+
+    const search = createState({ getSearchQuery: () => 'query', getVisibleItems: () => items, onBrowseModeFocus });
+    search.handleSearchKeydown({ key: 'ArrowUp', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    expect(search.activeIndex).toBe(1);
+    expect(onBrowseModeFocus).toHaveBeenCalledOnce();
+  });
+
+  it('focuses the split action with Right only when the selected note can split', () => {
+    for (const available of [true, false]) {
+      const onSplitActionFocus = vi.fn();
+      const state = createState({
+        getVisibleItems: () => [{ kind: 'location', item: locationEntry() }],
+        getOpenInSplit: () => available ? vi.fn() : undefined,
+        onSplitActionFocus
+      });
+      state.handleSearchKeydown({ key: 'ArrowRight', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+      expect(onSplitActionFocus).toHaveBeenCalledTimes(available ? 1 : 0);
+    }
+    const onSplitActionFocus = vi.fn();
+    const state = createState({
+      getVisibleItems: () => [{ kind: 'search', item: searchItem() }],
+      getOpenInSplit: () => vi.fn(), onSplitActionFocus
+    });
+    state.handleSearchKeydown({ key: 'ArrowRight', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    expect(onSplitActionFocus).not.toHaveBeenCalled();
+  });
+
+  it('preserves horizontal cursor movement until search results are navigated with the keyboard', () => {
+    const onSplitActionFocus = vi.fn();
+    const state = createState({
+      getSearchQuery: () => 'query',
+      getVisibleItems: () => [{ kind: 'search', item: searchItem({ notePath: '/vault/Note.md' }) }],
+      getOpenInSplit: () => vi.fn(), onSplitActionFocus
+    });
+    const right = { key: 'ArrowRight', preventDefault: vi.fn() } as unknown as KeyboardEvent;
+    state.handleSearchKeydown(right);
+    expect(right.preventDefault).not.toHaveBeenCalled();
+    expect(onSplitActionFocus).not.toHaveBeenCalled();
+    state.handleSearchKeydown({ key: 'ArrowDown', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    state.handleSearchKeydown({ ...right, altKey: true });
+    expect(onSplitActionFocus).not.toHaveBeenCalled();
+    state.handleSearchKeydown(right);
+    expect(onSplitActionFocus).toHaveBeenCalledWith(0);
+  });
+
   it('returns the user to where they were when Escape dismisses search', () => {
     const calls: string[] = [];
     const state = createState({
@@ -150,6 +219,65 @@ describe('createNotepadCommandBarState', () => {
     state.selectItem({ kind: 'location', item });
 
     expect(onSearchCommit).toHaveBeenCalledOnce();
+  });
+
+  it('opens saved search, pinned and recent notes through the split action with Option-Enter', () => {
+    const note = searchItem({ notePath: '/vault/Note.md' });
+    for (const item of [
+      { kind: 'search' as const, item: note },
+      { kind: 'pinned' as const, item: note },
+      { kind: 'location' as const, item: locationEntry() }
+    ]) {
+      const calls: unknown[] = [];
+      const onSearchSelect = vi.fn();
+      const onPinnedNoteSelect = vi.fn();
+      const onRecentLocationSelect = vi.fn();
+      const state = createState({
+        getVisibleItems: () => [item],
+        getOpenInSplit: () => destination => calls.push(destination),
+        onSearchCommit: () => calls.push('commit'),
+        closeSearch: () => calls.push('close'),
+        onSearchSelect, onPinnedNoteSelect, onRecentLocationSelect
+      });
+      state.handleSearchKeydown({ key: 'Enter', altKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+      expect(calls).toEqual(['commit', 'close', item.item]);
+      expect(onSearchSelect).not.toHaveBeenCalled();
+      expect(onPinnedNoteSelect).not.toHaveBeenCalled();
+      expect(onRecentLocationSelect).not.toHaveBeenCalled();
+    }
+  });
+
+  it('uses the same split action for Option-click and Option-Enter in current-note search', () => {
+    const item = searchItem({ notePath: '/vault/Note.md' });
+    const openInSplit = vi.fn();
+    const onSearchNavigate = vi.fn();
+    const state = createState({
+      getSearchMode: () => 'current',
+      getSearchQuery: () => 'found',
+      getVisibleItems: () => [{ kind: 'search', item }],
+      getOpenInSplit: () => openInSplit,
+      onSearchNavigate
+    });
+    state.selectItem({ kind: 'search', item }, { altKey: true });
+    state.handleSearchKeydown({ key: 'Enter', altKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    expect(openInSplit.mock.calls).toEqual([[item], [item]]);
+    expect(onSearchNavigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps ordinary selection when splitting is unavailable or the note is unsaved', () => {
+    for (const available of [false, true]) {
+      const item = searchItem({ notePath: available ? null : '/vault/Note.md' });
+      const openInSplit = vi.fn();
+      const onSearchSelect = vi.fn();
+      const state = createState({
+        getVisibleItems: () => [{ kind: 'search', item }],
+        getOpenInSplit: () => available ? openInSplit : undefined,
+        onSearchSelect
+      });
+      state.handleSearchKeydown({ key: 'Enter', altKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+      expect(openInSplit).not.toHaveBeenCalled();
+      expect(onSearchSelect).toHaveBeenCalledWith(item);
+    }
   });
 
   it('uses raw navigation results for next and previous search buttons', () => {

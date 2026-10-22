@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Columns2 } from '@lucide/svelte';
-  let { title, onSelect }: { title: string; onSelect: () => void } = $props();
+  let { title, onSelect, onFocus }: { title: string; onSelect: () => void; onFocus?: () => void } = $props();
 </script>
 
 <button
@@ -9,6 +9,14 @@
   aria-label={`Open ${title} in split pane`}
   title="Open in split pane"
   data-search-focus-independent
+  data-search-split-action
+  onfocus={onFocus}
+  onkeydown={(event) => {
+    if (event.key !== 'ArrowLeft' || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget.previousElementSibling as HTMLButtonElement | null)?.focus();
+  }}
   onmousedown={(event) => event.preventDefault()}
   onclick={onSelect}
 >

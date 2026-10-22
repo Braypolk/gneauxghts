@@ -13,6 +13,7 @@ import {
 import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
 import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 import type { SearchMode } from '#lib/features/notepad/search/search.js';
+import { hasSplitNoteDestination } from '../navigation/splitNoteDestination';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
@@ -50,6 +51,9 @@ interface NotepadCommandBarStateDeps {
   onSearchInput: (value: string) => void;
   onSearchClear?: () => void;
   onSearchSelect: (result: SearchItem) => void;
+  getOpenInSplit?: () => ((item: SearchItem | LocationHistoryEntry) => void) | undefined;
+  onBrowseModeFocus?: () => void;
+  onSplitActionFocus?: (index: number) => void;
   onImageSelect?: (result: ImageSearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
   onPinnedNoteSelect: (result: SearchItem) => void;
@@ -147,7 +151,17 @@ class NotepadCommandBarController {
     this.#deps.closeSearch();
   };
 
-  selectItem = (item: NotepadCommandBarVisibleItem) => {
+  openItemInSplit = (item: NotepadCommandBarVisibleItem): boolean => {
+    const openInSplit = this.#deps.getOpenInSplit?.();
+    if (!openInSplit || item.kind === 'image' || !hasSplitNoteDestination(item.item)) return false;
+    this.#deps.onSearchCommit?.();
+    this.#closeSearchPanel();
+    openInSplit(item.item);
+    return true;
+  };
+
+  selectItem = (item: NotepadCommandBarVisibleItem, event?: Pick<MouseEvent, 'altKey'>) => {
+    if (event?.altKey && this.openItemInSplit(item)) return;
     this.#deps.onSearchCommit?.();
     this.#closeSearchPanel();
 
@@ -259,6 +273,26 @@ class NotepadCommandBarController {
       }
     }
 
+    const plainArrow = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    if (plainArrow && event.key === 'ArrowUp' && this.activeIndex === 0
+      && this.#deps.getSearchQuery().trim() === '' && this.#deps.onBrowseModeFocus) {
+      event.preventDefault();
+      this.searchNavigationMode = 'keyboard';
+      this.#deps.onBrowseModeFocus();
+      return;
+    }
+
+    if (plainArrow && event.key === 'ArrowRight' && this.#deps.onSplitActionFocus
+      && (this.#deps.getSearchQuery().trim() === '' || this.searchNavigationMode === 'keyboard')) {
+      const item = items[this.activeIndex];
+      if (item && item.kind !== 'image' && this.#deps.getOpenInSplit?.() && hasSplitNoteDestination(item.item)) {
+        event.preventDefault();
+        this.searchNavigationMode = 'keyboard';
+        this.#deps.onSplitActionFocus(this.activeIndex);
+        return;
+      }
+    }
+
     if (items.length === 0) {
       return;
     }
@@ -279,11 +313,13 @@ class NotepadCommandBarController {
 
     if (event.key === 'Enter') {
       event.preventDefault();
+      const item = items[this.activeIndex] ?? items[0];
+      if (event.altKey && this.openItemInSplit(item)) return;
       if (this.#deps.getSearchMode() === 'current' && this.#deps.getSearchQuery().trim() !== '') {
         this.#previewSearchResult(event.shiftKey ? -1 : 1, !event.shiftKey);
         return;
       }
-      this.selectItem(items[this.activeIndex] ?? items[0]);
+      this.selectItem(item);
     }
   };
 
@@ -310,6 +346,11 @@ class NotepadCommandBarController {
     this.searchNavigationMode = nextSelection.navigationMode;
     this.#searchNavigationIndex = null;
     this.#previewActiveSearchRow();
+  };
+
+  handleSearchItemFocus = (index: number) => {
+    this.handleSearchItemPointerEnter(index);
+    this.searchNavigationMode = 'keyboard';
   };
 
   #clearForgetHoldFrame = () => {

@@ -152,6 +152,30 @@ describe('portable Markdown tables', () => {
     expect(view.state.field(tablePresentation).sourceFrom).toBeNull();
   });
 
+  it('keeps typing and paste below a rendered table in a separate paragraph with normal undo', () => {
+    for (const ending of ['\n', '\n\n']) for (const userEvent of ['input.type', 'input.paste']) {
+      const doc = source + ending;
+      const { view } = createCommandView({ doc, selection: { anchor: doc.length }, extensions: extensions() });
+      view.dispatch({ changes: { from: doc.length, insert: 'hello' },
+        selection: { anchor: doc.length + 5 }, userEvent });
+      expect(view.state.doc.toString()).toBe(source + '\n\nhello');
+      expect(table(view.state).source).toBe(source);
+      expect(view.state.selection.main.head).toBe(view.state.doc.length);
+      expect(undo(view)).toBe(true);
+      expect(view.state.doc.toString()).toBe(doc);
+    }
+  });
+
+  it('preserves intentional source and cell edits at the end of a table', () => {
+    const doc = 'Name | Value\n--- | ---\nOne | 1';
+    const { view } = createCommandView({ doc, extensions: extensions() });
+    editTableCell(view, table(view.state), 1, 1, '123');
+    expect(view.state.doc.toString()).toBe(doc + '23');
+    view.dispatch({ effects: tableSourceEffect.of(0) });
+    view.dispatch({ changes: { from: view.state.doc.length, insert: '4' }, userEvent: 'input.type' });
+    expect(view.state.doc.toString()).toBe(doc + '234');
+  });
+
   it('shares edits and undo across sibling panes using the existing document root', () => {
     const runtime = new EditorDocumentRuntime(source);
     try {
@@ -167,6 +191,24 @@ describe('portable Markdown tables', () => {
       expect(runtime.markdown).toBe(source);
       expect(first.readState().doc.toString()).toBe(source);
       expect(second.readState().doc.toString()).toBe(source);
+    } finally { runtime.destroy(); }
+  });
+
+  it('shares the new paragraph below a table and undoes its separator as part of the input', () => {
+    const doc = source + '\n';
+    const runtime = new EditorDocumentRuntime(doc);
+    try {
+      const first = createRuntimePane(runtime, doc, doc.length, vi.fn(), createMarkdownExtensions());
+      const second = createRuntimePane(runtime, doc, 0, vi.fn(), createMarkdownExtensions());
+      first.view.dispatch({ changes: { from: doc.length, insert: 'hello' },
+        selection: { anchor: doc.length + 5 }, userEvent: 'input.type' });
+      expect(runtime.markdown).toBe(source + '\n\nhello');
+      expect(second.readState().doc.toString()).toBe(runtime.markdown);
+      expect(table(second.readState()).source).toBe(source);
+      expect(first.readState().selection.main.head).toBe(runtime.markdown.length);
+      expect(runtime.undo(first.controller.paneKey)).toBe(true);
+      expect(runtime.markdown).toBe(doc);
+      expect(second.readState().doc.toString()).toBe(doc);
     } finally { runtime.destroy(); }
   });
 

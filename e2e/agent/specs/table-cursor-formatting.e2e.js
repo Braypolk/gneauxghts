@@ -61,7 +61,9 @@ describe('rendered table cursor and formatting', () => {
       expect(position.actual).toBe(position.expected);
     }
     await reveal('Paragraph 3-0');
-    for (const line of [95, 80, 79, 78, 77]) {
+    // The mandatory separator is rendered with the table, so Up crosses the
+    // atomic table directly to the visible blank line above it (source line 80).
+    for (const line of [80, 79, 78, 77, 76]) {
       await browser.keys('ArrowUp');
       expect(await browser.execute(() => {
         const editor = window.__GNEAUXGHTS_NATIVE_E2E__.readEditorState().editor;

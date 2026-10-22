@@ -113,10 +113,20 @@
           row?.scrollIntoView({ block: 'nearest' });
         });
       }
+    } else if (event.key === 'ArrowRight' && event.target === relatedHeader
+      && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      const row = relatedHeader?.closest('.workspace-input-dock')
+        ?.querySelector<HTMLElement>('[data-search-result-active="true"]');
+      const split = row?.parentElement?.querySelector<HTMLButtonElement>('[data-search-split-action]');
+      if (split) { event.preventDefault(); split.focus(); }
     } else if (event.key === 'Enter' && event.target === relatedHeader) {
       event.preventDefault();
       const item = related?.result?.items[relatedIndex];
-      if (item) selectRelated(item);
+      if (item) {
+        if (event.altKey && related?.onOpenInSplit && hasSplitNoteDestination(item)) {
+          chooseSplit(() => related?.onOpenInSplit?.(item));
+        } else selectRelated(item);
+      }
     }
   }
   function selectRelated(item: import('#lib/types/semantic.js').RelatedNoteItem) {
@@ -162,10 +172,57 @@
   const recentLocations = $derived(search.recentLocations);
   const lastEditedNotes = $derived(search.lastEditedNotes ?? []);
   let browseMode = $state<'recent' | 'edited'>('recent');
+  let browseControls = $state<HTMLDivElement | null>(null);
   function selectBrowseMode(mode: 'recent' | 'edited') {
     browseMode = mode;
     commandBarState.resetActiveIndex();
     if (mode === 'edited') void search.onLoadLastEdited?.();
+  }
+  function focusBrowseMode() {
+    browseControls?.querySelector<HTMLButtonElement>(`[data-browse-mode="${browseMode}"]`)?.focus();
+  }
+  function handleBrowseModeKeydown(event: KeyboardEvent) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      selectBrowseMode(event.key === 'ArrowLeft' ? 'recent' : 'edited');
+      void tick().then(focusBrowseMode);
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      commandBarState.resetActiveIndex();
+      commandBarState.searchNavigationMode = 'keyboard';
+      searchBar?.focusSearch();
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+    } else if (event.key === 'Escape') {
+      commandBarState.handleSearchKeydown(event);
+    }
+  }
+  function focusResultAction(index: number, split: boolean) {
+    const row = searchResultsViewport?.querySelector<HTMLElement>(`[data-search-result-index="${index}"]`);
+    const target = split ? row?.querySelector<HTMLButtonElement>('[data-search-split-action]') : null;
+    (target ?? row?.querySelector<HTMLButtonElement>('.search-result-item, .image-search-result'))?.focus({ preventScroll: true });
+  }
+  function handleSearchResultsKeydown(event: KeyboardEvent) {
+    if (relatedMode || event.defaultPrevented || !(event.target instanceof Element)) return;
+    const row = event.target.closest<HTMLElement>('[data-search-result-index]');
+    if (!row || !event.target.matches('.search-result-item, .image-search-result, [data-search-split-action]')) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key === 'ArrowRight') {
+      const split = row.querySelector<HTMLButtonElement>('[data-search-split-action]');
+      if (split) { event.preventDefault(); split.focus(); }
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const index = Number(row.dataset.searchResultIndex);
+      if (commandBarState.activeIndex !== index) commandBarState.handleSearchItemFocus(index);
+      const movesToBrowse = event.key === 'ArrowUp' && index === 0 && searchQuery.trim() === '' && !imageQueryUrl;
+      const split = event.target.hasAttribute('data-search-split-action');
+      commandBarState.handleSearchKeydown(event);
+      if (!movesToBrowse) void tick().then(() => focusResultAction(commandBarState.activeIndex, split));
+    } else if (event.key === 'Escape') {
+      const hadQuery = searchQuery.trim() !== '' || imageQueryUrl !== null;
+      commandBarState.handleSearchKeydown(event);
+      if (hadQuery) searchBar?.focusSearch();
+    }
   }
   const isSearching = $derived(search.isSearching);
   const onSearchInput = $derived(search.onSearchInput);
@@ -273,6 +330,9 @@
       else onSearchInput('');
     },
     onSearchSelect: (result) => onSearchSelect(result),
+    getOpenInSplit: () => search.onOpenInSplit,
+    onBrowseModeFocus: focusBrowseMode,
+    onSplitActionFocus: (index) => focusResultAction(index, true),
     onImageSelect: (result) => { void search.onImageSelect?.(result); },
     onSearchNavigate: (result) => onSearchNavigate?.(result),
     onPinnedNoteSelect: (result) => onPinnedNoteSelect(result),
@@ -677,7 +737,7 @@
 
     {#snippet searchPanel()}
       {#key relatedMode ? false : isSearching}
-        <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode}>
+        <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode} onkeydown={handleSearchResultsKeydown}>
           {#if relatedMode}
             <div id={relatedPopupId} class="max-h-80 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label="Related notes">
               <RelatedResults result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()}
@@ -687,9 +747,11 @@
           {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
           {#if searchQuery.trim() === '' && !imageQueryUrl}
             <div class="flex justify-center px-3 pb-1 pt-2">
-              <div class="inline-flex gap-1 rounded-full border border-border/80 bg-muted/40 p-1" role="group" aria-label="Browse notes">
+              <div bind:this={browseControls} class="inline-flex gap-1 rounded-full border border-border/80 bg-muted/40 p-1" role="group" aria-label="Browse notes">
                 {#each [{ id: 'recent', label: 'Recent' }, { id: 'edited', label: 'Last edited' }] as choice}
                   <button type="button" aria-pressed={browseMode === choice.id}
+                    data-browse-mode={choice.id}
+                    onkeydown={handleBrowseModeKeydown}
                     class={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${browseMode === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                     data-search-focus-independent
                     onmousedown={(event) => event.preventDefault()}
@@ -736,8 +798,9 @@
                     {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
                       <div class="group flex items-center gap-1">
                         <SearchNoteResult title={item.fileName} label={`Open pinned note: ${item.fileName}`}
-                          onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => chooseSplit(() => search.onOpenInSplit?.(item)) : undefined}
-                          active={index === commandBarState.activeIndex}
+                          onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'pinned', item }) : undefined}
+                          active={index === commandBarState.activeIndex} resultIndex={index}
+                          onFocus={() => commandBarState.handleSearchItemFocus(index)}
                           onPoint={() => commandBarState.handleSearchItemPointerEnter(index)}
                           onSelect={() => commandBarState.selectItem({ kind: 'pinned', item })}>
                           {#snippet icon()}<Pin class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{/snippet}
@@ -766,8 +829,9 @@
                     {#each lastEditedNotes as item, index (`edited-${item.noteId ?? item.notePath}-${index}`)}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={item.fileName} label={`Open last edited note: ${item.fileName}`}
-                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => chooseSplit(() => search.onOpenInSplit?.(item)) : undefined}
-                        active={globalIndex === commandBarState.activeIndex}
+                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'search', item }) : undefined}
+                        active={globalIndex === commandBarState.activeIndex} resultIndex={globalIndex}
+                        onFocus={() => commandBarState.handleSearchItemFocus(globalIndex)}
                         onPoint={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
                         onSelect={() => commandBarState.selectItem({ kind: 'search', item })} />
                     {/each}
@@ -780,9 +844,10 @@
                     {#each recentLocations as item, index (locationHistoryKey(item, index))}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={item.label}
-                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => chooseSplit(() => search.onOpenInSplit?.(item)) : undefined}
+                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'location', item }) : undefined}
                         label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
-                        active={globalIndex === commandBarState.activeIndex}
+                        active={globalIndex === commandBarState.activeIndex} resultIndex={globalIndex}
+                        onFocus={() => commandBarState.handleSearchItemFocus(globalIndex)}
                         onPoint={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
                         onSelect={() => commandBarState.selectItem({ kind: 'location', item })}>
                         {#snippet icon()}{#if item.location.kind === 'chat'}<MessagesSquare class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{/if}{/snippet}
@@ -796,13 +861,16 @@
             <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
               {#each visibleItems as entry, index (index)}
                 {#if entry.kind === 'image'}
+                  <div data-search-result-index={index}>
                   <ImageSearchResult item={entry.item} load={loadThumbnail}
                     active={index === commandBarState.activeIndex}
+                    onFocus={() => commandBarState.handleSearchItemFocus(index)}
                     onPointerEnter={() => commandBarState.handleSearchItemPointerEnter(index)}
                     onSelect={() => commandBarState.selectItem(entry)} />
+                  </div>
                 {:else if entry.kind === 'search'}
                 {@const item = entry.item}
-                <div class="flex min-w-0 items-center gap-1">
+                <div class="flex min-w-0 items-center gap-1" data-search-result-index={index} data-search-result-row>
                 <button
                   type="button"
                   data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
@@ -812,7 +880,8 @@
                   title={searchMode !== 'current' ? item.fileName : item.sectionLabel}
                   onmousedown={(event) => event.preventDefault()}
                   onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
-                  onclick={() => commandBarState.selectItem({ kind: 'search', item })}
+                  onfocus={() => commandBarState.handleSearchItemFocus(index)}
+                  onclick={(event) => commandBarState.selectItem({ kind: 'search', item }, event)}
                 >
                   {#if searchMode === 'current'}
                     <p class="min-w-0 truncate text-sm leading-5 text-muted-foreground">
@@ -861,7 +930,7 @@
                   {/if}
                 </button>
                 {#if search.onOpenInSplit && hasSplitNoteDestination(item)}
-                  <SplitSearchResultAction title={item.fileName} onSelect={() => chooseSplit(() => search.onOpenInSplit?.(item))} />
+                  <SplitSearchResultAction title={item.fileName} onFocus={() => commandBarState.handleSearchItemFocus(index)} onSelect={() => commandBarState.openItemInSplit({ kind: 'search', item })} />
                 {/if}
                 </div>
                 {/if}

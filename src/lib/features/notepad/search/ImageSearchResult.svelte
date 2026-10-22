@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ImageSearchItem } from '#lib/types/semantic.js';
-  let { item, load, onSelect, active = false, onPointerEnter }: { item: ImageSearchItem; load: (item: ImageSearchItem) => Promise<string>; onSelect: () => void; active?: boolean; onPointerEnter?: () => void } = $props();
+  let { item, load, onSelect, active = false, onPointerEnter, onFocus }: { item: ImageSearchItem; load: (item: ImageSearchItem) => Promise<string>; onSelect: () => void; active?: boolean; onPointerEnter?: () => void; onFocus?: () => void } = $props();
   let thumbnail = $state<string | null>(null);
   $effect(() => {
     let alive = true;
@@ -10,7 +10,7 @@
   });
 </script>
 
-<button type="button" class="image-search-result" class:bg-accent={active} data-search-result-active={active ? "true" : "false"} onmousedown={(event) => event.preventDefault()} onpointerenter={onPointerEnter} onclick={onSelect} aria-label={`Open ${item.assetName} in ${item.noteTitle}`}>
+<button type="button" class="image-search-result" class:bg-accent={active} data-search-result-active={active ? "true" : "false"} onmousedown={(event) => event.preventDefault()} onpointerenter={onPointerEnter} onfocus={onFocus} onclick={onSelect} aria-label={`Open ${item.assetName} in ${item.noteTitle}`}>
   {#if thumbnail}<img src={thumbnail} alt="" loading="lazy" />{:else}<span class="image-search-placeholder" aria-hidden="true">Image</span>{/if}
   <span><strong>{item.noteTitle}</strong><small>{item.assetName}</small></span>
 </button>

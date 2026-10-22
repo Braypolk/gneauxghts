@@ -37,6 +37,11 @@ function showSource(view: EditorView, table: MarkdownTable) {
   view.focus();
 }
 
+function positionAfterTable(view: EditorView, to: number) {
+  const suffix = view.state.sliceDoc(to, to + 2);
+  return to + (suffix === '\n\n' ? 2 : suffix.startsWith('\n') ? 1 : 0);
+}
+
 function updateToolbar(data: MountedTable) {
   const { row, column } = data.active;
   for (const button of data.toolbar.querySelectorAll<HTMLButtonElement>('button[data-operation]')) {
@@ -147,7 +152,7 @@ function makeCell(view: EditorView, container: HTMLElement, data: MountedTable, 
     }
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopPropagation(); input.blur();
-      view.dispatch({ selection: { anchor: data.ref.to } }); view.focus(); return;
+      view.dispatch({ selection: { anchor: positionAfterTable(view, data.ref.to) } }); view.focus(); return;
     }
     if (event.key !== 'Tab' && event.key !== 'Enter') return;
     event.preventDefault(); event.stopPropagation();
@@ -255,7 +260,7 @@ export class TableSourceDoneWidget extends WidgetType {
   override toDOM(view: EditorView) {
     const wrapper = document.createElement('div'); wrapper.className = 'gn-table-source-controls'; wrapper.contentEditable = 'false';
     const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Done editing table source';
-    button.onclick = () => { view.dispatch({ selection: { anchor: this.to }, effects: tableSourceEffect.of(null) }); view.focus(); };
+    button.onclick = () => { view.dispatch({ selection: { anchor: positionAfterTable(view, this.to) }, effects: tableSourceEffect.of(null) }); view.focus(); };
     wrapper.append(button); return wrapper;
   }
   override ignoreEvent() { return true; }
