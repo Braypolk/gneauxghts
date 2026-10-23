@@ -33,6 +33,34 @@ impl ObservationReceipt {
 }
 
 impl<'a> NoteTimeline<'a> {
+    /// Resolve catalog continuity when canonical metadata is absent. A stale
+    /// path projection cannot outrank the retained location of a renamed note.
+    /// This does not create/reset a history store or repair canonical Markdown.
+    pub(crate) fn admits_retained_note_location(
+        &self,
+        note_id: &NoteIdentity,
+        path: &Path,
+    ) -> Result<bool, HistoryError> {
+        let _operation = self.runtime.begin_operation()?;
+        self.runtime.store.require_path(path)?;
+        if !history_store::history_store_exists(&self.runtime.store) {
+            return Err(HistoryError::Unavailable(
+                "Retained note location is unavailable without its history store".into(),
+            ));
+        }
+        self.runtime.with_history_result(|| {
+            self.recover_retained_observations()?;
+            self.ensure_history_recovered()?;
+            self.runtime.ensure_note_ready(note_id)?;
+            crate::state::with_note_file_mutation(|| {
+                self.with_settled_history_mutation(|| {
+                    Ok(history_store::current_path(&self.runtime.store, note_id)?
+                        .is_none_or(|current| current == path))
+                })
+            })
+        })
+    }
+
     /// A Running Vault can reopen at a different absolute location before its
     /// first background reconciliation. Admit continuity from canonical bytes,
     /// through the same retained observation protocol as a missed external move.

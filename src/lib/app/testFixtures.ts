@@ -3,6 +3,7 @@ import type { BootstrapAppResult } from '#lib/features/notepad/session/bootstrap
 import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 import type { SemanticStatus } from '#lib/types/semantic.js';
 import type { VaultInfo } from '#lib/types/vault.js';
+import type { HistoryHealthReport } from '#lib/types/history.js';
 
 export const semanticStatusFixture: SemanticStatus = {
   imageCoverage: { indexed: 0, failed: 0, unsupported: 0 },
@@ -94,7 +95,6 @@ export function settingsViewFixture(): SettingsViewPayload {
     vault: { ...vaultFixture },
     semanticStatus: structuredClone(semanticStatusFixture),
     semanticSettings: { ...semanticStatusFixture.settings },
-    historyHealth: { state: "healthy", integrity: "verified", initialization: { phase: "complete", discoveredNotes: 0, baselineRevisions: 0, readyNotes: 0, failedNotes: 0 }, pendingRepairs: 0, canRetry: false, canReset: false },
     semanticDebug: { capturedAtMillis: 1, recentEvents: [], metrics: {
       runtimeSpawnCount: 0,
       runtimeRestartCount: 0,
@@ -156,4 +156,8 @@ export function settingsViewFixture(): SettingsViewPayload {
       indexDurationMaxMillis: 0,
     } }
   };
+}
+
+export function historyHealthFixture(): HistoryHealthReport {
+  return { state: 'healthy', integrity: 'verified', initialization: { phase: 'complete', discoveredNotes: 0, baselineRevisions: 0, readyNotes: 0, failedNotes: 0 }, pendingRepairs: 0, canRetry: false, canReset: false };
 }

@@ -3,7 +3,7 @@ import type { MissingNoteSummary } from '#lib/types/missingNotes.js';
 import type { HistoryModePage } from '#lib/features/history/historyModeMachine.js';
 import type { VaultInfo } from '#lib/types/vault.js';
 import { AppStore } from '#lib/app/appStore.svelte.js';
-import { bootstrapFixture, settingsViewFixture, semanticStatusFixture, vaultFixture } from '#lib/app/testFixtures.js';
+import { bootstrapFixture, historyHealthFixture, settingsViewFixture, semanticStatusFixture, vaultFixture } from '#lib/app/testFixtures.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.spyOn(appStoreMock, 'refreshSemanticStatus').mockResolvedValue(undefined);
   responses = {
     get_settings_view: settingsViewFixture(),
+    get_history_health: historyHealthFixture(),
     list_forgotten_notes: [],
     list_missing_notes: [],
     get_missing_note_history_page: { records: [], nextCursor: null }
@@ -546,6 +547,91 @@ describe('SettingsStore actions', () => {
 });
 
 describe('SettingsStore asynchronous admission', () => {
+  it('loads history diagnostics only after opening History and coalesces overlapping checks', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    await store.initialize();
+    expect(store.historyHealth).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalledWith('get_history_health');
+
+    const checking = deferred<ReturnType<typeof historyHealthFixture>>();
+    responses.get_history_health = checking.promise;
+    store.setActiveGeneralSection('history');
+    expect(store.isLoadingHistoryHealth).toBe(true);
+    const overlapping = store.loadHistoryHealth();
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'get_history_health')).toHaveLength(1);
+    checking.resolve(historyHealthFixture());
+    await overlapping;
+    expect(store.historyHealth).toEqual(historyHealthFixture());
+    expect(store.isLoadingHistoryHealth).toBe(false);
+    store.dispose();
+  });
+
+  it('shows a failed initial diagnostic and allows a fresh retry', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    const checking = deferred<ReturnType<typeof historyHealthFixture>>();
+    responses.get_history_health = checking.promise;
+    const loading = store.loadHistoryHealth();
+    checking.reject(new Error('history unavailable'));
+    await loading;
+    expect(store.isLoadingHistoryHealth).toBe(false);
+    expect(store.historyHealth).toBeNull();
+    expect(store.historyActionError).toBe('History is unavailable right now.');
+
+    responses.get_history_health = historyHealthFixture();
+    await store.loadHistoryHealth();
+    expect(store.historyHealth).toEqual(historyHealthFixture());
+    expect(store.historyActionError).toBeNull();
+    store.dispose();
+  });
+
+  it('ignores a diagnostic completed after disposal and releases its loading state', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    const checking = deferred<ReturnType<typeof historyHealthFixture>>();
+    responses.get_history_health = checking.promise;
+    const loading = store.loadHistoryHealth();
+    store.dispose();
+    expect(store.isLoadingHistoryHealth).toBe(false);
+    checking.resolve(historyHealthFixture());
+    await loading;
+    expect(store.historyHealth).toBeNull();
+  });
+
+  it('refreshes history on note changes only while the History section is visible', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    let onNoteChanged!: () => void;
+    vi.spyOn(appStoreMock, 'subscribeVaultNoteChanged').mockImplementation(listener => {
+      onNoteChanged = () => listener({ notePath: '/vault/Ideas.md', deleted: false });
+      return vi.fn();
+    });
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    const store = createSettingsStore(appStoreMock);
+    try {
+      await store.initialize();
+      onNoteChanged();
+      await vi.advanceTimersByTimeAsync(350);
+      expect(invokeMock).not.toHaveBeenCalledWith('get_history_health');
+
+      store.setActiveGeneralSection('history');
+      await store.loadHistoryHealth();
+      onNoteChanged();
+      await vi.advanceTimersByTimeAsync(350);
+      expect(invokeMock.mock.calls.filter(([command]) => command === 'get_history_health')).toHaveLength(2);
+
+      store.setActiveTab('forgotten');
+      onNoteChanged();
+      await vi.advanceTimersByTimeAsync(350);
+      expect(invokeMock.mock.calls.filter(([command]) => command === 'get_history_health')).toHaveLength(2);
+    } finally {
+      store.dispose();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('joins initialization and never subscribes after disposal during bootstrap', async () => {
     const { createSettingsStore } = await import('./store.svelte');
     const boot = deferred<ReturnType<typeof bootstrapFixture>>();
@@ -579,7 +665,7 @@ describe('SettingsStore asynchronous admission', () => {
     const old = deferred<ReturnType<typeof settingsViewFixture>>();
     responses.get_settings_view = old.promise;
     const store = createSettingsStore(appStoreMock); const loading = store.loadSemanticState();
-    const health = { ...settingsViewFixture().historyHealth, pendingRepairs: 4 };
+    const health = { ...historyHealthFixture(), pendingRepairs: 4 };
     responses.get_history_health = health; await store.loadHistoryHealth();
     old.resolve(settingsViewFixture()); await loading;
     expect(store.historyHealth).toEqual(health);
@@ -631,17 +717,54 @@ describe('SettingsStore asynchronous admission', () => {
       methods.forEach((name, index) => expect(spies[index]).toHaveBeenCalledTimes(name === method ? 1 : 0));
     } finally { store.dispose(); vi.unstubAllGlobals(); }
   });
+
+  it('refreshes Forgotten items rather than a hidden History section on visibility changes', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    store.activeGeneralSection = 'history';
+    store.activeTab = 'forgotten';
+    const history = vi.spyOn(store, 'loadHistoryHealth');
+    const forgotten = vi.spyOn(store, 'loadForgottenNotes').mockResolvedValue();
+    vi.stubGlobal('document', { visibilityState: 'visible' });
+    try {
+      await store.handleVisibilityChange();
+      expect(forgotten).toHaveBeenCalledOnce();
+      expect(history).not.toHaveBeenCalled();
+    } finally { store.dispose(); vi.unstubAllGlobals(); }
+  });
 });
 
 describe('SettingsStore mutation/read conflicts', () => {
+  it('does not let an older health check replace a mutation or block a fresh check', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    const prior = deferred<ReturnType<typeof historyHealthFixture>>();
+    responses.get_history_health = prior.promise;
+    const checking = store.loadHistoryHealth();
+    const repaired = { ...historyHealthFixture(), pendingRepairs: 4 };
+    responses.retry_history_recovery = repaired;
+    await store.retryHistory();
+    expect(store.isLoadingHistoryHealth).toBe(false);
+    expect(store.historyHealth).toEqual(repaired);
+
+    const refreshed = { ...historyHealthFixture(), pendingRepairs: 2 };
+    responses.get_history_health = refreshed;
+    await store.loadHistoryHealth();
+    prior.resolve(historyHealthFixture());
+    await checking;
+    expect(store.historyHealth).toEqual(refreshed);
+    expect(store.isLoadingHistoryHealth).toBe(false);
+    store.dispose();
+  });
+
   it('does not admit a settings bundle begun during a history mutation', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const action = deferred<ReturnType<typeof settingsViewFixture>['historyHealth']>();
+    const action = deferred<ReturnType<typeof historyHealthFixture>>();
     responses.retry_history_recovery = action.promise;
     const store = createSettingsStore(appStoreMock); const retry = store.retryHistory();
     const bundle = deferred<ReturnType<typeof settingsViewFixture>>();
     responses.get_settings_view = bundle.promise; const loading = store.loadSemanticState();
-    const health = { ...settingsViewFixture().historyHealth, pendingRepairs: 7 };
+    const health = { ...historyHealthFixture(), pendingRepairs: 7 };
     action.resolve(health); await retry;
     bundle.resolve(settingsViewFixture()); await loading;
     expect(store.historyHealth).toEqual(health); store.dispose();

@@ -19,6 +19,9 @@ mod litert_ffi;
 mod litert_install;
 pub(crate) mod note_ann;
 pub(crate) mod owned_process;
+mod query_embedding;
+#[cfg(test)]
+mod query_work_tests;
 pub(crate) mod related;
 mod runtime_install;
 pub(crate) mod similarity;
@@ -37,7 +40,7 @@ use self::{
         mark_running_jobs_interrupted, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
-    embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo},
+    embed::{EmbeddingProvider, ModelInfo},
     indexer::{
         spawn_indexing_worker, IndexingWorkerContext, PendingIndexState, PendingNoteMove,
         PendingNoteUpdate, PendingSemanticDocument, SemanticWorkQueue,
@@ -279,6 +282,9 @@ struct ActiveSemanticState {
     atlas_cache_dir: PathBuf,
     settings: Arc<Mutex<SemanticSettings>>,
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
+    // Pure preparations belong to this fixed provider/generation lifetime;
+    // source mutations still rerun ranking and current-content validation.
+    query_embedding: query_embedding::QueryEmbedding,
     runtime: Arc<Mutex<RuntimeState>>,
     debug: Arc<SemanticDebugState>,
     ann: Arc<AnnIndexState>,
@@ -460,6 +466,7 @@ impl SemanticState {
             atlas_cache_dir: semantic_dir.clone(),
             settings,
             provider,
+            query_embedding: Default::default(),
             runtime: runtime.clone(),
             debug: debug.clone(),
             ann: ann.clone(),
@@ -1014,6 +1021,8 @@ impl SemanticState {
         image: Option<&[u8]>,
         allowed: Option<&std::collections::HashSet<String>>,
         root: &Path,
+        include_passages: bool,
+        include_images: bool,
     ) -> Result<(Vec<images::ImageMatch>, Vec<SemanticChunkMatch>), String> {
         let SemanticStateInner::Active(state) = &self.inner else {
             return Err("Image search is unavailable on this device.".into());
@@ -1030,42 +1039,45 @@ impl SemanticState {
         let vector = if let Some(bytes) = image {
             state.provider.embed_image_query(bytes, text)?
         } else {
-            state
-                .provider
-                .embed_texts(
-                    &[text.ok_or("Search query is empty.")?.to_string()],
-                    EmbeddingInputKind::Query,
-                )?
-                .into_iter()
-                .next()
-                .ok_or("No query embedding.")?
+            state.query_embedding.prepare(
+                state.provider.as_ref(),
+                text.ok_or("Search query is empty.")?,
+            )?
         };
         if state.provider.image_representation().as_deref() != Some(&representation) {
             return Err("Image detail changed. Search again.".into());
         }
-        let images = images::search(
-            &state.image_ann,
-            &open_database(&state.db_path)?,
-            root,
-            &representation,
-            &vector,
-            allowed,
-            state.provider.minimum_image_score(image.is_some()),
-            12,
-        )?;
+        let images = if include_images {
+            images::search(
+                &state.image_ann,
+                &open_database(&state.db_path)?,
+                root,
+                &representation,
+                &vector,
+                allowed,
+                state.provider.minimum_image_score(image.is_some()),
+                12,
+            )?
+        } else {
+            Vec::new()
+        };
         let paths = allowed.map(|paths| paths.iter().cloned().collect::<Vec<_>>());
-        let passages = state.matches_for_vector(
-            &vector,
-            None,
-            12,
-            paths.as_deref(),
-            None,
-            if image.is_some() {
-                state.provider.minimum_image_to_text_score()
-            } else {
-                state.provider.minimum_text_score()
-            },
-        )?;
+        let passages = if include_passages {
+            state.matches_for_vector(
+                &vector,
+                None,
+                12,
+                paths.as_deref(),
+                None,
+                if image.is_some() {
+                    state.provider.minimum_image_to_text_score()
+                } else {
+                    state.provider.minimum_text_score()
+                },
+            )?
+        } else {
+            Vec::new()
+        };
         Ok((images, passages))
     }
 
@@ -1408,12 +1420,7 @@ impl ActiveSemanticState {
             return Ok(Vec::new());
         }
 
-        let query_embedding = self
-            .provider
-            .embed_texts(&[text.to_string()], EmbeddingInputKind::Query)?
-            .into_iter()
-            .next()
-            .ok_or_else(|| "Unable to embed semantic query".to_string())?;
+        let query_embedding = self.query_embedding.prepare(self.provider.as_ref(), text)?;
         self.matches_for_vector(
             &query_embedding,
             exclude_note_path,
@@ -1686,6 +1693,7 @@ fn spawn_ann_initialize_and_scan_in_background(context: AnnStartupContext) {
 
 #[cfg(test)]
 mod health_tests {
+    use super::embed::EmbeddingInputKind;
     use super::*;
     use crate::test_support::TestDir;
 
@@ -1757,6 +1765,7 @@ mod health_tests {
                 atlas_cache_dir: temp.path().join("atlas"),
                 settings: Arc::new(Mutex::new(SemanticSettings::default())),
                 provider: Arc::new(StatusEmbeddingProvider),
+                query_embedding: Default::default(),
                 runtime: Arc::new(Mutex::new(runtime)),
                 debug,
                 ann,
@@ -1924,6 +1933,8 @@ An application settings screenshot with Privacy and Sharing, public sharing and 
                 None,
                 None,
                 &root,
+                true,
+                true,
             )
             .unwrap();
         assert_eq!(images.len(), 1);

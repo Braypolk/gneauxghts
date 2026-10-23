@@ -7,7 +7,8 @@ import {
   bindNotepadStateToVault,
   findOpenDocument
 } from '#lib/features/notepad/state/noteStore.js';
-import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
+import { createEmptySessionSnapshot, createSessionSnapshot } from '#lib/features/notepad/session/session.js';
+import type { DraftBackup } from '../recovery/draftBackup';
 import {
   dispatchDocumentOperation,
   updateDocumentMarkdown,
@@ -52,7 +53,79 @@ afterEach(() => {
   }
 });
 
+const savedRecoverySource = { noteId: 'source', path: '/vault/Source.md', title: 'Source', markdown: 'Saved body', tags: ['old'] };
+function recoveryBackup(overrides: Partial<DraftBackup> = {}): DraftBackup {
+  return { id: 'backup', version: 1, title: 'Recovered idea', markdown: 'The body', tags: ['garden'], tagsError: null,
+    sourceNoteId: null, sourcePath: null, updatedAtMillis: 1, ...overrides };
+}
+function existingBackup(overrides: Partial<DraftBackup> = {}): DraftBackup {
+  return recoveryBackup({ sourceNoteId: savedRecoverySource.noteId, sourcePath: savedRecoverySource.path,
+    baseline: { title: savedRecoverySource.title, markdown: savedRecoverySource.markdown, tags: savedRecoverySource.tags, tagsError: null }, ...overrides });
+}
+
 describe('documentEditingService', () => {
+  it('restores a never-saved idea into an empty draft through ordinary editor ownership', () => {
+    const harness = createHarness();
+    harness.service.restoreRecoveryDraft(harness.note, recoveryBackup());
+    expect(harness.note.identity).toEqual({ kind: 'draft' });
+    expect(harness.note.savedBaseline).toBeNull();
+    expect(harness.note.working.title).toBe('Recovered idea');
+    expect(harness.note.working.body.toMarkdown()).toBe('The body');
+    expect(harness.note.working.tags).toEqual(['garden']);
+    expect(documentHasCleanBuffer(harness.note)).toBe(false);
+    expect(harness.scheduleAutosave).toHaveBeenCalledWith(harness.note);
+    expect(() => harness.service.restoreRecoveryDraft(harness.note, recoveryBackup({
+      title: 'Other', markdown: 'Do not overwrite', tags: []
+    }))).toThrow('current edits');
+    expect(harness.note.working.body.toMarkdown()).toBe('The body');
+  });
+
+  it('recovers into the original identity and saved baseline without creating a document', () => {
+    const f = createHarness({}, createSessionSnapshot(savedRecoverySource));
+    const handle = f.note.handle, baseline = f.note.savedBaseline;
+    f.service.restoreRecoveryDraft(f.note, existingBackup());
+    expect(f.note.handle).toBe(handle);
+    expect(f.note.identity).toEqual({ kind: 'persisted', noteId: 'source', path: '/vault/Source.md' });
+    expect(f.note.savedBaseline).toBe(baseline);
+    expect(f.note.working.body.toMarkdown()).toBe('The body');
+    expect(f.note.externalSync.kind).toBe('noConflict');
+    expect(f.scheduleAutosave).toHaveBeenCalledWith(f.note);
+    expect(Object.keys(f.state.documentsByHandle)).toEqual([handle]);
+  });
+
+  it.each(['body', 'title', 'tags', 'legacy'] as const)('requires a conflict choice when the saved %s differs or is unknown', kind => {
+    const current = { ...savedRecoverySource,
+      ...(kind === 'body' ? { markdown: 'Newer disk work' } : {}),
+      ...(kind === 'title' ? { title: 'Externally renamed', path: '/vault/Externally renamed.md' } : {}),
+      ...(kind === 'tags' ? { tags: ['newer'] } : {}) };
+    const f = createHarness({}, createSessionSnapshot(current));
+    f.service.restoreRecoveryDraft(f.note, existingBackup(kind === 'legacy' ? { baseline: undefined } : {}));
+    expect(f.note.working.body.toMarkdown()).toBe('The body');
+    expect(f.note.identity).toEqual({ kind: 'persisted', noteId: 'source', path: current.path });
+    expect(f.note.externalSync).toMatchObject({ kind: 'conflict', external: { kind: 'snapshot', source: 'recovery' } });
+    if (f.note.externalSync.kind === 'conflict' && f.note.externalSync.external.kind === 'snapshot') {
+      expect(f.note.externalSync.external.document.content.body.toMarkdown()).toBe(current.markdown);
+    }
+    expect(f.scheduleAutosave).not.toHaveBeenCalled();
+  });
+
+  it('recognizes already-saved recovered work without another save', () => {
+    const f = createHarness({}, createSessionSnapshot(savedRecoverySource));
+    f.service.restoreRecoveryDraft(f.note, existingBackup({ title: savedRecoverySource.title,
+      markdown: savedRecoverySource.markdown, tags: savedRecoverySource.tags, baseline: undefined }));
+    expect(documentHasCleanBuffer(f.note)).toBe(true);
+    expect(f.scheduleAutosave).not.toHaveBeenCalled();
+    expect(f.note.externalSync.kind).toBe('noConflict');
+  });
+
+  it('refuses a replacement identity or newer unsaved editor work', () => {
+    const f = createHarness({}, createSessionSnapshot(savedRecoverySource));
+    expect(() => f.service.restoreRecoveryDraft(f.note, existingBackup({ sourceNoteId: 'different' }))).toThrow('original note');
+    updateDocumentMarkdown(f.note, 'New unsaved edits');
+    expect(() => f.service.restoreRecoveryDraft(f.note, existingBackup())).toThrow('current edits');
+    expect(f.note.working.body.toMarkdown()).toBe('New unsaved edits');
+  });
+
   it('increments the operation revision once per actual markdown change', () => {
     const harness = createHarness();
     const revision = harness.note.operation.revision;

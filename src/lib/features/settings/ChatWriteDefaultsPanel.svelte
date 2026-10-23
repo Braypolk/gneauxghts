@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { chatSettings } from '#lib/features/chat/pi/settings.js';
-  import { writeGrantForDuration, withCreationPermission, type VaultWritePolicy } from '#lib/features/chat/pi/authority.js';
+  import { writeGrantForDuration, withCreationPermission, withWriteFolders, type VaultWritePolicy } from '#lib/features/chat/pi/authority.js';
+  import WriteFoldersField from '#lib/features/chat/ui/WriteFoldersField.svelte';
   import SettingsField from './SettingsField.svelte';
 
   let saved = $state<VaultWritePolicy | null>(null);
   let duration = $state<'off' | 'always'>('off');
   let review = $state(true);
   let create = $state(false);
+  let folders = $state('.');
   let loading = $state(true);
   let saving = $state(false);
   let error = $state<string | null>(null);
@@ -21,6 +23,7 @@
       duration = saved.grant.duration;
       review = saved.reviewBeforeApplying;
       create = saved.grant.duration !== 'off' && saved.grant.operations.includes('create');
+      folders = saved.grant.duration === 'off' ? '.' : saved.grant.scope.folders.join('\n');
     } catch {
       error = 'Unable to load editing defaults.';
     } finally { loading = false; }
@@ -32,16 +35,18 @@
     error = null;
     message = null;
     try {
-      const write = withCreationPermission({
+      const write = withWriteFolders(withCreationPermission({
         grant: writeGrantForDuration(saved, duration, 0), reviewBeforeApplying: review
-      }, create) as VaultWritePolicy;
+      }, create), folders) as VaultWritePolicy;
       saved = await chatSettings.setWriteDefaults(write);
       duration = saved.grant.duration;
       review = saved.reviewBeforeApplying;
       create = saved.grant.duration !== 'off' && saved.grant.operations.includes('create');
+      folders = saved.grant.duration === 'off' ? '.' : saved.grant.scope.folders.join('\n');
       message = 'Editing defaults saved in this vault.';
-    } catch {
-      error = 'Saving editing defaults could not be confirmed. Reopen Settings to check the current values.';
+    } catch (failure) {
+      error = failure && typeof failure === 'object' && 'message' in failure && typeof failure.message === 'string'
+        ? failure.message : 'Saving editing defaults could not be confirmed. Reopen Settings to check the current values.';
     } finally { saving = false; }
   }
 
@@ -51,7 +56,7 @@
 <section class="settings-section" data-settings-anchor="chat-write-defaults">
   <h3 class="text-sm font-medium">Note editing defaults</h3>
   <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-    Saved with this vault. Applies to new and existing chats. Review covers edits and new notes. Note read access and excluded notes still apply.
+    Saved with this vault. Applies to new and existing chats. Changes include note content, properties and filenames. Review applies to all enabled changes. Note read access and excluded notes still apply.
   </p>
   {#if loading}
     <p class="mt-4 text-sm text-muted-foreground">Loading editing defaults…</p>
@@ -75,6 +80,9 @@
           <input type="checkbox" bind:checked={create} disabled={duration === 'off'} />
           Allow creating new notes
         </label>
+      </div>
+      <div data-settings-anchor="chat-write-folders" class="sm:col-span-2">
+        <WriteFoldersField bind:value={folders} disabled={duration === 'off'} />
       </div>
     </fieldset>
     <p class="mt-3 text-xs leading-relaxed text-muted-foreground">

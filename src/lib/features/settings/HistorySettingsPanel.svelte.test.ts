@@ -22,20 +22,43 @@ function report(overrides: Partial<HistoryHealthReport> = {}): HistoryHealthRepo
   };
 }
 
-function renderPanel(historyHealth: HistoryHealthReport) {
+function renderPanel(
+  historyHealth: HistoryHealthReport | null,
+  options: { isLoading?: boolean; actionError?: string } = {}
+) {
   return render(HistorySettingsPanel, {
     props: {
       historyHealth,
+      isLoading: options.isLoading ?? false,
       isRunningAction: false,
-      actionError: null,
+      actionError: options.actionError ?? null,
       retryHistory: vi.fn(),
       resetCorruptHistory: vi.fn(),
-      clearVaultHistory: vi.fn()
+      clearVaultHistory: vi.fn(),
+      loadHistoryHealth: vi.fn()
     }
   }).body;
 }
 
 describe('HistorySettingsPanel health and recovery states', () => {
+  it('shows initial diagnostic progress without destructive actions', () => {
+    const body = renderPanel(null, { isLoading: true });
+    expect(body).toContain('Loading history health');
+    expect(body).toContain('role="status"');
+    expect(body).not.toContain('Clear vault history');
+    expect(body).not.toContain('Reset history');
+  });
+
+  it('shows an initial diagnostic failure with a retry instead of endless loading', () => {
+    const body = renderPanel(null, { actionError: 'History is unavailable right now.' });
+    expect(body).toContain('History is unavailable right now.');
+    expect(body).toContain('role="alert"');
+    expect(body).toContain('Retry history check');
+    expect(body).not.toContain('Loading history health');
+    expect(body).not.toContain('Clear vault history');
+    expect(body).not.toContain('Reset history');
+  });
+
   it('presents healthy storage, initialization, and reclaimable usage', () => {
     const body = renderPanel(report());
     expect(body).toContain('History is healthy');

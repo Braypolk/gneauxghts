@@ -25,6 +25,14 @@ describe('settings discovery', () => {
     expect(searchSettings(query)).toContainEqual(expect.objectContaining({ id: 'write-access', category: 'ai', anchor: 'chat-write-access' }));
   });
 
+  it.each(['rename notes', 'filenames'])('finds unified editing permission from %s', query => {
+    expect(searchSettings(query)).toContainEqual(expect.objectContaining({ id: 'write-access', category: 'ai', anchor: 'chat-write-access' }));
+  });
+
+  it('finds the explicit folder scope control', () => {
+    expect(searchSettings('Allowed write folders')[0]).toMatchObject({ id: 'write-folders', category: 'ai', anchor: 'chat-write-folders' });
+  });
+
   it.each(['', '  ', '!!!', 'unfindablesetting'])('returns no results for %j', (query) => {
     expect(searchSettings(query)).toEqual([]);
   });

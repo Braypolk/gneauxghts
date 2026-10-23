@@ -60,7 +60,8 @@ export type ExternalRefreshSource =
   | 'watcher'
   | 'windowFocus'
   | 'visibility'
-  | 'taskMutation';
+  | 'taskMutation'
+  | 'recovery';
 
 export interface ExternalDocumentSnapshot {
   content: DocumentWorkingContent;

@@ -18,6 +18,7 @@ export interface NotepadSessionLifecycleDeps {
   isInitialEditorRootReady: () => boolean;
   applySession: (snapshot: SessionSnapshot) => void;
   bindVaultScope: (vaultRoot: string) => void;
+  loadRecoveryCopies?: () => Promise<void>;
   applyAssetRoot: (
     path: string | null,
     storeImage: typeof storePastedImageAsset
@@ -82,6 +83,9 @@ export function createNotepadSessionLifecycle(
         return;
       }
       if (!current()) return;
+
+      // Recovery availability is advisory and cannot make canonical editing fail.
+      void deps.loadRecoveryCopies?.().catch(error => console.error('Draft recovery could not load:', error));
 
       try {
         await deps.ensurePaneEditors();

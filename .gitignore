@@ -2,6 +2,7 @@
 node_modules
 **/.wdio/session/
 **/.wdio/failures/
+/e2e/agent/.wdio/
 /build
 /.svelte-kit
 /package

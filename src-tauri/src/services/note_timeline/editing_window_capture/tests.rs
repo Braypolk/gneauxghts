@@ -1866,7 +1866,7 @@ fn unsupported_history_schema_requires_confirmed_reset_and_rebuilds_exact_curren
     let database = history_store::history_database_path_for_test(f._notes.path());
     {
         let db = rusqlite::Connection::open(&database).unwrap();
-        db.execute("UPDATE history_metadata SET schema_version=13", [])
+        db.execute("UPDATE history_metadata SET schema_version=14", [])
             .unwrap();
     }
     let timeline = f.state.note_timeline();
@@ -1912,7 +1912,7 @@ fn unsupported_history_schema_requires_confirmed_reset_and_rebuilds_exact_curren
             .query_row("SELECT schema_version FROM history_metadata", [], |r| r
                 .get::<_, u64>(0))
             .unwrap(),
-        14
+        15
     );
     let restarted = Fixture::state();
     assert_eq!(

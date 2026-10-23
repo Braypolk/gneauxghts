@@ -115,7 +115,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 14;
+const HISTORY_SCHEMA_VERSION: u64 = 15;
 
 #[allow(dead_code)]
 mod editing_windows;
@@ -416,12 +416,8 @@ pub(super) fn replace_history_store_with_malformed_file_for_test(store: &Store) 
     fs::write(database, b"not a sqlite database").expect("write malformed history store");
 }
 
-#[cfg(test)]
 pub(super) fn history_store_exists(store: &Store) -> bool {
-    Ok::<_, HistoryError>(store.data_dir.clone())
-        .expect("vault data directory")
-        .join(HISTORY_DATABASE_FILE_NAME)
-        .is_file()
+    store.data_dir.join(HISTORY_DATABASE_FILE_NAME).is_file()
 }
 
 #[cfg(test)]
@@ -918,6 +914,111 @@ pub(super) fn verify_publication(
     Ok(true)
 }
 
+pub(super) fn verify_rename_publication(
+    store: &Store,
+    token: &str,
+    note: &NoteIdentity,
+    source: &Path,
+    destination: &Path,
+    canonical: &str,
+) -> Result<bool, HistoryError> {
+    let connection = open_store(store)?;
+    let retained = connection.query_row(
+        "SELECT source_path, target_path, note_id, raw_hash FROM publication_renames WHERE intent_id=?1",
+        [editing_windows::receipt_key(token)?],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+    ).optional()?.ok_or("Rename publication has no retained two-path proof")?;
+    if retained.0 != source.to_string_lossy()
+        || retained.1 != destination.to_string_lossy()
+        || retained.2 != note.as_str()
+        || retained.3 != crate::semantic::db::content_hash(canonical)
+    {
+        return Err("Rename proof does not match its exact retained locations and bytes".into());
+    }
+    drop(connection);
+    verify_publication(store, token, note, canonical)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RenameEffectState {
+    NoEffect,
+    Committed,
+    ChangedSource,
+    ChangedDestination,
+    Mixed,
+}
+
+/// Retain the successful two-path observation before projections or independent
+/// external edits can replace its filesystem evidence. This records an observed
+/// effect, never a second canonical mutation.
+pub(super) fn record_rename_effect(
+    store: &Store,
+    intent: &PreparedHistoryIntent,
+) -> Result<(), HistoryError> {
+    let connection = open_store(store)?;
+    let key = editing_windows::receipt_key(intent.as_str())?;
+    if inspect_rename_effect(&connection, &key)? != Some(RenameEffectState::Committed) {
+        return Err(
+            "Cannot record a rename without exact destination bytes and source absence".into(),
+        );
+    }
+    connection.execute(
+        "UPDATE publication_renames SET effect_observed=1 WHERE intent_id=?1",
+        [key],
+    )?;
+    Ok(())
+}
+
+/// Only observation; recovery never renames, deletes or republishes retained
+/// Markdown. A mixed state stays protected until it can be proved or reset.
+fn inspect_rename_effect(
+    connection: &Connection,
+    intent_id: &str,
+) -> Result<Option<RenameEffectState>, HistoryError> {
+    let retained = connection.query_row(
+        "SELECT source_path, target_path, note_id, raw_hash, effect_observed FROM publication_renames WHERE intent_id=?1",
+        [intent_id],
+        |row| Ok((PathBuf::from(row.get::<_, String>(0)?), PathBuf::from(row.get::<_, String>(1)?), row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, bool>(4)?)),
+    ).optional()?;
+    let Some((source, destination, note_id, raw_hash, effect_observed)) = retained else {
+        return Ok(None);
+    };
+    if effect_observed {
+        return Ok(Some(RenameEffectState::Committed));
+    }
+    let read = |path: &Path| -> Result<Option<String>, HistoryError> {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+            Ok(metadata) if metadata.file_type().is_file() => Ok(Some(fs::read_to_string(path)?)),
+            Ok(_) => Err("A retained rename location is no longer an ordinary file".into()),
+        }
+    };
+    let source_bytes = read(&source)?;
+    let destination_bytes = read(&destination)?;
+    let expected = |raw: &str| {
+        crate::semantic::db::content_hash(raw) == raw_hash
+            && managed_note_identity(raw).as_deref() == Ok(note_id.as_str())
+    };
+    match (source_bytes, destination_bytes) {
+        (None, Some(raw)) if expected(&raw) => {
+            // A process can die after the atomic move but before directory sync.
+            // Reestablish durability before converting observation into a receipt.
+            crate::state::sync_note_move_directory(&destination)?;
+            Ok(Some(RenameEffectState::Committed))
+        }
+        (Some(raw), None) if expected(&raw) => Ok(Some(RenameEffectState::NoEffect)),
+        (Some(_), None) => Ok(Some(RenameEffectState::ChangedSource)),
+        (None, Some(_)) => Ok(Some(RenameEffectState::ChangedDestination)),
+        (Some(source), Some(destination)) if expected(&source) && !expected(&destination) => {
+            Ok(Some(RenameEffectState::ChangedDestination))
+        }
+        // Neither absence nor a duplicate identity alone proves a rename.
+        // Preserve every file and keep the prepared intent as uncertainty proof.
+        _ => Ok(Some(RenameEffectState::Mixed)),
+    }
+}
+
 pub(super) fn prepare_publication(
     store: &Store,
     source: MutationSource,
@@ -934,7 +1035,41 @@ pub(super) fn prepare_publication(
     {
         return Err("Ordinary Editor publication requires Editing Window admission".into());
     }
-    prepare_publication_capture(store, source, target_path, markdown, kind, baseline, None)
+    prepare_publication_capture(
+        store,
+        source,
+        target_path,
+        markdown,
+        kind,
+        baseline,
+        None,
+        None,
+    )
+}
+
+/// The two locations and complete raw-byte hash are prepared in the same durable
+/// transaction as the history intent, before the kernel rename can run.
+pub(super) fn prepare_rename_publication(
+    store: &Store,
+    source_path: &Path,
+    target_path: &Path,
+    markdown: &str,
+    known_since_millis: u64,
+) -> Result<PreparedHistoryIntent, HistoryError> {
+    prepare_publication_capture(
+        store,
+        MutationSource::AgentPublication,
+        target_path,
+        markdown,
+        PublicationIntentKind::Update,
+        Some(BaselineSeed {
+            path: source_path,
+            canonical_markdown: markdown,
+            known_since_millis,
+        }),
+        None,
+        Some(source_path),
+    )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -953,6 +1088,7 @@ pub(super) fn prepare_window_publication(
         PublicationIntentKind::Update,
         baseline,
         Some(admission),
+        None,
     )
 }
 
@@ -964,6 +1100,7 @@ fn prepare_publication_capture(
     kind: PublicationIntentKind,
     baseline: Option<BaselineSeed<'_>>,
     admission: Option<WindowAdmission>,
+    rename_source: Option<&Path>,
 ) -> Result<PreparedHistoryIntent, HistoryError> {
     store.require_path(target_path)?;
     if let Some(seed) = &baseline {
@@ -1029,6 +1166,14 @@ fn prepare_publication_capture(
             ],
         )
         .map_err(|error| HistoryError::from(error).with_context("Prepare Note Revision"))?;
+    if let Some(source_path) = rename_source {
+        transaction.execute(
+            "INSERT INTO publication_renames (intent_id, source_path, target_path, note_id, raw_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![intent_id, source_path.to_string_lossy(), target_path.to_string_lossy(), note_id,
+                crate::semantic::db::content_hash(markdown)],
+        )?;
+    }
     if let Some(admission) = admission {
         editing_windows::prepare(&transaction, &intent_id, &note_id, target_path, admission)?;
     } else {
@@ -1060,6 +1205,24 @@ pub(super) fn finalize_publication(
         other => return Err(format!("History publication token is {other:?}").into()),
     }
     let key = editing_windows::receipt_key(history_intent.as_str())?;
+    if let Some(state) = inspect_rename_effect(&connection, &key)? {
+        if state != RenameEffectState::Committed {
+            return Err(
+                "The rename effect cannot yet be proven from both canonical locations".into(),
+            );
+        }
+        let retained_payload: Vec<u8> = connection.query_row(
+            "SELECT authored_payload FROM prepared_intents WHERE intent_id=?1",
+            [&key],
+            |row| row.get(0),
+        )?;
+        return finalize_intent(
+            &mut connection,
+            &key,
+            &retained_payload,
+            history_intent.prepared_base.as_ref(),
+        );
+    }
     let intent = connection
         .query_row(
             "SELECT target_path, source, result_hash, status, note_id
@@ -4262,6 +4425,14 @@ fn open_store(store: &Store) -> Result<Connection, HistoryError> {
                result_hash TEXT NOT NULL,
                status TEXT NOT NULL CHECK (status = 'prepared')
              );
+             CREATE TABLE IF NOT EXISTS publication_renames (
+               intent_id TEXT PRIMARY KEY REFERENCES publication_receipts(intent_id) ON DELETE CASCADE,
+               source_path TEXT NOT NULL,
+               target_path TEXT NOT NULL,
+               note_id TEXT NOT NULL,
+               raw_hash TEXT NOT NULL,
+               effect_observed INTEGER NOT NULL DEFAULT 0 CHECK (effect_observed IN (0,1))
+             );
              CREATE TABLE IF NOT EXISTS revisions (
                revision_id TEXT PRIMARY KEY,
                note_id TEXT NOT NULL,
@@ -4643,6 +4814,25 @@ fn recover_pending_with_connection(
         pending
     };
     for (intent_id, path, intended_payload, intended_hash, intended_note_id) in pending {
+        if let Some(state) = inspect_rename_effect(connection, &intent_id)? {
+            match state {
+                RenameEffectState::NoEffect => {
+                    editing_windows::abandon(connection, &intent_id)?;
+                    continue;
+                }
+                RenameEffectState::Committed => {
+                    // The exact move was observed either now or durably before
+                    // subsequent independent changes. Capture that original
+                    // effect without rewriting current destination bytes.
+                    let mut recovered = open_existing_connection(connection)?;
+                    finalize_intent(&mut recovered, &intent_id, &intended_payload, None)?;
+                    continue;
+                }
+                state => return Err(
+                    format!("Rename publication at {} has an uncertain two-path state ({state:?}); files were left intact", path.display()).into()
+                ),
+            }
+        }
         match fs::read_to_string(&path) {
             Ok(markdown) => {
                 let canonical_payload = AuthoredState::from_canonical(&markdown).encode();

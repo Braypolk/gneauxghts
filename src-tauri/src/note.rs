@@ -36,6 +36,8 @@ pub(crate) struct ManagedNoteMetadata {
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) trashed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) untitled: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -70,6 +72,15 @@ pub(crate) fn strip_frontmatter(markdown: &str) -> String {
     parse_note(markdown).body
 }
 
+/// Complete editable content without the app-owned identity/lifecycle namespace.
+pub(crate) fn authored_markdown(markdown: &str) -> String {
+    let parsed = parse_note(markdown);
+    match parsed.frontmatter.raw_other {
+        Some(other) => format!("---\n{other}\n---\n\n{}", parsed.body),
+        None => parsed.body,
+    }
+}
+
 pub(crate) fn normalize_wikilink_markdown(markdown: &str) -> String {
     markdown
         .replace("!\\[\\[", "![[")
@@ -81,10 +92,42 @@ pub(crate) fn extract_file_name_title_and_body(
     markdown: &str,
     fallback_title: &str,
 ) -> (String, String) {
-    let normalized = strip_frontmatter(markdown);
+    let parsed = parse_note(markdown);
+    // Only our identity-bound temporary filename represents an empty title.
+    // An explicit filesystem/Pi rename immediately supplies a normal title.
+    if parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .is_some_and(|meta| meta.untitled && fallback_title == untitled_file_stem(&meta.id))
+    {
+        return (String::new(), parsed.body);
+    }
     (
         fallback_title.to_string(),
-        strip_leading_title_heading(&normalized, fallback_title),
+        strip_leading_title_heading(&parsed.body, fallback_title),
+    )
+}
+
+pub(crate) fn untitled_file_stem(note_id: &str) -> String {
+    format!("Untitled Note {note_id}")
+}
+
+/// Preserve read compatibility for captures made by the retired AI-title flow.
+/// Ordinary editor saves clear this marker before deriving a normal filename.
+pub(crate) fn clear_untitled_marker(markdown: &str) -> String {
+    let parsed = parse_note(markdown);
+    let Some(mut metadata) = parsed.frontmatter.managed else {
+        return markdown.to_string();
+    };
+    if !metadata.untitled {
+        return markdown.to_string();
+    }
+    metadata.untitled = false;
+    format!(
+        "---\n{}\n---\n\n{}",
+        compose_frontmatter(parsed.frontmatter.raw_other.as_deref(), &metadata),
+        parsed.body
     )
 }
 
@@ -220,6 +263,9 @@ pub(crate) fn prepare_note_markdown(
             .filter(|created_at| !created_at.trim().is_empty())
             .unwrap_or_else(|| now.clone()),
         updated_at: now,
+        untitled: existing_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.untitled),
         trashed_at: trashed_at.unwrap_or_else(|| {
             existing_metadata
                 .as_ref()
@@ -292,6 +338,7 @@ pub(crate) fn repair_managed_note_identity(
             created_at: now.clone(),
             updated_at: now,
             trashed_at: None,
+            untitled: false,
         });
     metadata.id = note_id.to_string();
     let frontmatter = compose_frontmatter(parsed.frontmatter.raw_other.as_deref(), &metadata);
@@ -385,6 +432,8 @@ fn parse_managed_metadata(lines: &[&str]) -> ManagedNoteMetadata {
             metadata.created_at = normalize_yaml_scalar(value);
         } else if let Some(value) = trimmed.strip_prefix("updated_at:") {
             metadata.updated_at = normalize_yaml_scalar(value);
+        } else if let Some(value) = trimmed.strip_prefix("untitled:") {
+            metadata.untitled = value.trim() == "true";
         } else if let Some(value) = trimmed.strip_prefix("trashed_at:") {
             let value = normalize_yaml_scalar(value);
             if !value.is_empty() && value != "null" {
@@ -414,10 +463,13 @@ fn compose_managed_frontmatter(metadata: &ManagedNoteMetadata) -> String {
         .trashed_at
         .clone()
         .unwrap_or_else(|| "null".to_string());
-    let managed = format!(
+    let mut managed = format!(
         "gneauxghts:\n  id: {}\n  created_at: {}\n  updated_at: {}\n  trashed_at: {}",
         metadata.id, metadata.created_at, metadata.updated_at, trashed_at
     );
+    if metadata.untitled {
+        managed.push_str("\n  untitled: true");
+    }
     managed
 }
 

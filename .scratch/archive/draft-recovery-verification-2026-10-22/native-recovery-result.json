@@ -1,0 +1,20 @@
+{
+  "source": {
+    "noteId": "01M5KAKMD4WT8W8N6Y1471QVVC",
+    "path": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-native-e2e-2oSswW/documents/vault/Recovery original source.md"
+  },
+  "resumed": {
+    "noteId": "01M5KAKQSX9S35JYHKVJ9JFP5D",
+    "path": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-native-e2e-2oSswW/documents/vault/Recovered unfinished title.md"
+  },
+  "originalBytesUnchanged": true,
+  "newFiles": [
+    "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-native-e2e-2oSswW/documents/vault/Recovered unfinished title.md"
+  ],
+  "remainingBackups": [],
+  "offeredAgainAfterReload": false,
+  "processes": {
+    "beforePid": 72569,
+    "afterPid": 72604
+  }
+}

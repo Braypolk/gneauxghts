@@ -65,7 +65,11 @@ describe('note discovery keyboard navigation', () => {
     await $('[data-testid="note-search-input"]').click();
     await browser.keys('ArrowUp');
     await browser.keys('ArrowRight');
+    await expect($('[data-browse-mode="edited"]')).toBeFocused();
+    // Last edited loads asynchronously; wait for the rows this journey navigates.
+    await expect($$('button[aria-label^="Open last edited note:"]')).toBeElementsArrayOfSize(2);
     await browser.keys('ArrowDown');
+    await expect($('[data-testid="note-search-input"]')).toBeFocused();
     await browser.keys('ArrowRight');
     await expect($('button[aria-label="Open Alpha note.md in split pane"]')).toBeFocused();
     await browser.keys('ArrowDown');
@@ -95,7 +99,11 @@ describe('note discovery keyboard navigation', () => {
     await $('[data-testid="note-search-input"]').click();
     await browser.keys('ArrowUp');
     await browser.keys('ArrowRight');
+    await expect($('[data-browse-mode="edited"]')).toBeFocused();
+    // Last edited loads asynchronously; wait for the rows this journey navigates.
+    await expect($$('button[aria-label^="Open last edited note:"]')).toBeElementsArrayOfSize(2);
     await browser.keys('ArrowDown');
+    await expect($('[data-testid="note-search-input"]')).toBeFocused();
     await browser.keys('ArrowDown');
     await browser.keys('ArrowRight');
     await expect($$('[data-search-split-action]')).toBeElementsArrayOfSize(0);

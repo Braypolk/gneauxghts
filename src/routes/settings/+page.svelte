@@ -574,11 +574,13 @@
             {:else if settings.activeGeneralSection === 'history'}
               <HistorySettingsPanel
                 historyHealth={settings.historyHealth}
+                isLoading={settings.isLoadingHistoryHealth}
                 isRunningAction={settings.isRunningHistoryAction}
                 actionError={settings.historyActionError}
                 retryHistory={settings.retryHistory}
                 resetCorruptHistory={settings.resetCorruptHistory}
                 clearVaultHistory={settings.clearVaultHistory}
+                loadHistoryHealth={settings.loadHistoryHealth}
               />
             {:else if settings.activeGeneralSection === 'search'}
       <SemanticSettingsPanel

@@ -10,7 +10,7 @@ The initial single-writer Note Timeline release keeps app-owned ordinary-note wr
 
 ## Consequences
 
-- A blocked save keeps the dirty draft in the editor. The person can retry, copy the draft elsewhere, or use Settings recovery. A process exit or crash before a blocked draft is copied or saved can still lose that draft; retention in memory is not durable draft backup.
+- A blocked save keeps the dirty draft in the editor. The person can retry, copy the draft elsewhere, or use Settings recovery. [ADR 0014](0014-retain-unfinished-work-as-private-recovery-copies.md) adds private coalesced Recovery Drafts, restored to the original Note Identity with conflict admission. Termination before a backup completes or storage failure can still lose unfinished work.
 - Unavailable, replaced, or corrupt history requires an explicit recovery or confirmed reset. Reset advances the history generation and establishes truthful Baseline Revisions from current Markdown; it does not recover deleted historical prose or silently bless an older store.
 - After canonical publication, history-finalization or required catalog/task synchronization failure returns the authoritative committed result and warning. Derived lexical and semantic work may complete later. Recovery finalizes the prepared intent idempotently; callers must not replay the authored mutation.
 - No emergency save-without-history option, capture-disable switch, or automatic reset is introduced. External edits remain outside app-owned write admission and are captured through observation/reconciliation.

@@ -94,9 +94,9 @@ describe('atlas view helpers', () => {
     };
   }
 
-  it('does not treat weak recency-only atlas matches as colored search hits', () => {
+  it('uses native relevance admission rather than applying a second similarity policy', () => {
     expect(isAtlasSearchHit(null)).toBe(false);
-    expect(isAtlasSearchHit(searchMatch({ score: 0.1 }))).toBe(false);
+    expect(isAtlasSearchHit(searchMatch({ score: 0.1 }))).toBe(true);
     expect(isAtlasSearchHit(searchMatch({ score: 0.34 }))).toBe(true);
     expect(isAtlasSearchHit(searchMatch({ semanticScore: 0.52 }))).toBe(true);
     expect(isAtlasSearchHit(searchMatch({ lexicalScore: 0.7 }))).toBe(true);
@@ -330,6 +330,46 @@ describe('Atlas activation freshness', () => {
     callback({ ...vaultFixture, selectedPath: '/other', requiresRestart: true });
     expect(store.response?.revision).toBe(1);
     expect(store.selectedNodeId).toBe('note-1');
+    store.dispose();
+  });
+});
+
+describe('Atlas node filtering', () => {
+  afterEach(() => { vi.clearAllMocks(); });
+
+  function match(note: AtlasNode, score: number, overrides: Partial<AtlasSearchMatch> = {}): AtlasSearchMatch {
+    return { noteId: note.noteId, notePath: note.notePath, documentKind: 'note', score,
+      lexicalScore: 0, semanticScore: 0, structuralScore: 0, reasonLabels: [], ...overrides };
+  }
+
+  it('filters to admitted map hits without modifying accepted geography', () => {
+    const notes = [node('alpha', -200, 15), node('beta', 200, -20), node('weak', 0, 3), node('replacement', 50, 50)];
+    const store = new AtlasStore();
+    const accepted = atlasResponse(1, { nodes: notes });
+    store.response = accepted;
+    store.searchQuery = 'remembered idea';
+    store.searchResponse = { status: 'ready', reason: null, query: store.searchQuery, generatedAtMillis: 1,
+      matches: [match(notes[0], .5), match(notes[1], .8),
+        match(notes[3], .9, { noteId: 'old-identity' }), match(node('removed', 1, 2), 1)] };
+
+    expect([...store.matchingNodeIds]).toEqual(['alpha', 'beta']);
+    expect(store.searchMatchForNode(notes[3])).toBeNull();
+    expect(store.response).toBe(accepted);
+    expect(store.response.nodes.map(({ id, x, y }) => ({ id, x, y }))).toEqual(notes.map(({ id, x, y }) => ({ id, x, y })));
+    store.dispose();
+  });
+
+  it('retains compatible matches on failed retry and removes them immediately for another query', async () => {
+    const alpha = node('alpha', 0, 0);
+    const store = new AtlasStore(async () => atlasResponse(1), async () => { throw new Error('Unavailable'); });
+    store.response = atlasResponse(1, { nodes: [alpha] });
+    store.searchQuery = 'first';
+    store.searchResponse = { status: 'ready', reason: null, query: 'first', generatedAtMillis: 1, matches: [match(alpha, .8)] };
+    await store.runSearch();
+    expect(store.searchError).toContain('Unavailable');
+    expect([...store.matchingNodeIds]).toEqual(['alpha']);
+    store.setSearchQuery('second');
+    expect([...store.matchingNodeIds]).toEqual([]);
     store.dispose();
   });
 });

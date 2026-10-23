@@ -49,12 +49,15 @@
   import { createNotepadRefreshController } from "#lib/features/notepad/orchestration/notepadRefreshController.js";
   import { createNotepadSessionLifecycle } from "#lib/features/notepad/orchestration/notepadSessionLifecycle.js";
   import { mountPublicationDocumentOwner } from "#lib/features/chat/pi/publication.js";
+  import PiPublicationRecovery from '#lib/features/chat/ui/PiPublicationRecovery.svelte';
   import { openPiSource } from "#lib/features/chat/pi/citations.js";
   import { getNearestEditorPaneId } from "#lib/features/notepad/workspace/paneRoles.js";
   import { NotepadChatCoordinator } from "#lib/features/notepad/orchestration/notepadChatCoordinator.svelte.js";
   import { createNotepadChatPaneAdapter } from "#lib/features/notepad/orchestration/notepadChatPaneAdapter.js";
   import { paneCommandNoteLabel } from "#lib/features/notepad/pane/paneViewModelFactory.js";
   import { createNotepadPersistenceController } from "#lib/features/notepad/orchestration/persistenceController.js";
+  import { DraftRecoveryController } from './recovery/draftRecoveryController.svelte.js';
+  import DraftRecovery from './recovery/DraftRecovery.svelte';
   import { createNotepadWorkspaceSession, type LocationHistoryEntry } from "#lib/features/notepad/orchestration/notepadWorkspaceSession.js";
   import { createRelatedNotesStore } from "#lib/features/notepad/related/store.svelte.js";
   import { createNotepadSearchStore } from "#lib/features/notepad/search/store.svelte.js";
@@ -676,6 +679,29 @@
     scheduleRelated: relatedState.scheduleRelated,
   });
 
+  const draftRecovery = new DraftRecoveryController({
+    getDocuments: () => Object.values(notepadState.documentsByHandle),
+    readTitle: (documentState) => {
+      for (const paneId of getPaneIdsForDocument(documentState)) {
+        const input = getPaneTitleInput(paneId);
+        if (input && document.activeElement === input) return input.value;
+      }
+      return documentState.working.title;
+    },
+    recover: async (backup) => {
+      if (backup.sourceNoteId) {
+        await commands.openNotePath(backup.sourcePath, { noteId: backup.sourceNoteId, revealEditorAfterOpen: true });
+      } else {
+        if (backup.sourcePath) throw new Error('The original note identity is unavailable.');
+        await commands.startNewNoteFlow();
+      }
+      const document = getDocumentSession();
+      documentEditing.restoreRecoveryDraft(document, backup);
+      workspaceStore.resetPaneCommand();
+      return document;
+    },
+  });
+
   persistence = createNotepadPersistenceController({
     getDocumentSession,
     saveNoteSession,
@@ -684,6 +710,12 @@
     markNoteOpened,
     documentEditing,
     isActiveNote: (note) => getDocumentSession() === note,
+    onDraftChanged: (document) => {
+      draftRecovery.track(document);
+    },
+    onSaved: (document) => {
+      draftRecovery.onSaved(document);
+    },
   });
 
   const {
@@ -703,7 +735,13 @@
     replaceDocumentContentInPlace:
       documents.replaceDocumentContentInPlace,
     enqueueSave,
-    resolveUsingExternal: documentEditing.resolveUsingExternal,
+    resolveUsingExternal: (document, conflictId) => {
+      const resolved = documentEditing.resolveUsingExternal(document, conflictId);
+      // Loading disk content adopts a clean buffer without performing a save.
+      // Reconcile its backup just as canonical save adoption does.
+      if (resolved) draftRecovery.track(document);
+      return resolved;
+    },
     copyText: (text) => navigator.clipboard.writeText(text),
     refreshDerivedViews,
   });
@@ -725,6 +763,7 @@
     getDocuments: () => Object.values(notepadState.documentsByHandle),
     cancelPendingAutosave,
     enqueueSave,
+    flushRecoveryCopies: draftRecovery.flushAll,
   });
 
   const historyMode = new HistoryModeSession({
@@ -1249,7 +1288,10 @@
   });
 
   function handleHistoryAwareGlobalKeydown(event: KeyboardEvent) {
-    if (agentPublicationActive) { event.preventDefault(); return; }
+    if (agentPublicationActive) {
+      if (!(event.target instanceof Element && event.target.closest('[data-testid="pi-publication-recovery"]'))) event.preventDefault();
+      return;
+    }
     // History owns its keyboard handling, including Escape in inline renaming.
     // Capturing Escape here would close history before the field can cancel it.
     if (!historyMode.isActive && activeTransientUi.kind !== "image-viewer") {
@@ -1307,7 +1349,10 @@
     onSplit: splitWorkspaceIfAllowed,
     onOpenPaneChoice: openPaneChoiceInCurrent,
     onTitleFocus: titleInteractions.handleFocus,
-    onTitleInput: titleInteractions.handleInput,
+    onTitleInput: (paneId) => {
+      draftRecovery.track(getPaneDocumentSession(paneId));
+      titleInteractions.handleInput(paneId);
+    },
     onTitleBlur: titleInteractions.handleBlur,
     onTitleKeydown: titleInteractions.handleKeydown,
     onTogglePin: async (paneId) => {
@@ -1399,6 +1444,7 @@
     refreshCurrentNote: async () => {
       await commands.refreshCurrentNoteFromTaskMutation();
     },
+    loadRecoveryCopies: draftRecovery.load,
     scheduleRelated,
     openNote: commands.openNotePath,
     navigateToTaskTarget: async (target) => {
@@ -1418,6 +1464,7 @@
       })();
     },
     dispose: () => {
+      draftRecovery.dispose();
       navigationLifetime.abort();
       commands.dispose();
       documents.saveCursorPositionForDocument();
@@ -1548,6 +1595,7 @@
   use:suppressResizeTransitions
   class="notepad-shell relative h-full w-full min-h-0 overflow-visible"
 >
+  <PiPublicationRecovery />
   <div
     class="contents"
     inert={historyMode.isActive || agentPublicationActive}
@@ -1560,6 +1608,7 @@
       class="notepad-workspace-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-b border-border text-card-foreground shadow-sm sm:rounded-4xl sm:border"
       data-testid="workspace-card"
     >
+      <DraftRecovery recovery={draftRecovery} />
       <div
         class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"
       ></div>
@@ -1629,6 +1678,12 @@
             imageResults: searchState.imageResults,
             imageQueryUrl: searchState.imageQueryUrl,
             mediaError: searchState.mediaError,
+            searchError: searchState.searchError,
+            onSearchRetry: searchState.retrySearch,
+            resultType: searchState.resultType,
+            editedWindow: searchState.editedWindow,
+            onResultTypeChange: searchState.handleResultTypeChange,
+            onEditedWindowChange: searchState.handleEditedWindowChange,
             onQueryImage: searchState.chooseQueryImage,
             onSearchClear: searchState.clearSearch,
             onImageSelect: openSearchedImage,

@@ -1,4 +1,4 @@
-//! Disposable schema-14 scale evidence. No fabricated retained records.
+//! Disposable schema-15 scale evidence. No fabricated retained records.
 use super::*;
 
 const KIND: &str = "gneauxghts-current-scale-v2";

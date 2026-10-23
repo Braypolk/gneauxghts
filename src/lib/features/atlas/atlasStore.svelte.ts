@@ -9,10 +9,6 @@ import type {
   VaultAtlasResponse
 } from '#lib/types/atlas.js';
 
-const ATLAS_SEARCH_HIT_MIN_SCORE = 0.32;
-const ATLAS_SEARCH_HIT_MIN_SEMANTIC = 0.5;
-const ATLAS_SEARCH_HIT_MIN_LEXICAL = 0.65;
-const ATLAS_SEARCH_HIT_MIN_STRUCTURAL = 0.38;
 const ATLAS_POLL_INITIAL_DELAY_MILLIS = 400;
 const ATLAS_POLL_MAX_DELAY_MILLIS = 2_500;
 
@@ -67,10 +63,21 @@ export class AtlasStore {
       nodes
         .map((node) => {
           const match = byPath.get(node.notePath) ?? null;
-          return match ? ([node.id, match] as const) : null;
+          return match && (!match.noteId || !node.noteId || match.noteId === node.noteId)
+            ? ([node.id, match] as const) : null;
         })
         .filter((item): item is readonly [string, AtlasSearchMatch] => item !== null)
     );
+  });
+
+  /** Filter accepted geography without changing its positions or node identities. */
+  matchingNodeIds = $derived.by(() => {
+    if (!this.searchQuery.trim()) return new Set((this.response?.nodes ?? []).map(node => node.id));
+    if (this.searchResponse?.query !== this.searchQuery.trim()) return new Set<string>();
+    return new Set((this.response?.nodes ?? []).flatMap(node => {
+      const match = this.searchMatchesByNodeId.get(node.id);
+      return match && isAtlasSearchHit(match) ? [node.id] : [];
+    }));
   });
 
   initialize() {
@@ -342,11 +349,6 @@ export function isAtlasResponsePending(response: VaultAtlasResponse | null): boo
 }
 
 export function isAtlasSearchHit(match: AtlasSearchMatch | null): boolean {
-  if (!match) return false;
-  return (
-    match.score >= ATLAS_SEARCH_HIT_MIN_SCORE ||
-    match.semanticScore >= ATLAS_SEARCH_HIT_MIN_SEMANTIC ||
-    match.lexicalScore >= ATLAS_SEARCH_HIT_MIN_LEXICAL ||
-    match.structuralScore >= ATLAS_SEARCH_HIT_MIN_STRUCTURAL
-  );
+  // Native search owns query admission, including provider-specific calibration.
+  return match !== null;
 }

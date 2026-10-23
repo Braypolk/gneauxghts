@@ -2,7 +2,6 @@ import { startupMark, observeStartupReadiness } from '#lib/e2e/startupMetrics.js
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ListenerScope } from './listenerScope';
-import type { HistoryHealthReport } from '#lib/types/history.js';
 import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '#lib/types/semantic.js';
 import type { VaultInfo } from '#lib/types/vault.js';
 import {
@@ -57,7 +56,6 @@ type AppSnapshot = {
 
 export interface SettingsViewPayload {
   vault: VaultInfo;
-  historyHealth: HistoryHealthReport;
   semanticStatus: SemanticStatus;
   semanticSettings: SemanticSettings;
   semanticDebug: SemanticDebugSnapshot;
@@ -218,7 +216,7 @@ export class AppStore {
     const admission = this.#beginSnapshotAdmission('vault', 'semanticStatus');
     const view = await invoke<SettingsViewPayload>('get_settings_view');
     this.#admitSnapshot({ vault: view.vault, semanticStatus: view.semanticStatus }, admission);
-    return { historyHealth: view.historyHealth, semanticSettings: view.semanticSettings, semanticDebug: view.semanticDebug };
+    return { semanticSettings: view.semanticSettings, semanticDebug: view.semanticDebug };
   }
 
   async stageVaultSelection(path: string | null): Promise<VaultInfo | null> {

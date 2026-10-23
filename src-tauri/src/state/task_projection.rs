@@ -648,49 +648,14 @@ pub(crate) fn list_tasks_with_filter(
         .map(|(index, note_id)| (note_id.clone(), index))
         .collect();
 
-    let order_by = "
-        ORDER BY note_title_lower ASC,
-                 line_number ASC,
-                 text_lower ASC";
-
     let mut tasks = with_state_database_internal(|connection| {
-        let query = format!(
-            "SELECT task_id, note_id, note_path, note_title, file_name,
-                    note_modified_millis, task_key, section_label, text, completed,
-                    hidden, depth, line_number, editor_line_number,
-                    created_at_millis, updated_at_millis
-             FROM app_state_note_tasks
-             WHERE {where_clause}
-             {order_by}"
-        );
-        let mut statement = connection.prepare(&query).map_err(|err| err.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(TaskRecord {
-                    task_id: row.get(0)?,
-                    note_id: row.get(1)?,
-                    note_path: row.get(2)?,
-                    note_title: row.get(3)?,
-                    file_name: row.get(4)?,
-                    note_modified_millis: read_u64(row, 5)?,
-                    task_key: row.get(6)?,
-                    section_label: row.get(7)?,
-                    text: row.get(8)?,
-                    completed: row.get::<_, i64>(9)? != 0,
-                    hidden: row.get::<_, i64>(10)? != 0,
-                    depth: row.get::<_, i64>(11)? as usize,
-                    line_number: row.get::<_, i64>(12)? as usize,
-                    editor_line_number: row.get::<_, Option<i64>>(13)?.map(|value| value as usize),
-                    created_at_millis: read_u64(row, 14)?,
-                    updated_at_millis: read_u64(row, 15)?,
-                })
-            })
-            .map_err(|err| err.to_string())?;
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(row.map_err(|err| err.to_string())?);
-        }
-        Ok(result)
+        load_tasks_where(
+            connection,
+            &format!(
+                "{where_clause} ORDER BY note_title_lower ASC, line_number ASC, text_lower ASC"
+            ),
+            [],
+        )
     })?;
 
     tasks.sort_by(|left, right| {
@@ -725,96 +690,72 @@ pub(crate) fn list_recent_open_tasks(
     if limit == 0 {
         return Ok(Vec::new());
     }
-    let fetch_limit = (limit + hidden_note_ids.len() + 16).max(limit * 2);
-    let tasks = with_state_database_internal(|connection| {
+    with_state_database_internal(|connection| {
         let mut statement = connection
-            .prepare(
-                "SELECT task_id, note_id, note_path, note_title, file_name,
-                        note_modified_millis, task_key, section_label, text, completed,
-                        hidden, depth, line_number, editor_line_number,
-                        created_at_millis, updated_at_millis
-                 FROM app_state_note_tasks
-                 WHERE deleted_at_millis IS NULL AND completed = 0
-                 ORDER BY updated_at_millis DESC, note_title_lower ASC, line_number DESC
-                 LIMIT ?1",
-            )
+            .prepare(&format!(
+                "{TASK_SELECT}
+                 WHERE deleted_at_millis IS NULL AND completed = 0 AND hidden = 0
+                 ORDER BY updated_at_millis DESC, note_title_lower ASC, line_number DESC"
+            ))
             .map_err(|err| err.to_string())?;
         let rows = statement
-            .query_map(params![fetch_limit as i64], |row| {
-                Ok(TaskRecord {
-                    task_id: row.get(0)?,
-                    note_id: row.get(1)?,
-                    note_path: row.get(2)?,
-                    note_title: row.get(3)?,
-                    file_name: row.get(4)?,
-                    note_modified_millis: read_u64(row, 5)?,
-                    task_key: row.get(6)?,
-                    section_label: row.get(7)?,
-                    text: row.get(8)?,
-                    completed: row.get::<_, i64>(9)? != 0,
-                    hidden: row.get::<_, i64>(10)? != 0,
-                    depth: row.get::<_, i64>(11)? as usize,
-                    line_number: row.get::<_, i64>(12)? as usize,
-                    editor_line_number: row.get::<_, Option<i64>>(13)?.map(|value| value as usize),
-                    created_at_millis: read_u64(row, 14)?,
-                    updated_at_millis: read_u64(row, 15)?,
-                })
-            })
+            .query_map([], task_record_from_row)
             .map_err(|err| err.to_string())?;
         let mut result = Vec::new();
         for row in rows {
-            result.push(row.map_err(|err| err.to_string())?);
+            let task = row.map_err(|err| err.to_string())?;
+            if hidden_note_ids.contains(&task.note_id) {
+                continue;
+            }
+            result.push(task);
+            // Hidden notes can have any number of recent tasks. Apply the
+            // visible limit while streaming rather than guessing a SQL limit.
+            if result.len() == limit {
+                break;
+            }
         }
         Ok(result)
-    })?;
-    Ok(tasks
-        .into_iter()
-        .filter(|task| !task.hidden && !hidden_note_ids.contains(&task.note_id))
-        .take(limit)
-        .collect())
+    })
 }
+
+const TASK_SELECT: &str = "SELECT task_id, note_id, note_path, note_title, file_name,
+    note_modified_millis, task_key, section_label, text, completed,
+    hidden, depth, line_number, editor_line_number, created_at_millis, updated_at_millis
+    FROM app_state_note_tasks";
 
 fn load_tasks_where(
     connection: &Connection,
     where_and_order: &str,
     parameters: impl rusqlite::Params,
 ) -> Result<Vec<TaskRecord>, String> {
-    let query = format!(
-        "SELECT task_id, note_id, note_path, note_title, file_name,
-                note_modified_millis, task_key, section_label, text, completed,
-                hidden, depth, line_number, editor_line_number,
-                created_at_millis, updated_at_millis
-         FROM app_state_note_tasks
-         WHERE {where_and_order}"
-    );
+    let query = format!("{TASK_SELECT} WHERE {where_and_order}");
     let mut statement = connection.prepare(&query).map_err(|err| err.to_string())?;
     let rows = statement
-        .query_map(parameters, |row| {
-            Ok(TaskRecord {
-                task_id: row.get(0)?,
-                note_id: row.get(1)?,
-                note_path: row.get(2)?,
-                note_title: row.get(3)?,
-                file_name: row.get(4)?,
-                note_modified_millis: read_u64(row, 5)?,
-                task_key: row.get(6)?,
-                section_label: row.get(7)?,
-                text: row.get(8)?,
-                completed: row.get::<_, i64>(9)? != 0,
-                hidden: row.get::<_, i64>(10)? != 0,
-                depth: row.get::<_, i64>(11)? as usize,
-                line_number: row.get::<_, i64>(12)? as usize,
-                editor_line_number: row.get::<_, Option<i64>>(13)?.map(|value| value as usize),
-                created_at_millis: read_u64(row, 14)?,
-                updated_at_millis: read_u64(row, 15)?,
-            })
-        })
+        .query_map(parameters, task_record_from_row)
         .map_err(|err| err.to_string())?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row.map_err(|err| err.to_string())?);
-    }
-    Ok(result)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|err| err.to_string())
+}
+
+fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
+    Ok(TaskRecord {
+        task_id: row.get(0)?,
+        note_id: row.get(1)?,
+        note_path: row.get(2)?,
+        note_title: row.get(3)?,
+        file_name: row.get(4)?,
+        note_modified_millis: read_u64(row, 5)?,
+        task_key: row.get(6)?,
+        section_label: row.get(7)?,
+        text: row.get(8)?,
+        completed: row.get::<_, i64>(9)? != 0,
+        hidden: row.get::<_, i64>(10)? != 0,
+        depth: row.get::<_, i64>(11)? as usize,
+        line_number: row.get::<_, i64>(12)? as usize,
+        editor_line_number: row.get::<_, Option<i64>>(13)?.map(|value| value as usize),
+        created_at_millis: read_u64(row, 14)?,
+        updated_at_millis: read_u64(row, 15)?,
+    })
 }
 
 fn read_u64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
@@ -1104,5 +1045,71 @@ mod tests {
         let recents = list_recent_open_tasks(10, &hidden_notes).expect("recents");
         assert_eq!(recents.len(), 2);
         assert!(recents.iter().all(|task| !task.completed));
+    }
+
+    #[test]
+    fn recent_tasks_fill_visible_limit_beyond_hidden_notes_and_tasks() {
+        let _guard = lock_test_env();
+        let _app_data = setup_app_data("task-projection-recent-hidden");
+        let visible_path = PathBuf::from("/notes/Visible.md");
+        let visible = build_indexed_note(&visible_path, "- [ ] Older idea\n", 10);
+        reconcile_note_tasks(&visible_path, Some(&visible), &visible.note_id, 10).unwrap();
+
+        let hidden_markdown = (0..64)
+            .map(|index| format!("- [ ] Hidden task {index}\n"))
+            .collect::<String>();
+        let hidden_note_path = PathBuf::from("/notes/Hidden note.md");
+        let hidden_note = build_indexed_note(&hidden_note_path, &hidden_markdown, 20);
+        reconcile_note_tasks(
+            &hidden_note_path,
+            Some(&hidden_note),
+            &hidden_note.note_id,
+            20,
+        )
+        .unwrap();
+        let hidden_tasks_path = PathBuf::from("/notes/Hidden tasks.md");
+        let hidden_tasks = build_indexed_note(&hidden_tasks_path, &hidden_markdown, 30);
+        let projected = reconcile_note_tasks(
+            &hidden_tasks_path,
+            Some(&hidden_tasks),
+            &hidden_tasks.note_id,
+            30,
+        )
+        .unwrap();
+        for task in projected.tasks {
+            set_hidden_for_task_id(&task.task_id, true).unwrap();
+        }
+
+        let recents = list_recent_open_tasks(1, &HashSet::from([hidden_note.note_id])).unwrap();
+        assert_eq!(recents.len(), 1);
+        assert_eq!(recents[0].note_id, visible.note_id);
+        assert_eq!(recents[0].text, "Older idea");
+    }
+
+    #[test]
+    fn recent_tasks_preserve_recency_title_and_line_order_and_exact_limit() {
+        let _guard = lock_test_env();
+        let _app_data = setup_app_data("task-projection-recent-order");
+        for (name, markdown, timestamp) in [
+            ("Alpha", "- [ ] First\n- [ ] Second\n", 20),
+            ("Beta", "- [ ] Third\n", 20),
+            ("Newest", "- [ ] Latest\n", 30),
+            ("Oldest", "- [ ] Earlier\n", 10),
+        ] {
+            let path = PathBuf::from(format!("/notes/{name}.md"));
+            let note = build_indexed_note(&path, markdown, timestamp);
+            reconcile_note_tasks(&path, Some(&note), &note.note_id, timestamp).unwrap();
+        }
+        let hidden_notes = HashSet::new();
+        let recents = list_recent_open_tasks(3, &hidden_notes).unwrap();
+        assert_eq!(
+            recents
+                .iter()
+                .map(|task| task.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Latest", "Second", "First"]
+        );
+        assert_eq!(list_recent_open_tasks(20, &hidden_notes).unwrap().len(), 5);
+        assert!(list_recent_open_tasks(0, &hidden_notes).unwrap().is_empty());
     }
 }

@@ -39,6 +39,7 @@ concrete state references, independently of Tauri dispatch.
 | Committed open-document adoption across model, runtime, and derived views | Operation-specific methods on `DocumentEditingService`; callers provide authoritative results, not synchronization policy |
 | Editor instances, save queues, timers, and resource bindings | `documentRegistry` and the document runtime |
 | Background save notification routing | App-shell `backgroundPersistence` subscriptions; workspace and composer owners retain their existing write queues |
+| Private unfinished editor Recovery Drafts | `DraftRecoveryController` captures/coalesces content and saved bases; Running Vault-bound `AppStateStorage` persists versioned backups and tombstones; `DocumentEditingService.restoreRecoveryDraft` restores the original Note Identity with conflict admission |
 | Canonical note bytes | The Markdown file in the vault |
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Editing Window capture, deadlines, recovery, and finalization | `NoteTimeline`; workspace departure and save flushing remain with existing frontend owners |
@@ -96,6 +97,23 @@ body identity is only an invalidation signal. Saves capture a body and metadata
 before awaiting, then serialize that captured version at the Markdown boundary.
 Other explicit snapshots use the body's cached string. Related invalidation uses
 body identity and metadata and requests Markdown only on retrieval.
+
+`recovery/draftRecoveryController.svelte.ts` retains immutable dirty captures and
+serializes coalesced Recovery Drafts and their saved bases at the IPC boundary. Focused title input is
+included before its ordinary blur commit. Native `state/draft_recovery.rs` stores
+them in the existing vault-private app-state database, outside Note Timeline and
+canonical Markdown. Increasing versions and content-free tombstones reject late
+writes/removals. Canonical save adoption acknowledges only a clean current buffer;
+background/departure barriers flush backups independently of canonical success.
+Recovery opens the original Note Identity through ordinary workspace navigation,
+which rereads canonical content, then restores unfinished content through the
+document editing owner. Only never-saved work uses New Idea. A changed or unknown
+saved base enters the existing external-conflict state before any save. Unresolved
+conflicts retain an unknown base in subsequent backups, including across restart.
+Missing originals retain their backup and report failure. Restored work is backed
+up before the old backup is discarded. Backup errors are
+visible and retryable; they do not change canonical save outcomes. See
+[ADR 0014](docs/adr/0014-retain-unfinished-work-as-private-recovery-copies.md).
 
 `NotepadWorkspaceSession` exposes named user operations and consumes the real
 WorkspaceStore and document owners. It privately owns per-pane supersession,
@@ -188,7 +206,7 @@ History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability remains absent; future Version Restore
 authority requires its own typed operation and decision. Native current-content
 reads remain role-limited; unused activity-history and provenance capabilities
-are removed under ADR 0012. Pi tools expose search/read, targeted saved-note updates and explicit note creation. Revision and Lifecycle Event identities
+are removed under ADR 0012. Pi tools expose search/read, targeted saved-note updates, explicit note creation and separately authorized same-folder renaming. Revision and Lifecycle Event identities
 likewise cannot be minted by callers; their durable issuer belongs inside
 `NoteTimeline`.
 
@@ -220,7 +238,7 @@ rechecks canonical identity, runtime proof and pending recovery under the
 existing observation replay lock. Changed admission releases the owner and
 retries outside it. Durable preparation, canonical publication, abandonment
 and finalization belong to this operation; commands convert its authoritative
-mutation result into a saved session. A failed rename/write restores the original
+mutation result into a saved session. A failed ordinary editor rename/write restores the original
 path; an indeterminate rollback keeps its intent and returns an error so the
 requested edit stays dirty. The private post-publication helper updates the required
 in-memory note catalog. Task,
@@ -517,31 +535,60 @@ stays in the selected native editor text, with ordinary undo and persistence; an
 document edit dismisses the inline picker before it can apply a stale range.
 The task list derives date filters and optional within-note sorting from that
 Markdown text, with a local-calendar clock for midnight and resume refresh.
+Warm task commands use the command-owned AppState catalog lookup for preference
+pruning rather than walking and rereading the vault. Listing refreshes interactive
+visibility first. Grouping uses an indexed lookup while retaining first-seen note
+order; the task projection and existing preference store remain the owners.
 
 ### Agent publication foundation
 
-Ordinary chat exposes native search/read, targeted `edit_note` and `create_note` tools. The public
+Ordinary chat exposes native search/read, targeted `edit_note`, `create_note` and `rename_note` tools. The public
 Pi edit factory stages replacements against the exact issued read in memory;
 Pi memo retains the computed edit candidate; creation reuses Pi's checkpointed
 tool arguments. Pi task and document state own exact review and replay.
 Write grants are independent of read access, with review enabled by default.
 The Pi publication task carries review and publication phases through
-`pi_chat/publication.rs`. Agent mutation admission uses strict update and create payloads. Updates require
+`pi_chat/publication.rs`. Agent mutation admission uses strict update, create and rename payloads. Updates require
 the exact issued read and raw base hash. Creation binds one existing visible folder,
 a native-derived filename, fresh native identity and canonical bytes before review.
-The separate create operation is never inferred from an update grant.
+Create has separate permission. Update permission covers content, properties and
+same-folder renaming; the native mutation operations remain distinct.
+Rename requires the exact issued read, a safe native-derived filename in the same
+folder and existing-note write scope. When review is enabled, approval binds both
+exact paths. Chat and Settings share one edit/rename permission, the normal review
+setting and descendant-inclusive folder scope.
 Native admission binds operation, scoped grant, authority revision, exact payload,
 review acceptance when required, and the expected native read state. The retained
 `DocumentEditingService.withAgentPublication` operation supplies a short editor
 publication lease: dirty body/title/tags/identity, unresolved conflicts or pending
 operations block admission, and edits cannot race an admitted publication.
 
-NoteTimeline owns canonical create/update and retained publication proof. A Pi task
+NoteTimeline owns canonical create/update/rename and retained publication proof. A Pi task
 stores opaque intent/receipt references and reconciles existing proof before retrying
 an uncertain acknowledgement. Revocation prevents new effects without undoing a
 published effect. Canonical adoption uses the verified receipt and read-back through
 the document owner; an external mismatch remains a conflict. Pi owns publication
 task checkpoints; no generic filesystem executor or competing chat status store participates.
+Rename admission protects both locations. The document owner retains the same
+Document Handle and shared editor root while adopting the committed path in all
+panes; uncertainty retains the lease. Reconciliation observes proof before another
+effect, preserves newer editor text and conflicts, and cannot turn a committed
+rename into an unperformed operation when editor adoption fails. A visible Retry
+retains the original intent even when proof fails before a receipt is available.
+It reconciles without publishing: committed proof refreshes editors, confirmed
+non-publication releases the pause, and unavailable proof keeps recovery visible.
+Ordinary editor saves capture their expected Note Identity with the body/path and
+pass it to Timeline admission. A delayed save to the former path cannot create a
+duplicate or overwrite a replacement identity after the note has moved. Explicit
+new drafts and Keep My Edits after disappearance retain their existing semantics.
+Native session reads treat a supplied Note Identity as authoritative over stale
+path or catalog hints, and recheck it after reading. A reused filename cannot
+rebind an existing document to another note. Missing-metadata continuity at a
+catalog-owned path remains subject to Timeline's retained location proof.
+The two-location history journal and platform no-replace primitive preserve raw
+bytes and Note Identity without another unchanged-content revision. Recovery
+never moves or republishes bytes. Filename/path links may break; ID links retain
+identity, and no backlinks are rewritten. See [ADR 0015](docs/adr/0015-prove-agent-renames-across-both-locations.md).
 The mutation source is `AgentPublication` (`agentPublication` in IPC and new history
 records). Native history readers accept the former `acceptedChatProposal` tag only
 as the same source, preserving retained revisions and pending-intent recovery.
@@ -606,6 +653,9 @@ ready flag cannot prove that no changes occurred while listeners were detached.
 Atlas owns complete cache clearing and one notes-only map generation. Chat
 conversations are not map documents, semantic recall rows or navigation nodes.
 Chat settings do not configure or invalidate Atlas.
+Atlas's ranked list and map highlights derive from the same admitted score set.
+The shared search result presentation supports keyboard and pointer opening;
+selection does not move accepted map geography.
 
 Atlas keeps one semantic worker queue and immutable published generations. Its
 private `semantic/atlas/publication.rs` owns generation/label publication, ready
@@ -839,7 +889,15 @@ compaction inherits upstream scheduling, summary and recovery defaults without a
 application override. `modelLimits.ts` only translates observed positive model
 limits; unknown capacity remains unknown. Summaries are fallible
 memory, never fresh note evidence or authority. Current-state claims require another
-authorized read. No custom summary engine or background title/research inference runs.
+authorized read. No custom summary engine or background research inference runs.
+Automatic AI note titles are retired at the user's request on 2026-10-22
+([ADR 0013](docs/adr/0013-run-automatic-note-titles-as-scoped-pi-jobs.md)).
+Ordinary editor saves use an explicit title or derive the filename from the first
+nonempty body line. Previously created blank-title captures remain readable; their
+retired managed marker is cleared on the next ordinary save. Old internal title-job
+conversations remain hidden from chat navigation, but no title jobs, native title
+commands or semantic title fallback are installed. Explicit Pi filename edits
+continue under the shared existing-note write authority and distinct rename publication proof.
 
 ### Native transport, storage and authority
 
@@ -922,7 +980,7 @@ the subscription helper is desktop-only.
 
 Subscription inference uses the public Responses endpoint and the signed-in
 account's visible model catalog. Pi serializes full conversation input; native
-transport rechecks unsupported request fields and groups the four note functions
+transport rechecks unsupported request fields and groups the five note functions
 under the supported `gneauxghts_notes` namespace, preserving Pi's schemas and call parser.
 Call namespaces follow the selected billing method when continuing existing
 history. Native note authority, review, publication and citations are unchanged.
@@ -942,16 +1000,22 @@ Native `pi_chat_*` records in vault data own only domain authority/source/effect
 Pi stores opaque references and task progression. Temporary write grants belong to
 one conversation across reopen; Always grants belong to the Running Vault; explicit
 revocation/deletion ends the relevant authority. Review is independent and default-on.
-The model registry exposes `edit_note` and `create_note` under separate explicit
-update/create authority. Chat and Settings expose creation as an unchecked permission
-option; duration changes preserve already granted operations and folder scope.
+The model registry exposes separate `edit_note`, `rename_note` and `create_note` tools.
+Update authority covers edits and renames; creation has its own unchecked permission
+option in Chat and Settings. The same note/folder scope and review setting apply to
+both existing-note operations. Folder grants include descendants; renames stay in
+the current folder. Duration changes preserve granted operations and folder scope.
 Choosing Temporary or Off replaces vault Always permission atomically;
 Always remains visible in every chat, including those with retained Temporary
 grants. Native policy changes invalidate mounted authority views.
 
 ### Notes and citations
 
-`pi_chat/notes.rs` supplies native lexical search and authorized canonical reads.
+`pi_chat/notes.rs` supplies scoped lexical/semantic ranking through
+`services/retrieval.rs::retrieve_scoped_notes` and authorized canonical reads.
+Its bounded ranked page preserves chat query limits, scope, exclusions and native
+delivery admission. Cursors bind the exact query, authority revision and ranked
+identity/preview set; a changed set requires restarting pagination.
 Search previews issue no citation authority. Reads create immutable native source
 receipts bound to Note Identity and actual read state. Pi tool details retain the
 full structured read metadata; model-facing output contains canonical Markdown,
@@ -989,12 +1053,18 @@ search/read, targeted updates and note creation; no general filesystem or histor
 under the native current-content delivery boundary. Lexical and semantic indexes
 rank candidates; canonical snapshots supply bounded previews. Pending lexical
 projections use catalog paragraphs, and external-byte changes invalidate delivery.
+The provider generation retains one successful exact text-query embedding for
+independent note/image consumers. Ordinary text media calls omit duplicate passage
+ranking; image queries retain it. Type and filesystem edited-time cues filter
+candidates before bounded ranking. Fingerprinting retains both byte scans for
+watcher-missed changes, but captures/checks catalog bindings around unlocked file
+reads instead of holding the catalog mutex during I/O.
 `services/content_hash.rs` preserves the authored-content identity shared by search
 and Pi read receipts. The retired evidence session, worker budgets, inventory/read
 protocol and passage-citation coordinator are removed. Native NoteTimeline reads,
 History Mode and publication remain independently testable.
 
-All four note tools declare JSON Schema and prefer Pi's constrained JSON Schema
+All five note tools declare JSON Schema and prefer Pi's constrained JSON Schema
 sampling. Catalogued OpenAI Responses models inherit strict-mode support from Pi;
 Pi generates closed object schemas and represents optional fields as required,
 nullable wire properties. Unknown local OpenAI-compatible servers do not advertise
@@ -1014,17 +1084,27 @@ only bytes matching the exact issued source; it cannot silently rebase an old ed
 Pi persists the computed edit candidate before native preparation, then atomically records its
 publication child task and review document in one commit. `PublicationTask` owns
 durable review and publication phases; new task inputs retain intent/target
-references and the approval hash, without a duplicate title or patch.
-`EditReviewDoc` holds an explicit edit (patch) or create (destination and Markdown)
+references, an explicit content write or rename effect, and the approval hash, without
+a duplicate title or patch. Native preparation returns a discriminated update,
+create (with its content preview), or rename (with both filenames); tool callers
+branch on that operation rather than optional preview fields.
+`EditReviewDoc` holds an explicit edit (patch), create (destination and Markdown), or rename (source and destination paths)
 review plus the user decision, starts empty on fork, and is cleared on terminal
 review/cancellation. Its Pi document upgrade preserves pending reviews from the
-previous shape; consumers use only the current representation. No older task-input migration
-is retained. Pi's generic tool task delegates to this task because its abort
+previous shape; consumers use only the current representation. A task upgrade from
+version 3 to 4 derives the effect once from the retained target, preserving its
+intent, approval hash and phase. Earlier task versions remain unsupported. Pi's
+generic tool task delegates to this task because its abort
 protocol reconciles an already committed native effect.
 No separate proposal scheduler, mutable native draft or hunk engine is retained.
 
 The same Pi tool adapter, publication task, review document and native
-prepare/approve/publish/reconcile flow serve both tools. Creation uses Pi's saved,
+prepare/approve/publish/reconcile flow serve all three mutation tools. The
+publication extension supplies their common permission, review, receipt, read and
+retry instructions once; individual tool sections describe operation-specific
+behavior. Existing-note tools retain an explicit Note Identity plus the exact
+issued read source: the first selects the note, and the second proves its base.
+Creation uses Pi's saved,
 validated tool arguments without a second candidate memo. Creation review shows the
 exact relative destination and complete authored Markdown, without managed metadata.
 Native creation owns its identity and metadata; it uses NoteTimeline and the
@@ -1035,13 +1115,16 @@ a committed creation before any replay.
 The document publication lease blocks dirty/conflicted targets and adopts committed canonical results through
 the established editor owner. Lost acknowledgements reconcile before another effect;
 Pi recovery alone cannot guarantee exactly-once external publication.
-Native initialization declares the current authority and grant schema directly;
-there are no older authority/grant upgrades. Retained publication payloads use the
+Native initialization declares the current authority and grant schema directly.
+The retired `rename` permission spelling reads as unified `update` authority and
+duplicate operations are removed; no history or authority-table migration is required. Retained publication payloads use the
 same strict mutation type as new requests. Updates retain a raw base hash;
 creations retain their exact native-prepared canonical content. No retired-create
-decoder or old-chat migration is retained.
+decoder or old-chat migration is retained. Rename uses Pi's checkpointed validated
+arguments and the same child-task continuation, with no second content candidate.
+Its native proof binds both paths and the exact unchanged raw source hash.
 
-After a committed result, both mutation tools use the same authorized native canonical
+After a committed result, all three mutation tools use the same authorized native canonical
 read as `read_note` and return the saved content and a fresh citation to the
 model. Final confirmations use that post-publication read. Creation permission
 does not implicitly widen independent note-read access. A read failure preserves

@@ -46,6 +46,12 @@ const decorateFenced: MarkdownNodeDecorator = (ctx, node) => {
   const { view, decorations } = ctx;
   const startLine = view.state.doc.lineAt(node.from);
   const endLine = view.state.doc.lineAt(node.to);
+  const selection = view.state.selection.main;
+  // An empty strikethrough pair also parses as a tilde code fence. Keep its
+  // typing position plain, including following lines, until it gains content
+  // or the caret leaves. The canonical Markdown is unchanged.
+  if (startLine.text.slice(node.from - startLine.from) === '~~~~' &&
+      selection.empty && selection.head === node.from + 2) return;
   const active = ctx.selectionOverlaps(startLine.from, endLine.to);
 
   forEachVisibleLine(ctx, node.from, node.to, (line) => {

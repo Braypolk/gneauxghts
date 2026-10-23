@@ -3,7 +3,7 @@ import { render } from 'svelte/server';
 import type { Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import type { EntryRecord, LiveState } from '@earendil-works/pi-durable';
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
-import { activitySummary, activityTranscript, toolFailed, toolOutput, toolStatus, toolSubject, type ActivityGroup, type ToolActivity } from './piActivity';
+import { activitySummary, activityTranscript, toolFailed, toolLabel, toolOutput, toolStatus, toolSubject, type ActivityGroup, type ToolActivity } from './piActivity';
 import PiActivityGroup from './PiActivityGroup.svelte';
 
 const entries = (...messages: Message[]): EntryRecord[] => messages.map((message, index) => ({ id: index + 1 as EntryRecord['id'], conversationId: 1 as EntryRecord['conversationId'], kind: 'fixture', model: [message] }));
@@ -102,6 +102,11 @@ it.each([
   ['edit_note', 'noteEdit', 'unknown_source', 'Needs fresh read'],
   ['edit_note', 'noteEdit', 'wrong_source', 'Needs fresh read'],
   ['edit_note', 'noteEdit', 'closed', 'Workspace restarting'],
+  ['rename_note', 'noteRename', 'operation_denied', 'Permission needed'],
+  ['rename_note', 'noteRename', 'target_exists', 'Destination occupied'],
+  ['rename_note', 'noteRename', 'editor_busy', 'Editor busy'],
+  ['rename_note', 'noteRename', 'changed_base', 'Note changed'],
+  ['rename_note', 'noteRename', 'review_rejected', 'Rejected'],
   ['read_note', 'noteToolError', 'unavailable_note', 'Note unavailable'],
   ['read_note', 'noteToolError', 'stale_read', 'Note changed'],
   ['search_notes', 'noteToolError', 'retired_authority', 'Access ended'],
@@ -117,6 +122,7 @@ it.each([
     result: { ...result(), details, isError: true } };
   expect(toolStatus(item)).toBe(status);
   expect(toolFailed(item)).toBe(false);
+  if (name === 'rename_note') expect(toolLabel(item)).toBe('Rename note');
   const live: ToolActivity = { ...item, result: undefined, live: { callId: 'test', name, status: 'done', details, summary: { isError: true } } };
   expect(toolStatus(live)).toBe(status);
   expect(toolFailed(live)).toBe(false);
@@ -124,6 +130,21 @@ it.each([
   expect(body).toContain(status);
   expect(body).not.toContain('failed');
   expect(body).not.toContain('data-status="error"');
+});
+
+it.each(['pending', 'running'] as const)('describes a %s rename as in progress', status => {
+  const item: ToolActivity = { kind: 'tool', key: 'rename', name: 'rename_note', pending: true,
+    live: { callId: 'rename', name: 'rename_note', status } };
+  expect(toolLabel(item)).toBe('Renaming note');
+});
+
+it('claims a rename only from a committed result or a retained publication receipt', () => {
+  const item: ToolActivity = { kind: 'tool', key: 'rename', name: 'rename_note', pending: false,
+    result: { ...result(), details: { kind: 'noteRename', status: 'committed', receiptId: 'receipt', noteId: 'note' } } };
+  expect(toolLabel(item)).toBe('Renamed note');
+  const stopped = { ...item, result: { ...result(), isError: true }, publication: { status: 'committed' as const, receiptId: 'receipt', noteId: 'note' } };
+  expect(toolLabel(stopped)).toBe('Renamed note');
+  expect(toolLabel({ ...item, result: undefined })).toBe('Rename note');
 });
 
 it.each(['storage', 'unavailable', 'uncertain_publication', 'interrupted', 'editor_conflict', 'editorConflict', 'unknown_code', 'toString'])(

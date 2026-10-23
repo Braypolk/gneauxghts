@@ -61,6 +61,7 @@ export class SettingsStore {
   settingsLoadError = $state<string | null>(null);
   historyHealth = $state<HistoryHealthReport | null>(null);
   historyActionError = $state<string | null>(null);
+  isLoadingHistoryHealth = $state(false);
   isRunningHistoryAction = $state(false);
   vaultPathInput = $state('');
   vaultSaveError = $state<string | null>(null);
@@ -94,6 +95,7 @@ export class SettingsStore {
   #vaultChangeRefreshTimer: number | null = null;
   #semanticStatusRequest: Promise<void> | null = null;
   #semanticStateRequest: Promise<void> | null = null;
+  #historyHealthRequest: Promise<void> | null = null;
   #forgottenNotesRequest: Promise<void> | null = null;
   #missingNotesGeneration = 0;
   #vaultSaveGeneration = 0;
@@ -341,9 +343,7 @@ export class SettingsStore {
     if (this.#disposed) return;
     const lifetime = this.#lifetime;
     const settingsRevision = this.#settingsRevision;
-    const historyRevision = this.#historyRevision;
     const settingsWritePending = this.isSaving;
-    const historyActionPending = this.isRunningHistoryAction;
     if (this.#semanticStateRequest) {
       return this.#semanticStateRequest;
     }
@@ -354,7 +354,6 @@ export class SettingsStore {
         if (lifetime !== this.#lifetime) return;
         if (!settingsWritePending && !this.isSaving && settingsRevision === this.#settingsRevision) this.semanticSettings = view.semanticSettings;
         this.semanticDebug = view.semanticDebug;
-        if (!historyActionPending && !this.isRunningHistoryAction && historyRevision === this.#historyRevision) this.historyHealth = view.historyHealth;
         this.#syncVaultSnapshot();
         this.settingsLoadError = null;
         this.#syncSemanticPolling();
@@ -410,24 +409,43 @@ export class SettingsStore {
 
   loadHistoryHealth = async () => {
     if (this.#disposed || this.isRunningHistoryAction) return;
+    if (this.#historyHealthRequest) return this.#historyHealthRequest;
     const revision = ++this.#historyRevision;
-    try {
-      const health = await loadHistoryHealthSlice();
-      if (revision !== this.#historyRevision) return;
-      this.historyHealth = health;
-      this.historyActionError = null;
-    } catch (error) {
-      if (revision !== this.#historyRevision) return;
-      console.error('Failed to load history health:', error);
-      this.historyActionError = historyCommandMessage(error);
-    }
+    this.isLoadingHistoryHealth = true;
+    this.historyActionError = null;
+    const request = (async () => {
+      try {
+        const health = await loadHistoryHealthSlice();
+        if (revision !== this.#historyRevision) return;
+        this.historyHealth = health;
+      } catch (error) {
+        if (revision !== this.#historyRevision) return;
+        console.error('Failed to load history health:', error);
+        this.historyActionError = historyCommandMessage(error);
+      } finally {
+        if (revision === this.#historyRevision) {
+          this.#historyHealthRequest = null;
+          this.isLoadingHistoryHealth = false;
+        }
+      }
+    })();
+    this.#historyHealthRequest = request;
+    return request;
   };
 
-  retryHistory = async () => {
-    if (this.#disposed || this.isRunningHistoryAction) return;
+  #beginHistoryAction() {
+    if (this.#disposed || this.isRunningHistoryAction) return null;
     const revision = ++this.#historyRevision;
+    this.#historyHealthRequest = null;
+    this.isLoadingHistoryHealth = false;
     this.isRunningHistoryAction = true;
     this.historyActionError = null;
+    return revision;
+  }
+
+  retryHistory = async () => {
+    const revision = this.#beginHistoryAction();
+    if (revision === null) return;
     try {
       const health = await retryHistoryRecovery();
       if (revision !== this.#historyRevision) return;
@@ -442,10 +460,8 @@ export class SettingsStore {
   };
 
   resetCorruptHistory = async () => {
-    if (this.#disposed || this.isRunningHistoryAction) return;
-    const revision = ++this.#historyRevision;
-    this.isRunningHistoryAction = true;
-    this.historyActionError = null;
+    const revision = this.#beginHistoryAction();
+    if (revision === null) return;
     try {
       await requestCorruptHistoryReset();
       if (revision !== this.#historyRevision) return;
@@ -462,10 +478,8 @@ export class SettingsStore {
   };
 
   clearVaultHistory = async () => {
-    if (this.#disposed || this.isRunningHistoryAction) return;
-    const revision = ++this.#historyRevision;
-    this.isRunningHistoryAction = true;
-    this.historyActionError = null;
+    const revision = this.#beginHistoryAction();
+    if (revision === null) return;
     try {
       await requestVaultHistoryClear();
       if (revision !== this.#historyRevision) return;
@@ -793,12 +807,16 @@ export class SettingsStore {
 
   async handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
-      switch (this.activeGeneralSection) {
-        case 'search': await this.loadSemanticState(); break;
-        case 'vault': await this.loadVaultInfo(); break;
-        case 'forgetting': await this.loadForgottenNotes(); break;
-        case 'history': await this.loadHistoryHealth(); break;
-        default: await this.loadSemanticStatus();
+      if (this.activeTab === 'forgotten') {
+        await this.loadForgottenNotes();
+      } else {
+        switch (this.activeGeneralSection) {
+          case 'search': await this.loadSemanticState(); break;
+          case 'vault': await this.loadVaultInfo(); break;
+          case 'forgetting': await this.loadForgottenNotes(); break;
+          case 'history': await this.loadHistoryHealth(); break;
+          default: await this.loadSemanticStatus();
+        }
       }
       this.#syncSemanticPolling();
       return;
@@ -816,7 +834,9 @@ export class SettingsStore {
       this.#vaultChangeRefreshTimer = null;
       void this.loadSemanticStatus();
       void this.loadForgottenNotes();
-      void this.loadHistoryHealth();
+      if (this.activeTab === 'general' && this.activeGeneralSection === 'history') {
+        void this.loadHistoryHealth();
+      }
     }, delayMs);
   }
 
@@ -867,6 +887,8 @@ export class SettingsStore {
     this.#vaultSaveGeneration += 1;
     this.#initialization = null;
     this.#semanticStateRequest = null;
+    this.#historyHealthRequest = null;
+    this.isLoadingHistoryHealth = false;
     this.#semanticStatusRequest = null;
     this.#forgottenNotesRequest = null;
     this.isLoadingForgottenNotes = false;

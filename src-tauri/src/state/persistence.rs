@@ -43,6 +43,41 @@ pub(crate) enum NoteIdLookup<'a> {
     },
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StatePruneWork {
+    pub(crate) disk_scans: usize,
+    pub(crate) markdown_reads: usize,
+    pub(crate) indexed_path_checks: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static STATE_PRUNE_WORK: std::cell::Cell<StatePruneWork> = const {
+        std::cell::Cell::new(StatePruneWork {
+            disk_scans: 0,
+            markdown_reads: 0,
+            indexed_path_checks: 0,
+        })
+    };
+}
+
+/// Counts only synchronous pruning work on the calling thread, excluding
+/// unrelated background projection work. Used by focused task-read checks.
+#[cfg(test)]
+pub(crate) fn measure_state_prune_work<T>(operation: impl FnOnce() -> T) -> (T, StatePruneWork) {
+    struct RestoreWork(StatePruneWork);
+    impl Drop for RestoreWork {
+        fn drop(&mut self) {
+            STATE_PRUNE_WORK.with(|work| work.set(self.0));
+        }
+    }
+    let _restore =
+        RestoreWork(STATE_PRUNE_WORK.with(|work| work.replace(StatePruneWork::default())));
+    let result = operation();
+    (result, STATE_PRUNE_WORK.with(std::cell::Cell::get))
+}
+
 /// Outcome of a single id lookup. Distinct from `Option<PathBuf>` so the
 /// pruning step can tell "id is genuinely missing — drop it" apart from
 /// "index is cold and cannot confirm yet — retain for now". The prune
@@ -70,6 +105,12 @@ impl<'a> NoteIdLookup<'a> {
             },
             NoteIdLookup::Index { resolver, is_warm } => {
                 if let Some(path) = resolver.path_for_note_id(note_id) {
+                    #[cfg(test)]
+                    STATE_PRUNE_WORK.with(|work| {
+                        let mut count = work.get();
+                        count.indexed_path_checks += 1;
+                        work.set(count);
+                    });
                     if is_valid_note_path(&path, notes_dir) {
                         return Ok(NoteIdLookupOutcome::Found);
                     }
@@ -437,6 +478,7 @@ pub(crate) fn prepare_note_save(
             prepared_markdown = note::repair_managed_note_identity(&prepared_markdown, identity)?;
         }
     }
+    prepared_markdown = note::clear_untitled_marker(&prepared_markdown);
     let target_path = resolve_target_path(notes_dir, title, &prepared_markdown, current_path)?;
     Ok((target_path, prepared_markdown))
 }
@@ -452,6 +494,129 @@ pub(crate) fn atomic_write_note(path: &Path, contents: &[u8]) -> Result<(), Stri
 /// that appeared after the caller selected the recovery path.
 pub(crate) fn atomic_create_note(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     atomic_publish_note(path, contents, true)
+}
+
+/// Rename one existing note in its current directory without replacing a late
+/// arrival. No copy/link/delete or ordinary-rename fallback is safe here.
+/// Errors after the kernel move are indeterminate to the caller: the durable
+/// two-path history proof must be reconciled before another effect is admitted.
+pub(crate) fn atomic_move_note_no_replace(
+    source: &Path,
+    destination: &Path,
+) -> std::io::Result<()> {
+    if !cfg!(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux"
+    )) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Atomic destination-preserving note rename is unavailable on this platform.",
+        ));
+    }
+    if source.parent() != destination.parent() || source == destination {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "A note rename must stay in its current directory.",
+        ));
+    }
+    if !fs::symlink_metadata(source)?.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Rename source must be an ordinary file.",
+        ));
+    }
+    // Fail before the effect if this filesystem cannot flush directory entries.
+    let mut source_options = fs::OpenOptions::new();
+    source_options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        source_options.custom_flags(libc::O_NOFOLLOW);
+    }
+    source_options.open(source)?.sync_all()?;
+    sync_note_move_directory(source)?;
+    platform_move_no_replace(source, destination)?;
+    sync_note_move_directory(destination)
+}
+
+pub(crate) fn sync_note_move_directory(path: &Path) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "Note path has no parent.")
+    })?;
+    open_note_move_directory(parent)?.sync_all()
+}
+
+fn open_note_move_directory(parent: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY);
+    }
+    options.open(parent)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "linux"))]
+fn platform_move_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::unix::{ffi::OsStrExt, io::AsRawFd};
+    let parent = source.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "Note path has no parent.")
+    })?;
+    let directory = open_note_move_directory(parent)?;
+    let name = |path: &Path| -> std::io::Result<std::ffi::CString> {
+        std::ffi::CString::new(
+            path.file_name()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing filename.")
+                })?
+                .as_bytes(),
+        )
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Filename contains a null byte.",
+            )
+        })
+    };
+    let source = name(source)?;
+    let destination = name(destination)?;
+    // Both names resolve against one retained directory, so replacing/renaming
+    // its ancestors cannot redirect only one half of the operation.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let result = unsafe {
+        libc::renameatx_np(
+            directory.as_raw_fd(),
+            source.as_ptr(),
+            directory.as_raw_fd(),
+            destination.as_ptr(),
+            libc::RENAME_EXCL | 0x00000010, /* RENAME_NOFOLLOW_ANY: XNU sys/stdio.h */
+        )
+    };
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            directory.as_raw_fd(),
+            source.as_ptr(),
+            directory.as_raw_fd(),
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "linux")))]
+fn platform_move_no_replace(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Atomic destination-preserving note rename is unavailable on this platform.",
+    ))
 }
 
 fn atomic_publish_note(path: &Path, contents: &[u8], create_only: bool) -> std::io::Result<()> {
@@ -568,11 +733,23 @@ impl<'lookup, 'dir> PruneResolver<'lookup, 'dir> {
 }
 
 fn collect_note_id_to_path_map(notes_dir: &Path) -> Result<HashMap<String, PathBuf>, String> {
+    #[cfg(test)]
+    STATE_PRUNE_WORK.with(|work| {
+        let mut count = work.get();
+        count.disk_scans += 1;
+        work.set(count);
+    });
     let mut map = HashMap::new();
     for path in collect_markdown_files_recursively(notes_dir)? {
         if !is_valid_note_path(&path, notes_dir) {
             continue;
         }
+        #[cfg(test)]
+        STATE_PRUNE_WORK.with(|work| {
+            let mut count = work.get();
+            count.markdown_reads += 1;
+            work.set(count);
+        });
         let Ok(markdown) = fs::read_to_string(&path) else {
             continue;
         };
@@ -693,7 +870,7 @@ impl AppStateStorage {
         Ok(storage)
     }
 
-    fn with<R>(
+    pub(super) fn with<R>(
         &self,
         action: impl FnOnce(&mut Connection) -> Result<R, String>,
     ) -> Result<R, String> {
@@ -893,6 +1070,7 @@ fn ensure_state_schema(connection: &mut Connection) -> Result<(), String> {
     migrate_forgotten_note_identity_column(connection)?;
     migrate_forgotten_retention_column(connection)?;
     super::task_projection::ensure_task_projection_schema(connection)?;
+    super::draft_recovery::ensure_schema(connection)?;
     transaction.commit().map_err(|err| err.to_string())
 }
 

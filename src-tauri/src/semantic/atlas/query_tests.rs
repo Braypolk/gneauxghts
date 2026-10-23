@@ -40,3 +40,28 @@ fn atlas_search_ignores_legacy_frontmatter_derived_tags() {
         stale,
     );
 }
+
+#[test]
+fn query_admission_rejects_background_similarity_and_activity_boosts() {
+    let mut item = AtlasSearchMatch {
+        note_id: None,
+        note_path: "Unrelated.md".into(),
+        document_kind: DocumentKind::Note,
+        score: 0.9,
+        semantic_score: 0.61,
+        lexical_score: 0.0,
+        structural_score: 0.0,
+        reason_labels: vec!["Recent or accessed".into()],
+    };
+    assert!(!admits_search_match(&item, false, 0.70));
+    item.semantic_score = 0.71;
+    assert!(admits_search_match(&item, false, 0.70));
+    item.semantic_score = 0.0; // embedding unavailable
+    assert!(!admits_search_match(&item, false, 0.70));
+    item.lexical_score = 1.0;
+    assert!(admits_search_match(&item, false, 0.70));
+    item.lexical_score = 0.0;
+    assert!(admits_search_match(&item, true, 0.70)); // tags already intersected
+    item.semantic_score = 0.22;
+    assert!(admits_search_match(&item, false, 0.18)); // retained Jina calibration
+}

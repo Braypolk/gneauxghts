@@ -1,3 +1,5 @@
+import { cubicBezierProgress } from '../motion';
+
 /** Shared presentation only. Callers retain content, focus and application state. */
 export type ContainerState = 'icon' | 'compact' | 'expanded';
 export type ContainerEasing = 'pinch' | 'editor';
@@ -34,18 +36,7 @@ export function ramp(start: number, end: number, value: number) {
 }
 export function clockProgress(elapsed: number, easing: ContainerEasing = 'editor') {
   if (easing === 'editor') {
-    const [x1, y1, x2, y2] = [0.65, 0, 0.35, 1];
-    if (elapsed <= 0) return 0;
-    if (elapsed >= 1) return 1;
-    let low = 0, high = 1;
-    for (let i = 0; i < 20; i++) {
-      const t = (low + high) / 2, inverse = 1 - t;
-      const x = 3 * inverse * inverse * t * x1 + 3 * inverse * t * t * x2 + t * t * t;
-      if (x < elapsed) low = t;
-      else high = t;
-    }
-    const t = (low + high) / 2, inverse = 1 - t;
-    return 3 * inverse * inverse * t * y1 + 3 * inverse * t * t * y2 + t * t * t;
+    return cubicBezierProgress(elapsed, [0.65, 0, 0.35, 1]);
   }
   // Spend the extra time only around the joined neck. The smooth ramp keeps
   // speed continuous as we enter and leave it, preserving the outer pacing.

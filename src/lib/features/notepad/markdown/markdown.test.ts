@@ -3,7 +3,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { history, undo } from '@codemirror/commands';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { EditorState, type Range } from '@codemirror/state';
-import type { Decoration } from '@codemirror/view';
+import type { Decoration, EditorView } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
 
 import { decorateBlockquote } from './decorations/blockquote';
@@ -276,6 +276,14 @@ describe('list decorator', () => {
 
 describe('code block decorator', () => {
 
+  it('leaves an empty strikethrough pair plain at its typing position', () => {
+    for (const doc of ['~~~~', '~~~~\nFollowing prose']) {
+      const specs = collect(doc, decorateCodeBlocks, () => true, { anchor: 2, head: 2 });
+      expect(classes(specs)).not.toContain('cm-gn-code-block-line');
+      expect(classes(collect(doc, decorateCodeBlocks))).toContain('cm-gn-code-block-line');
+    }
+  });
+
   it('decorates fenced code lines and conceals the fences', () => {
     const specs = collect('```js\nconst x = 1;\n```', decorateCodeBlocks);
     expect(classes(specs)).toContain('cm-gn-code-block-line');
@@ -296,6 +304,19 @@ describe('blockquote decorator', () => {
 });
 
 describe('horizontal rule decorator', () => {
+  it.each(['****', '____'])('leaves empty bold %s plain while the caret is ready to type inside', (doc) => {
+    const state = EditorState.create({
+      doc, selection: { anchor: 2 }, extensions: [createMarkdownLanguage()]
+    });
+    const decorations: Range<Decoration>[] = [];
+    const view = { state } as EditorView;
+    syntaxTree(state).iterate({ enter(node) {
+      decorateHorizontalRule({ view, decorations, selectionOverlaps: () => true }, node);
+    } });
+    expect(decorations).toHaveLength(0);
+    expect(classes(collect(doc, decorateHorizontalRule))).toContain('cm-gn-hr-line');
+  });
+
   it('adds the hr line class and conceals the markers', () => {
     const specs = collect('---', decorateHorizontalRule);
     expect(classes(specs)).toContain('cm-gn-hr-line');

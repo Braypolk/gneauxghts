@@ -1,5 +1,6 @@
 use super::{
-    prepare_notes_dir, RecentTaskItem, TaskFilter, TaskListGroup, TaskListGroupPatch, TaskListItem,
+    note_session::read_state_with_app_index, prepare_notes_dir, RecentTaskItem, TaskFilter,
+    TaskListGroup, TaskListGroupPatch, TaskListItem,
 };
 use crate::{
     index::AppState,
@@ -11,15 +12,14 @@ use crate::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
     },
     state::{
-        db_set_note_collapsed, db_set_note_hidden, db_set_note_order, read_state,
-        resolve_note_path_by_id,
+        db_set_note_collapsed, db_set_note_hidden, db_set_note_order, resolve_note_path_by_id,
         task_projection::{
             list_recent_open_tasks, list_tasks_with_filter, load_task_by_id,
             load_tasks_for_note_id, set_hidden_for_task_id, ProjectionFilter, TaskRecord,
         },
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 impl CurrentContentItem for RecentTaskItem {
@@ -70,8 +70,8 @@ pub(super) fn list_recent_tasks(
         .read_refreshable(|| {
             let notes_dir = prepare_notes_dir(&state, false)?;
 
-            let persisted_state = read_state(&notes_dir)?;
             state.ensure_interactive_index(&notes_dir, "list_recent_tasks")?;
+            let persisted_state = read_state_with_app_index(&notes_dir, Some(&state))?;
 
             let hidden_note_ids: HashSet<String> =
                 persisted_state.hidden_note_ids.iter().cloned().collect();
@@ -101,9 +101,8 @@ pub(super) fn list_tasks(
         .current_content(AllowedScope::vault())
         .read_refreshable(|| {
             let notes_dir = prepare_notes_dir(&state, false)?;
-            let persisted_state = read_state(&notes_dir)?;
-
             state.ensure_interactive_index(&notes_dir, "list_tasks")?;
+            let persisted_state = read_state_with_app_index(&notes_dir, Some(&state))?;
 
             let hidden_note_ids: HashSet<String> =
                 persisted_state.hidden_note_ids.iter().cloned().collect();
@@ -196,6 +195,7 @@ fn group_task_records(
     collapsed_note_ids: &HashSet<String>,
 ) -> Vec<TaskListGroup> {
     let mut groups = Vec::<TaskListGroup>::new();
+    let mut group_indices = HashMap::<String, usize>::new();
 
     for record in records {
         if !show_hidden && hidden_note_ids.contains(&record.note_id) {
@@ -203,12 +203,11 @@ fn group_task_records(
         }
 
         let item = make_task_list_item(record, hidden_note_ids, collapsed_note_ids);
-        let group_index = match groups
-            .iter()
-            .position(|group| group.note_id == item.note_id)
-        {
+        let group_index = match group_indices.get(&item.note_id).copied() {
             Some(index) => index,
             None => {
+                let index = groups.len();
+                group_indices.insert(item.note_id.clone(), index);
                 groups.push(TaskListGroup {
                     note_id: item.note_id.clone(),
                     note_path: item.note_path.clone(),
@@ -221,7 +220,7 @@ fn group_task_records(
                     visible_count: 0,
                     display_count: 0,
                 });
-                groups.len() - 1
+                index
             }
         };
         let group = &mut groups[group_index];
@@ -251,7 +250,7 @@ fn build_task_group_patch(
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
     let notes_dir = prepare_notes_dir(state, false)?;
-    let persisted_state = read_state(&notes_dir)?;
+    let persisted_state = read_state_with_app_index(&notes_dir, Some(state))?;
     let hidden_note_ids: HashSet<String> =
         persisted_state.hidden_note_ids.iter().cloned().collect();
     let collapsed_note_ids: HashSet<String> =
@@ -456,6 +455,98 @@ mod tests {
     use tauri::Manager;
 
     #[test]
+    #[ignore = "matched task-query work measurement; run with --ignored --nocapture"]
+    fn task_read_work_measurement() {
+        let fixture = crate::test_support::TestVault::with_notes("task-read-measurement", |root| {
+            for index in 0..500 {
+                let tasks = (0..10)
+                    .map(|task| format!("- [ ] Task {task} for note {index}\n"))
+                    .collect::<String>();
+                std::fs::write(
+                    root.join(format!("Note {index:04}.md")),
+                    format!(
+                        "---\ngneauxghts:\n  id: note-{index}\n  created_at: 2026-01-01T00:00:00Z\n  updated_at: 2026-01-01T00:00:00Z\n  trashed_at: null\n---\n\n# Note {index}\n\n{tasks}\n{}",
+                        "Retained ordinary prose for the measurement.\n".repeat(24)
+                    ),
+                )
+                .unwrap();
+            }
+        });
+        crate::state::db_set_note_order(
+            &(0..500)
+                .rev()
+                .map(|index| format!("note-{index}"))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        for index in 0..10 {
+            crate::state::db_set_note_hidden(&format!("note-{index}"), true).unwrap();
+            crate::state::db_set_note_collapsed(&format!("note-{index}"), true).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let (_, cold_work) = crate::state::measure_state_prune_work(|| {
+            let notes_dir = fixture.notes.path();
+            fixture
+                .state
+                .ensure_interactive_index(notes_dir, "task-cold-measurement")
+                .unwrap();
+            let _persisted = read_state_with_app_index(notes_dir, Some(&fixture.state)).unwrap();
+        });
+        eprintln!(
+            "task-read cold preparation: {:?}, {cold_work:?}",
+            started.elapsed()
+        );
+        for repetition in 0..5 {
+            let started = std::time::Instant::now();
+            let (_, work) = crate::state::measure_state_prune_work(|| {
+                let notes_dir = fixture.notes.path();
+                fixture
+                    .state
+                    .ensure_interactive_index(notes_dir, "task-warm-measurement")
+                    .unwrap();
+                let persisted = read_state_with_app_index(notes_dir, Some(&fixture.state)).unwrap();
+                let hidden = persisted.hidden_note_ids.into_iter().collect();
+                let collapsed = persisted.collapsed_note_ids.into_iter().collect();
+                let records = list_tasks_with_filter(
+                    ProjectionFilter::All,
+                    &persisted.note_order_note_ids,
+                    &hidden,
+                    &collapsed,
+                )
+                .unwrap();
+                let groups = group_task_records(records, false, &hidden, &collapsed);
+                assert_eq!(groups.len(), 490);
+                assert_eq!(groups[0].note_id, "note-499");
+                assert_eq!(groups[489].note_id, "note-10");
+            });
+            eprintln!(
+                "task-read warm list {repetition}: {:?}, {work:?}",
+                started.elapsed()
+            );
+        }
+        let records = (0..4_000)
+            .flat_map(|note| {
+                (0..10).map(move |task| {
+                    record(
+                        &format!("note-{note}"),
+                        &format!("task-{task}"),
+                        "Measure grouping",
+                        false,
+                        false,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        let groups = group_task_records(records, false, &HashSet::new(), &HashSet::new());
+        assert_eq!(groups.len(), 4_000);
+        eprintln!(
+            "task-read grouping 40000 records/4000 groups: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn list_tasks_keeps_tasks_when_refreshing_a_dirty_note() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("task-list-data");
@@ -509,6 +600,120 @@ mod tests {
             .stop_rebuildable_projection_work()
             .unwrap();
         crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn task_queries_reuse_index_pruning_without_changing_visibility_or_source_refresh() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("task-query-state-data");
+        let notes = crate::test_support::TestDir::new("task-query-state-notes");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let write_note = |id: &str, body: &str| {
+            let path = notes.path().join(format!("{id}.md"));
+            std::fs::write(&path, format!("---\ngneauxghts:\n  id: {id}\n  created_at: 2026-01-01T00:00:00Z\n  updated_at: 2026-01-01T00:00:00Z\n  trashed_at: null\n---\n\n{body}")).unwrap();
+            path
+        };
+        let a = write_note("a", "- [ ] A open\n- [x] A done");
+        let b = write_note("b", "- [ ] B open");
+        write_note("hidden-note", "- [ ] Hidden open");
+        crate::state::db_set_note_order(&[
+            "b".into(),
+            "hidden-note".into(),
+            "missing".into(),
+            "a".into(),
+        ])
+        .unwrap();
+        crate::state::db_set_note_hidden("hidden-note", true).unwrap();
+        crate::state::db_set_note_hidden("missing", true).unwrap();
+        crate::state::db_set_note_collapsed("b", true).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        assert!(!state.has_warm_notes_index());
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let (cold, cold_work) = crate::state::measure_state_prune_work(|| {
+            list_tasks(app.state(), TaskFilter::All, false).unwrap()
+        });
+        assert_eq!(
+            cold_work.disk_scans, 0,
+            "the required cold index refresh must not be followed by a pruning vault walk"
+        );
+        assert_eq!(
+            cold.iter()
+                .map(|group| group.note_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+        assert!(cold[0].note_collapsed);
+        let (warm, warm_work) = crate::state::measure_state_prune_work(|| {
+            let groups = list_tasks(app.state(), TaskFilter::All, false).unwrap();
+            let recent = list_recent_tasks(app.state(), 1).unwrap();
+            assert_eq!(recent.len(), 1);
+            assert_ne!(recent[0].note_id, "hidden-note");
+            let patch = get_task_group(app.state(), "b".into(), TaskFilter::All, false).unwrap();
+            assert_eq!(patch.group.unwrap().display_tasks[0].text, "B open");
+            groups
+        });
+        assert_eq!(warm_work.disk_scans, 0);
+        assert_eq!(warm_work.markdown_reads, 0);
+        assert!(warm_work.indexed_path_checks > 0);
+        assert_eq!(
+            serde_json::to_value(&cold).unwrap(),
+            serde_json::to_value(warm).unwrap()
+        );
+        let running = app.state::<AppState>();
+        let indexed = read_state_with_app_index(notes.path(), Some(&running)).unwrap();
+        let disk = crate::state::read_state(notes.path()).unwrap();
+        assert_eq!(
+            serde_json::to_value(indexed).unwrap(),
+            serde_json::to_value(disk).unwrap()
+        );
+
+        write_note("b", "- [x] B external update");
+        running
+            .mark_notes_index_dirty(&b, "task-query-test")
+            .unwrap();
+        let updated = list_tasks(app.state(), TaskFilter::Completed, false).unwrap();
+        assert_eq!(updated[0].display_tasks[0].text, "B external update");
+        assert_eq!(
+            list_tasks(app.state(), TaskFilter::Open, false).unwrap()[0].note_id,
+            "a"
+        );
+        std::fs::remove_file(&a).unwrap();
+        running
+            .mark_notes_index_dirty(&a, "task-query-test")
+            .unwrap();
+        let remaining = list_tasks(app.state(), TaskFilter::All, false).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].note_id, "b");
+        assert!(
+            get_task_group(app.state(), "a".into(), TaskFilter::All, false)
+                .unwrap()
+                .group
+                .is_none()
+        );
+        running.note_timeline().forget_note(&b, 7).unwrap();
+        assert!(list_tasks(app.state(), TaskFilter::All, false)
+            .unwrap()
+            .is_empty());
+        assert!(list_recent_tasks(app.state(), 10).unwrap().is_empty());
+        assert!(
+            get_task_group(app.state(), "b".into(), TaskFilter::All, true)
+                .unwrap()
+                .group
+                .is_none()
+        );
+        let shown = list_tasks(app.state(), TaskFilter::All, true).unwrap();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].note_id, "hidden-note");
+        assert!(shown[0].note_hidden);
+        running.stop_rebuildable_projection_work().unwrap();
     }
 
     fn record(
@@ -615,5 +820,48 @@ mod tests {
             &no_hidden_notes,
         );
         assert!(group.is_none());
+    }
+
+    #[test]
+    fn group_task_records_preserves_first_seen_order_for_interleaved_records() {
+        let groups = group_task_records(
+            vec![
+                record("b", "b-hidden", "Hidden first task", false, true),
+                record("a", "a-first", "A first", false, false),
+                record("only-hidden", "hidden", "Never displayed", false, true),
+                record(
+                    "hidden-note",
+                    "hidden-note-task",
+                    "Hidden note",
+                    false,
+                    false,
+                ),
+                record("b", "b-visible", "B visible", false, false),
+                record("a", "a-last", "A last", true, false),
+            ],
+            false,
+            &HashSet::from(["hidden-note".to_string()]),
+            &HashSet::from(["b".to_string()]),
+        );
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.note_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+        assert_eq!(groups[0].hidden_count, 1);
+        assert_eq!(groups[0].visible_count, 1);
+        assert_eq!(groups[0].display_count, 1);
+        assert!(groups[0].note_collapsed);
+        assert_eq!(groups[0].display_tasks[0].task_id, "b-visible");
+        assert_eq!(
+            groups[1]
+                .display_tasks
+                .iter()
+                .map(|item| item.task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a-first", "a-last"]
+        );
     }
 }

@@ -3,6 +3,24 @@ import { createBrowserE2eBackend } from './browserBackend';
 import { listen } from '@tauri-apps/api/event';
 
 describe('browser fixture command ownership', () => {
+  it('retains private recovery copies across fixture reloads without overwriting canonical notes', async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('window', { localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) } });
+    try {
+      const first = createBrowserE2eBackend();
+      const before = first.bridge.snapshot().notes;
+      const draft = { id: 'da046fa3-c09f-4c33-8a83-507be8053e52', version: 2, title: 'Unsaved', markdown: 'Keep this work',
+        tags: ['idea'], tagsError: null, sourceNoteId: 'note-alpha', sourcePath: '/e2e/alpha.md', updatedAtMillis: 0 };
+      await first.invoke('save_draft_backup', { draft });
+      const reopened = createBrowserE2eBackend();
+      expect(await reopened.invoke('list_draft_backups')).toEqual([expect.objectContaining({ ...draft, updatedAtMillis: expect.any(Number) })]);
+      expect(reopened.bridge.snapshot().notes).toEqual(before);
+      await reopened.invoke('remove_draft_backup', { id: draft.id, version: 3 });
+      await reopened.invoke('save_draft_backup', { draft });
+      expect(await reopened.invoke('list_draft_backups')).toEqual([]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('supports public Tauri listener cleanup without a WebDriver service', async () => {
     const backend = createBrowserE2eBackend();
     vi.stubGlobal('window', {});
@@ -37,6 +55,19 @@ describe('browser fixture command ownership', () => {
     await expect(backend.invoke('list_typo')).rejects.toThrow('does not implement');
     await expect(backend.invoke('read_note', { noteId: 'absent' })).rejects.toThrow('Unknown note');
     await expect(backend.invoke('save_note', { currentPath: '/absent.md' })).rejects.toThrow('Unknown note');
+  });
+
+  it('starts a blank capture session without deleting the previous note', async () => {
+    const backend = createBrowserE2eBackend();
+    const before = backend.bridge.snapshot().notes;
+    await backend.invoke('clear_last_opened_note');
+    expect(await backend.invoke('load_note_session')).toMatchObject({ noteId: null, path: null, title: '', markdown: '' });
+    expect(backend.bridge.snapshot().notes).toEqual(before);
+
+    const saved = await backend.invoke('save_note', { currentPath: null, title: '', markdown: 'A new idea' });
+    expect(saved).toMatchObject({ noteId: 'note-created-1', markdown: 'A new idea' });
+    expect(await backend.invoke('load_note_session')).toEqual(saved);
+    expect(await backend.invoke('read_note', { noteId: 'note-alpha' })).toMatchObject({ title: 'Alpha note' });
   });
 
   it('admitted save of A survives a read and open of B without modifying B', async () => {
@@ -79,6 +110,14 @@ describe('browser fixture command ownership', () => {
     const failure = expect(save).rejects.toBe('History is unavailable. Retry history from Settings.');
     backend.bridge.releaseSave();
     await failure;
+    expect(backend.bridge.snapshot().notes).toEqual(before);
+  });
+
+  it.each(['save_note', 'save_task_note'])('rejects a %s path belonging to another captured identity', async command => {
+    const backend = createBrowserE2eBackend();
+    const before = backend.bridge.snapshot().notes;
+    await expect(backend.invoke(command, { currentPath: '/e2e/beta.md', expectedNoteId: 'note-alpha',
+      title: 'Alpha', markdown: 'stale save' })).rejects.toBe('This note moved. Reopen its saved location before saving.');
     expect(backend.bridge.snapshot().notes).toEqual(before);
   });
 

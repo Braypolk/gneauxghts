@@ -41,32 +41,60 @@ fn bounded(text: &str, bytes: usize) -> String {
 fn hash(text: &str) -> String {
     blake3::hash(text.as_bytes()).to_hex().to_string()
 }
-fn fingerprint(state: &AppState, ids: &HashSet<String>) -> Result<String, String> {
+fn scope_paths(state: &AppState, ids: &HashSet<String>) -> Result<Vec<(String, PathBuf)>, String> {
     let index = state
         .notes_index
         .lock()
         .map_err(|_| "Notes index unavailable")?;
-    let mut keys = Vec::new();
-    for id in ids {
-        if let Some((path, _)) = index.get_note_by_note_id(id) {
-            // Filesystem timestamps, delayed index refreshes and assignment of
-            // catalog identities to legacy files are not changes to search
-            // content. Bind the scope to actual paths/bytes instead. A changed
-            // embedded identity is still detected because it changes the bytes;
-            // Snapshot loading separately verifies embedded note identity.
-            let mut file = fs::File::open(path)
-                .map_err(|_| String::from("Search scope unavailable; search again"))?;
-            let mut content = blake3::Hasher::new();
-            content
-                .update_reader(&mut file)
-                .map_err(|_| String::from("Search scope unavailable; search again"))?;
-            keys.push(
-                serde_json::to_string(&(path, content.finalize().to_hex().as_str()))
-                    .map_err(|e| e.to_string())?,
-            );
-        }
+    let mut paths = ids
+        .iter()
+        .filter_map(|id| {
+            index
+                .get_note_by_note_id(id)
+                .map(|(path, _)| (id.clone(), path.clone()))
+        })
+        .collect::<Vec<_>>();
+    drop(index);
+    paths.sort();
+    Ok(paths)
+}
+
+fn fingerprint(state: &AppState, ids: &HashSet<String>) -> Result<String, String> {
+    fingerprint_with(state, ids, |path| {
+        // Filesystem timestamps, delayed index refreshes and assignment of
+        // catalog identities to legacy files are not changes to search
+        // content. Bind the scope to actual paths/bytes instead. A changed
+        // embedded identity is still detected because it changes the bytes;
+        // Snapshot loading separately verifies embedded note identity.
+        let mut file = fs::File::open(path)
+            .map_err(|_| String::from("Search scope unavailable; search again"))?;
+        let mut content = blake3::Hasher::new();
+        content
+            .update_reader(&mut file)
+            .map_err(|_| String::from("Search scope unavailable; search again"))?;
+        Ok(content.finalize().to_hex().to_string())
+    })
+}
+
+fn fingerprint_with(
+    state: &AppState,
+    ids: &HashSet<String>,
+    mut hash_file: impl FnMut(&std::path::Path) -> Result<String, String>,
+) -> Result<String, String> {
+    // Clone only identity/path bindings under the catalog lock. Filesystem reads
+    // can block independently of corpus size; they must not block catalog users.
+    let paths = scope_paths(state, ids)?;
+    let keys = paths
+        .iter()
+        .map(|(_, path)| {
+            serde_json::to_string(&(path, hash_file(path)?)).map_err(|e| e.to_string())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    // A rename/removal during the unlocked read invalidates this proof. The
+    // surrounding delivery boundary separately verifies timeline generations.
+    if scope_paths(state, ids)? != paths {
+        return Err("Search scope changed; search again".into());
     }
-    keys.sort();
     Ok(hash(&keys.join("\n")))
 }
 
@@ -75,9 +103,10 @@ pub(super) fn search(
     ids: &HashSet<String>,
     query: &str,
     limit: usize,
+    query_bytes: usize,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
-    if query.len() > 1024 {
-        return Err("Query exceeds 1024 bytes".into());
+    if query.len() > query_bytes {
+        return Err(format!("Query exceeds {query_bytes} bytes"));
     }
     let version = fingerprint(state, ids)?;
     let mut snapshots = HashMap::new();
@@ -198,7 +227,7 @@ pub(super) fn search(
     Ok(distinct
         .into_iter()
         .filter(|c| seen.insert(c.passage.note_id.clone()))
-        .take(limit.clamp(1, 20))
+        .take(limit.clamp(1, WORK_LIMIT))
         .map(|c| VaultRetrievalItem {
             note_id: c.passage.note_id,
             note_path: c.path,
@@ -384,7 +413,7 @@ impl CanonicalSnapshot {
             .frontmatter
             .managed
             .as_ref()
-            .is_some_and(|m| m.id != id || m.trashed_at.is_some())
+            .is_some_and(|m| (!m.id.trim().is_empty() && m.id != id) || m.trashed_at.is_some())
         {
             return None;
         }

@@ -6,7 +6,7 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
   assert(typeof readQuery === 'string' && readQuery.length > 0 && readQuery.length <= 160);
   let fail = false, requests = 0, holdSummaries = false, pendingSummaries = 0;
   let contextWindow = 129280;
-  let edit, creation;
+  let edit, creation, rename;
   const summaryGates = new Set();
   const server = createServer(async (req, res) => {
     if (req.method === 'GET') {
@@ -35,6 +35,11 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
     }
     if (summary) { chunk({ content: '## Goal\nWelcome a fictional observatory visitor.\n## Constraints & Preferences\n- Use no notes or tools.\n## Progress\n### Done\n- Reviewed generated fictional history.\n### In Progress\n- Continue with a welcome.\n### Blocked\n- (none)\n## Key Decisions\n- Keep the visitor welcome brief.\n## Next Steps\n1. Answer the current prompt.\n## Critical Context\n- Source-free synthetic observatory scenario.' }); chunk({}, 'stop'); }
     else if (prompt.includes('fixture-create') && creation && tools.length === 0) call('create_note', creation);
+    else if (prompt.includes('fixture-rename') && rename && tools.length === 0) call('read_note', { noteId: rename.noteId });
+    else if (prompt.includes('fixture-rename') && rename && tools.length === 1) {
+      const read = JSON.parse(tools[0].content ?? '{}');
+      call('rename_note', { noteId: rename.noteId, expectedReadSourceId: read.source?.sourceId ?? 'missing', title: rename.title });
+    }
     else if (prompt.includes('fixture-edit') && edit && tools.length === 0) call('read_note', { noteId: edit.noteId });
     else if (prompt.includes('fixture-edit') && edit && tools.length === 1) {
       const read = JSON.parse(tools[0].content ?? '{}');
@@ -48,12 +53,13 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
       chunk({ reasoning_content: 'Fixture reasoning begins. ' }); await pause(500); chunk({ reasoning_content: 'Fixture reasoning ends.' });
       const read = tools.at(-1)?.content ? JSON.parse(tools.at(-1).content) : undefined;
       const editedSource = prompt.includes('fixture-edit-historical') && tools[0]?.content ? JSON.parse(tools[0].content).citation : read?.read?.citation;
-      const text = prompt.includes('fixture-create') ? `Fixture creation outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${read?.read?.citation ?? ''}` : prompt.includes('fixture-edit') ? `Fixture edit outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${editedSource ?? ''}` : prompt.includes('fixture-read') && read?.citation ? `The lantern is amber. ${read.citation}` : 'Fixture ordinary answer.';
+      const renamedSource = prompt.includes('fixture-rename-historical') && tools[0]?.content ? JSON.parse(tools[0].content).citation : read?.read?.citation;
+      const text = prompt.includes('fixture-create') ? `Fixture creation outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${read?.read?.citation ?? ''}` : prompt.includes('fixture-rename') ? `Fixture rename outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${renamedSource ?? ''}` : prompt.includes('fixture-edit') ? `Fixture edit outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${editedSource ?? ''}` : prompt.includes('fixture-read') && read?.citation ? `The lantern is amber. ${read.citation}` : 'Fixture ordinary answer.';
       chunk({ content: text }); await pause(prompt.includes('fixture-hold') ? 8000 : 500); chunk({ content: ' Finished.' }); chunk({}, 'stop');
     }
     if (!res.destroyed) res.end('data: [DONE]\n\n');
   });
   await new Promise((ok, failStart) => { server.once('error', failStart); server.listen(0, '127.0.0.1', ok); });
   const address = server.address(); assert(address && typeof address !== 'string');
-  return { endpoint: `http://127.0.0.1:${address.port}/v1`, model: 'pi-acceptance-fixture', setContextWindow(value) { assert(value === null || Number.isSafeInteger(value) && value > 0); contextWindow = value; }, setEdit(value) { edit = value; }, setCreate(value) { creation = value; }, setFailure(value) { fail = value; }, setHoldSummaries(value) { holdSummaries = value; if (!value) for (const release of summaryGates) release(); }, get pendingSummaries() { return pendingSummaries; }, get requests() { return requests; }, interruptConnections() { server.closeAllConnections(); }, async close() { server.closeAllConnections(); await new Promise((ok, error) => server.close(e => e ? error(e) : ok())); } };
+  return { endpoint: `http://127.0.0.1:${address.port}/v1`, model: 'pi-acceptance-fixture', setContextWindow(value) { assert(value === null || Number.isSafeInteger(value) && value > 0); contextWindow = value; }, setEdit(value) { edit = value; }, setCreate(value) { creation = value; }, setRename(value) { rename = value; }, setFailure(value) { fail = value; }, setHoldSummaries(value) { holdSummaries = value; if (!value) for (const release of summaryGates) release(); }, get pendingSummaries() { return pendingSummaries; }, get requests() { return requests; }, interruptConnections() { server.closeAllConnections(); }, async close() { server.closeAllConnections(); await new Promise((ok, error) => server.close(e => e ? error(e) : ok())); } };
 }

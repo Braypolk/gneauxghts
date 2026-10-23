@@ -19,6 +19,18 @@ it('does not send current markdown for recent note loading', async () => {
   });
 });
 
+it('passes an edited-time cue to native ranking while preserving draft acknowledgement', async () => {
+  const { searchNotes } = await import('./search');
+  invokeMock.mockResolvedValue([]);
+  await searchNotes('idea', {
+    currentPath: '/vault/current.md', currentTitle: 'Current', currentMarkdown: 'body'
+  }, { modifiedSinceMillis: 1234 });
+  expect(invokeMock).toHaveBeenCalledWith('search_notes_hybrid', expect.objectContaining({
+    query: 'idea', modifiedSinceMillis: 1234, currentMarkdown: 'body',
+    currentBodyHash: computeDraftHash('body')
+  }));
+});
+
 it('preserves distinct search, related, and retrieval payloads with shared draft acknowledgement', async () => {
   const { searchNotes, getRelatedNotes, retrieveNoteContext } = await import('./search');
   const context = {

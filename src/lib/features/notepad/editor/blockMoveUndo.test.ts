@@ -28,6 +28,41 @@ function blockView(doc: string, anchor: number) {
 }
 
 describe('line move + undo/redo caret restoration', () => {
+  it.each([
+    { source: 'first\nlast', anchor: 8, direction: -1 as const, expected: 'last\nfirst', caret: 2 },
+    { source: 'first\nlast', anchor: 2, direction: 1 as const, expected: 'last\nfirst', caret: 7 },
+    { source: 'first\nlast\n', anchor: 2, direction: 1 as const, expected: 'last\nfirst\n', caret: 7 }
+  ])('keeps lines separate and the caret in the moved line: $source, $direction', ({ source, anchor, direction, expected, caret }) => {
+    const fixture = blockView(source, anchor);
+
+    expect(moveCurrentBlock(fixture.view, direction)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(expected);
+    expect(fixture.readState().selection.main.head).toBe(caret);
+    expect(undo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(source);
+    expect(fixture.readState().selection.main.head).toBe(anchor);
+    expect(redo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(expected);
+  });
+
+  it.each([
+    { from: 2, to: 0, before: true, expected: 'last\nfirst\nmiddle', caret: 0 },
+    { from: 0, to: 2, before: false, expected: 'middle\nlast\nfirst', caret: 12 }
+  ])('keeps final-line drag moves separate: $from to $to', ({ from, to, before, expected, caret }) => {
+    const source = 'first\nmiddle\nlast';
+    const fixture = blockView(source, 8);
+    const blocks = listBlocks(fixture.readState());
+
+    expect(moveBlockTo(fixture.view, blocks[from]!, blocks[to]!, before)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(expected);
+    expect(fixture.readState().selection.main.head).toBe(caret);
+    expect(undo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(source);
+    expect(fixture.readState().selection.main.head).toBe(8);
+    expect(redo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(expected);
+  });
+
   it('undoes an actual keyboard-style block move without collapsing the caret', () => {
     const fixture = blockView('line1\nline2\nline3', 8);
 

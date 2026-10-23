@@ -159,7 +159,11 @@ impl ActiveSemanticState {
                 }
             })
             .filter(|item| {
-                item.score > 0.02 || item.lexical_score > 0.0 || item.structural_score > 0.0
+                admits_search_match(
+                    item,
+                    trimmed_query.is_empty(),
+                    self.provider.minimum_text_score(),
+                )
             })
             .collect::<Vec<_>>();
         matches.sort_by(|left, right| {
@@ -181,6 +185,15 @@ impl ActiveSemanticState {
         })
     }
 }
+// Activity affects ordering only. Relevance is calibrated for the active provider;
+// the map must not apply a second, model-independent similarity threshold.
+fn admits_search_match(item: &AtlasSearchMatch, tags_only: bool, semantic_floor: f32) -> bool {
+    tags_only
+        || item.lexical_score >= 0.65
+        || item.structural_score >= 0.38
+        || (item.semantic_score.is_finite() && item.semantic_score >= semantic_floor)
+}
+
 fn lexical_note_score(terms: &[String], text_parts: &[&str], tags: &[String]) -> f32 {
     if terms.is_empty() {
         return 0.0;

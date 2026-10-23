@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { $, browser, expect } from '@wdio/globals';
 import { invokeNative } from '../../support/liveNative';
-import { assistantText, configurePi, live, messages, newPiConversation, openPiPane, paneState, sendPiMessage, startPiProviderFixture, waitPiIdle } from '../../support/piChatAcceptance';
+import { activatePiEditor, assistantText, configurePi, live, messages, newPiConversation, openPiPane, paneState, sendPiMessage, startPiProviderFixture, waitPiIdle } from '../../support/piChatAcceptance';
 
 // Real reqwest/IPC integration. This fixture never contacts a model or account.
 describe('curated native provider connection failures', function () {
   this.timeout(120_000);
   let endpoint: string;
-  let mode: 'empty' | 'success' | 'invalid' | 'slow' | number = 'empty';
+  let mode: 'empty' | 'success' | 'invalid' | 'slow' | 'memory' | 'load' | number = 'empty';
   let requests = 0;
   const navigate = async (label: 'Settings' | 'Gneauxght') => {
     const link = () => $(`a[aria-label="${label}"]`);
@@ -17,6 +17,11 @@ describe('curated native provider connection failures', function () {
   };
   const server = createServer((request, response) => {
     requests++;
+    if (request.method === 'POST' && (mode === 'memory' || mode === 'load')) {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: mode === 'memory' ? 'Failed to load model: insufficient memory SECRET_MODEL_PATH' : 'Unable to load model SECRET_MODEL_PATH' }));
+      return;
+    }
     if (mode === 'slow') return; // Production five-second discovery deadline.
     response.setHeader('content-type', 'application/json');
     if (typeof mode === 'number') response.writeHead(mode, 'SECRET_REASON');
@@ -88,6 +93,48 @@ describe('curated native provider connection failures', function () {
     await $('button[aria-label="Configure native-recovered-model"]').waitForDisplayed();
     assert(!(await panel().getText()).includes('timed out'));
     await navigate('Gneauxght');
+  });
+
+  it('shows actionable model-load failures through native HTTP, Pi and the ordinary chat UI', async () => {
+    await configurePi(endpoint, 'fixture-load-failure');
+    await openPiPane();
+    for (const failure of ['memory', 'load'] as const) {
+      mode = failure;
+      await newPiConversation();
+      await sendPiMessage('Say hello. Use no notes or tools.');
+      const pane = await waitPiIdle();
+      const last = messages(pane).filter(message => message.role === 'assistant').at(-1)!;
+      assert.equal(last.stopReason, 'error');
+      const expected = failure === 'memory'
+        ? 'The model server could not load the selected model into memory. Unload other models, reduce its context size, or choose a smaller model, then retry.'
+        : 'The model server could not load the selected model. Load it in the server app or choose another model in Settings, then retry.';
+      assert.equal(last.errorMessage, expected);
+      await expect($('[data-testid="pi-chat-panel"]')).toHaveText(expect.stringContaining(expected));
+      assert(!(await $('[data-testid="pi-chat-panel"]').getText()).includes('SECRET'));
+    }
+    mode = 'success';
+  });
+
+  it('names an ordinary capture from its first line without requesting an AI title', async () => {
+    await activatePiEditor();
+    await $('button[aria-label="New Idea. Start a blank note in this pane."]').click();
+    const before = requests;
+    const inserted = await browser.execute(() => {
+      const editor = document.querySelector<HTMLElement>('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content');
+      if (!editor) return false;
+      editor.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }));
+      editor.focus();
+      return document.execCommand('insertText', false, 'Garden capture without AI\n\nCollect rainwater for the tomatoes and watch the seedlings grow each morning.');
+    });
+    assert(inserted);
+    await expect($('[data-testid="note-title"]')).toHaveValue('Garden capture without AI', { wait: 30_000 });
+    await expect($('[data-testid="title-suggestion"]')).not.toExist();
+    const noteId = await browser.execute(() => (window as unknown as { __GNEAUXGHTS_NATIVE_E2E__: { readEditorState(): { noteId: string } } }).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().noteId);
+    const saved = await invokeNative<{ title: string; markdown: string; path: string }>('read_note', { noteId, path: null });
+    assert.equal(saved.title, 'Garden capture without AI');
+    assert(saved.path.endsWith('Garden capture without AI.md'));
+    assert(saved.markdown.includes('Collect rainwater'));
+    assert.equal(requests, before, 'Capture must not contact the provider');
   });
 
   it('preserves cancellation and subsequent generation through the shared native provider', async () => {

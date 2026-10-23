@@ -26,7 +26,7 @@ The generator lives in `src-tauri/src/services/note_timeline/tests/fixtures.rs`.
 
 ## Format and isolation
 
-Each file is a zstd-compressed JSON object containing recipe/schema versions, scenario kind, expected geometry, scenario note IDs, and a map of allowlisted relative files to bytes and SHA-256 digests. Inventory-dense uses recipe version 2; the other four kinds use version 1. All require history schema 14. Update the generator/recipe and regenerate when the recipe or required schema changes; do not patch stored rows to simulate new writer behavior.
+Each file is a zstd-compressed JSON object containing recipe/schema versions, scenario kind, expected geometry, scenario note IDs, and a map of allowlisted relative files to bytes and SHA-256 digests. Inventory-dense uses recipe version 2; the other four kinds use version 1. All require history schema 15. Update the generator/recipe and regenerate when the recipe or required schema changes; do not patch stored rows to simulate new writer behavior.
 
 A disposable export copy replaces only `timeline_heads.current_path`, `lifecycle_events.path` and `lifecycle_events.previous_path` with paths beneath `/gneauxghts-history-read-fixture`. Synthetic paths use slash separators across platforms. SQLite compaction removes obsolete path bytes before export. Identities, Markdown, payloads, hashes, times, provenance and lineage remain the production-generated values. Fresh regeneration can therefore produce different IDs/timestamps and archive bytes while preserving the recipe.
 

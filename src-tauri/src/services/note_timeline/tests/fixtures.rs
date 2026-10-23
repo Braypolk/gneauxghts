@@ -15,7 +15,7 @@ use std::{
     },
 };
 
-const SCHEMA: u64 = 14;
+const SCHEMA: u64 = 15;
 const ROOT: &str = "/gneauxghts-history-read-fixture";
 const DATABASE: &str = ".gneauxghts/history.sqlite3";
 const MANIFEST: &str = ".gneauxghts/vault.json";
@@ -168,6 +168,7 @@ fn validate_database(root: &Path, kind: HistoryFixture, ids: &[String]) {
     assert_eq!(manifest["historyGeneration"], metadata.2);
     for table in [
         "prepared_intents",
+        "publication_renames",
         "pending_window_preparations",
         "pending_editing_windows",
         "pending_observations",

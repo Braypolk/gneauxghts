@@ -92,6 +92,9 @@ export function createImagePasteExtension(config: ImagesConfig) {
       if (view.state.readOnly || view.composing) return true;
       const position = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
       if (position !== null) {
+        // A file drop targets its pointer, so retire any unrelated text
+        // selection and its toolbar without changing the selected source.
+        view.dispatch({ selection: { anchor: position } });
         view.focus(); importFiles(view, files, position, position);
       }
       return true;

@@ -5,7 +5,7 @@ import { estimateTextTokens } from '@earendil-works/pi-ai/utils/estimate';
 import type { ConversationId, ConversationView, LiveState, TaskId, WatchHandle } from '@earendil-works/pi-durable';
 import type { PiChat, PI_CONTEXT } from '#lib/features/chat/pi/runtime.js';
 import type { AuthoritySnapshot, ReadMode, WritePolicy } from '#lib/features/chat/pi/authority.js';
-import type { PreparedMutation, PublicationIntent, ReconciliationResult } from '#lib/features/chat/pi/publication.js';
+import { publicationIntent, type PreparedMutation, type ReconciliationResult } from '#lib/features/chat/pi/publication.js';
 import type { PiViewSnapshot } from '#lib/features/chat/ui/piConversationView.js';
 import type { NativeModelConfiguration } from '#lib/features/chat/pi/nativeProvider.js';
 import type { PiDiagnosticSnapshot } from '#lib/features/chat/pi/diagnostics.js';
@@ -469,7 +469,7 @@ export async function runPiSimulatorAcceptance() {
           return new Promise<void>(() => {});
         });
         try {
-          const task = await bridge.piPublicationTask(), value: PublicationIntent = { authorityId: (await authority()).authorityId, intentId: intent.intentId, target: intent.target };
+          const task = await bridge.piPublicationTask(), value = publicationIntent((await authority()).authorityId, { ...intent, reviewRequired: false });
           const id = await conversation.commit(tx => tx.createTask(task, value, { ownership: { kind: 'conversation' } }), context);
           await emit('publication-task-started', { taskId: id, intentId: intent.intentId }, command); taskStarted.resolve();
           const settled = await until(async () => {

@@ -53,7 +53,9 @@ describe('Rust-owned IPC contract fixtures', () => {
     await saveNoteSession(
       save.args!.title as string,
       save.args!.markdown as string,
-      save.args!.currentPath as string
+      save.args!.currentPath as string,
+      undefined,
+      save.args!.expectedNoteId as string
     );
     expect(invokeMock).toHaveBeenLastCalledWith('save_note', save.args);
 
@@ -61,7 +63,9 @@ describe('Rust-owned IPC contract fixtures', () => {
     await saveTaskNoteSession(
       taskSave.args!.title as string,
       taskSave.args!.markdown as string,
-      taskSave.args!.currentPath as string
+      taskSave.args!.currentPath as string,
+      undefined,
+      taskSave.args!.expectedNoteId as string
     );
     expect(invokeMock).toHaveBeenLastCalledWith(
       'save_task_note',
@@ -73,6 +77,15 @@ describe('Rust-owned IPC contract fixtures', () => {
     expect(invokeMock).toHaveBeenLastCalledWith(
       'clear_last_opened_note'
     );
+  });
+
+  it('keeps optional save identity compatible and sends null for a captured new draft', async () => {
+    const { saveNoteSession, saveTaskNoteSession } = await import('#lib/features/notepad/session/session.js');
+    invokeMock.mockResolvedValue(commandFixture.commands.save_note.result);
+    await saveNoteSession('Draft', 'Body', null, undefined, null);
+    expect(invokeMock).toHaveBeenLastCalledWith('save_note', { title: 'Draft', markdown: 'Body', currentPath: null, expectedNoteId: null });
+    await saveTaskNoteSession('Saved', 'Task body', '/vault/Saved.md');
+    expect(invokeMock).toHaveBeenLastCalledWith('save_task_note', { title: 'Saved', markdown: 'Task body', currentPath: '/vault/Saved.md' });
   });
 
   it('pins dirty-document task prepare argument and result names', async () => {

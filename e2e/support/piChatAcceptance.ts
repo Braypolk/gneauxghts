@@ -43,7 +43,10 @@ export async function configurePi(endpoint = LOCAL_PI_ENDPOINT, model = LOCAL_PI
 }
 export async function savePiFixtureNote(title: string, markdown: string, currentPath: string | null = null) {
   const root = await assertDisposable();
-  const note = await invokeNative<{ noteId: string; title: string; path: string; markdown: string }>('save_note', { title, markdown, currentPath });
+  const expectedNoteId = currentPath
+    ? (await invokeNative<{ noteId: string }>('read_note', { noteId: null, path: currentPath })).noteId
+    : null;
+  const note = await invokeNative<{ noteId: string; title: string; path: string; markdown: string }>('save_note', { title, markdown, currentPath, expectedNoteId });
   const withinVault = relative(realpathSync(join(root, 'documents/vault')), realpathSync(note.path));
   assert(withinVault !== '..' && !withinVault.startsWith('../') && !withinVault.startsWith('..\\'), 'Canonical note target must remain inside the exact generated fixture vault');
   await invokeNative('finalize_note_editing_window', { noteId: note.noteId });

@@ -54,39 +54,29 @@
   }
 
   async function saveKey() {
+    if (isSavingKey) return;
     const value = apiKey.trim();
     if (!value) {
       error = 'Enter an API key before saving.';
       return;
     }
-    isSavingKey = true;
-    error = null;
-    message = null;
-    try {
-      const status = await api.setApiKey(credentialProvider, value);
-      keyStatuses[credentialProvider] = status.configured;
-      apiKey = '';
-      revealKey = false;
-      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Compatible server'} API key saved securely on this device.`;
-    } catch (saveError) {
-      error = String(saveError);
-    } finally {
-      isSavingKey = false;
-    }
+    await updateKey(value);
   }
 
-  async function removeKey() {
+  async function updateKey(value: string) {
+    if (isSavingKey) return;
+    const provider = credentialProvider;
     isSavingKey = true;
     error = null;
     message = null;
     try {
-      const status = await api.setApiKey(credentialProvider, '');
-      keyStatuses[credentialProvider] = status.configured;
+      const status = await api.setApiKey(provider, value);
+      keyStatuses[provider] = status.configured;
       apiKey = '';
       revealKey = false;
-      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Compatible server'} API key removed.`;
-    } catch (removeError) {
-      error = String(removeError);
+      message = `${provider === 'openai' ? 'OpenAI' : 'Compatible server'} API key ${value ? 'saved securely on this device' : 'removed'}.`;
+    } catch (updateError) {
+      error = String(updateError);
     } finally {
       isSavingKey = false;
     }
@@ -144,6 +134,7 @@
           <select
             class="settings-control"
             bind:value={credentialProvider}
+            disabled={isSavingKey}
             onchange={() => {
               apiKey = '';
               revealKey = false;
@@ -172,6 +163,7 @@
             class="h-10 w-full rounded-xl border border-border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring [@media(any-pointer:coarse)]:h-11 [@media(any-pointer:coarse)]:pr-12"
             type={revealKey ? 'text' : 'password'}
             bind:value={apiKey}
+            disabled={isSavingKey}
             autocomplete="off"
             spellcheck="false"
             placeholder={keyConfigured ? 'Enter a replacement key' : credentialProvider === 'openai' ? 'sk-…' : 'Optional bearer token'}
@@ -183,6 +175,7 @@
             type="button"
             class="coarse-touch-target absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground [@media(any-pointer:coarse)]:right-0 [@media(any-pointer:coarse)]:top-0"
             aria-label={revealKey ? 'Hide API key' : 'Show API key'}
+            disabled={isSavingKey}
             onclick={() => revealKey = !revealKey}
           >
             {#if revealKey}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
@@ -201,7 +194,7 @@
             type="button"
             class="h-10 rounded-xl border border-border px-4 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
             disabled={isSavingKey}
-            onclick={() => void removeKey()}
+            onclick={() => void updateKey('')}
           >Remove</button>
         {/if}
       </div>

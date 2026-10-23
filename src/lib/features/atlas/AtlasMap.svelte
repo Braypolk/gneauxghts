@@ -79,6 +79,7 @@
     morphFrame = requestAnimationFrame(frame);
     return () => { if (morphFrame) cancelAnimationFrame(morphFrame); morphFrame = 0; };
   });
+  let visibleNodes = $derived(geometry.nodes.filter(mark => !query.trim() || matchingIds.has(mark.node.id)));
   let byId = $derived(new Map(geometry.nodes.map((mark) => [mark.node.id, mark])));
   let active = $derived(byId.get(activeId ?? ''));
   let origin = $derived(byId.get(browseOriginId ?? activeId ?? ''));
@@ -93,7 +94,7 @@
   let neighborhood = $derived(connections(focusId, minimumStrength));
   let relatedNodeIds = $derived(new Set([...(focusId ? [focusId] : []), ...neighborhood.links.flatMap((link) => [link.sourceId, link.targetId])]));
   // Quiet overview; exploring a note reveals its connections without a permanent web of edges.
-  let links = $derived(neighborhood.links);
+  let links = $derived(neighborhood.links.filter(link => !query.trim() || (matchingIds.has(link.sourceId) && matchingIds.has(link.targetId))));
   let routed = $derived(curvedConnections && !isMorphing ? routeConnections(targetGeometry, links, focusId) : { paths: new Map(), trunks: [] });
   // Spaced geography stays fixed; camera and label visibility never repack it.
 
@@ -142,7 +143,7 @@
   }
   function dotOpacity(node: AtlasNode) {
     if (node.id === activeId || node.id === hoveredId) return 1;
-    if (query.trim()) return matchingIds.has(node.id) ? 1 : activeId && relatedNodeIds.has(node.id) ? 0.85 : 0.18;
+    if (query.trim()) return 1;
     if (activeId) return relatedNodeIds.has(node.id) ? 0.9 : 0.18;
     // Unknown or old activity remains clearly visible; it does not mean never read.
     return 0.6 + 0.3 * attention(node);
@@ -153,7 +154,7 @@
   });
   // Names live in world coordinates: one camera transform scales the entire
   // layer, even when overview names are fully faded out. No per-frame title work.
-  let filenameLabels = $derived(geometry.nodes.filter((mark) => !activeId || relatedNodeIds.has(mark.node.id)).map((mark) => ({
+  let filenameLabels = $derived(visibleNodes.filter((mark) => !!query.trim() || !activeId || relatedNodeIds.has(mark.node.id)).map((mark) => ({
     ...mark, title: noteTitle(mark.node),
     labelY: mark.y + dotRadius(mark.node.id) + labelWorldSize + 3
   })));
@@ -392,7 +393,7 @@
 <section class="atlas-map" aria-label="Atlas map" data-map-revision={response.revision} data-map-moving={isMorphing}>
   <div class="workbench" bind:this={workbenchElement}>
   <div class="plot" bind:this={plotElement}>
-    <svg bind:this={svgElement} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Atlas dot map with all ${response.nodes.length} notes`} onpointerdown={startPan} onpointermove={movePan} onpointerup={stopPan} onpointercancel={stopPan}>
+    <svg bind:this={svgElement} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Atlas dot map with ${visibleNodes.length} of ${response.nodes.length} notes`} onpointerdown={startPan} onpointermove={movePan} onpointerup={stopPan} onpointercancel={stopPan}>
       <defs><clipPath id="atlas-map-clip"><rect width={width} height={height}/></clipPath></defs>
       <rect class="map-background" width={width} height={height} fill="transparent" pointer-events="all" aria-hidden="true"/>
       <g clip-path="url(#atlas-map-clip)">
@@ -417,7 +418,7 @@
             <path data-full-path={curvedConnections ? route?.path : undefined} data-trunk-id={route?.trunkId} data-link-source={link.sourceId} data-link-target={link.targetId} d={curvedConnections && !isMorphing ? (emphasized ? route?.path : route?.branch) : dotConnection(link)} fill="none" stroke={link.kind === 'wikilink' ? 'var(--color-foreground)' : 'color-mix(in srgb, #967aa9 65%, var(--color-foreground))'} vector-effect="non-scaling-stroke" stroke-width={emphasized ? 2.4 : 1.5} stroke-dasharray={link.kind === 'semantic' ? '6 5' : 'none'} opacity={emphasized ? 1 : 0.75}/>
           {/each}</g>
           <g class="graph-dots">
-            {#each geometry.nodes as mark (mark.node.id)}
+            {#each visibleNodes as mark (mark.node.id)}
               <g class="note-dot" role="button" tabindex="0" data-node-id={mark.node.id} data-root-id={mark.rootId} aria-label={`Pin ${mark.node.fileName || mark.node.title}`}
                 onmouseenter={() => hoveredId = mark.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = mark.node.id} onblur={() => hoveredId = null}
                 onclick={() => clickNode(mark.node)} ondblclick={() => void openNode(mark.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); if (event.key === 'Enter') void openNode(mark.node); else pin(mark.node); } }}>

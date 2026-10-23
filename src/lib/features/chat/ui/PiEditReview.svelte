@@ -5,6 +5,10 @@
   let { review, disabled = false, onDecision }: { review: EditReview; disabled?: boolean; onDecision: (decision: 'approved' | 'rejected') => Promise<unknown> } = $props();
   let deciding = $state(false);
   const changes = $derived(review.kind === 'edit' ? editReviewChanges(review.patch) : null);
+  function visiblePath(path: string) {
+    return path.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu,
+      character => `\\u{${character.codePointAt(0)!.toString(16).padStart(4, '0')}}`);
+  }
   function blankLines(parts: Array<{ text: string }>) {
     const text = parts.map(part => part.text).join('');
     return /^\n+$/.test(text) ? text.length : 0;
@@ -17,12 +21,18 @@
     try { await onDecision(decision); } finally { deciding = false; }
   }
 </script>
-<section aria-label={`${review.kind === 'create' ? 'Review creation of' : 'Review edit to'} ${review.title}`} class="edit-review" data-testid="pi-edit-review">
-  <h3>{review.kind === 'create' ? 'Create' : 'Changes to'} {review.title}</h3>
+<section aria-label={`${review.kind === 'create' ? 'Review creation of' : review.kind === 'rename' ? 'Review rename of' : 'Review edit to'} ${review.title}`} class="edit-review" data-testid="pi-edit-review">
+  <h3>{review.kind === 'create' ? 'Create' : review.kind === 'rename' ? 'Rename' : 'Changes to'} {review.title}</h3>
   {#if review.kind === 'create'}
     <p>Review this new note before saving it.</p>
     <p>Destination: {review.destination}</p>
     <div class="version text new-note" aria-label="New note content">{review.markdown}</div>
+  {:else if review.kind === 'rename'}
+    <p>Review the exact filename before renaming this saved note.</p>
+    <p class="rename-path" data-testid="pi-rename-path"><bdi dir="ltr">{visiblePath(review.sourcePath)}</bdi> → <bdi dir="ltr">{visiblePath(review.destinationPath)}</bdi></p>
+    {#if visiblePath(review.sourcePath) !== review.sourcePath || visiblePath(review.destinationPath) !== review.destinationPath}<p>Control characters in filenames are shown as Unicode escapes.</p>{/if}
+    <p>The note’s content and properties stay unchanged.</p>
+    <p>Note-identity links still open this note. Filename and path links may stop resolving; backlinks will not be changed.</p>
   {:else}
   <p>Review these changes before applying them to the saved note.</p>
   {#if changes}
@@ -63,8 +73,8 @@
   {/if}
   {/if}
   <div class="actions">
-    <button type="button" disabled={disabled || deciding || review.decision !== 'pending'} onclick={() => decide('rejected')}>{review.kind === 'create' ? 'Discard creation' : 'Discard edit'}</button>
-    <button type="button" disabled={disabled || deciding || review.decision !== 'pending'} onclick={() => decide('approved')}>{review.kind === 'create' ? 'Create note' : 'Apply edit'}</button>
+    <button type="button" disabled={disabled || deciding || review.decision !== 'pending'} onclick={() => decide('rejected')}>{review.kind === 'create' ? 'Discard creation' : review.kind === 'rename' ? 'Discard rename' : 'Discard edit'}</button>
+    <button type="button" disabled={disabled || deciding || review.decision !== 'pending'} onclick={() => decide('approved')}>{review.kind === 'create' ? 'Create note' : review.kind === 'rename' ? 'Rename note' : 'Apply edit'}</button>
   </div>
 </section>
 <style>
@@ -73,6 +83,7 @@
   p { margin-block: .5rem; font-size: .85rem; color: var(--muted-foreground); }
   pre { max-height: 22rem; overflow: auto; font-size: .8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
   .new-note { max-height: 28rem; overflow: auto; }
+  .rename-path { color: var(--foreground); overflow-wrap: anywhere; white-space: pre-wrap; }
   .changes { display: grid; gap: 1rem; margin-block: 1rem; max-height: 28rem; overflow: auto; }
   .comparison { display: grid; gap: .5rem; }
   .version { min-width: 0; padding: .75rem; border: 1px solid var(--border); border-radius: .4rem; }

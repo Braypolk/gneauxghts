@@ -401,3 +401,30 @@ it.each(['unknown_code', 'constructor', '__proto__'])('rejects unallowlisted %s 
     .rejects.toThrow('The model request could not complete. Start a new attempt.');
   expect(touched).not.toHaveBeenCalled();
 });
+
+
+it('preserves a curated HTTP model-loading failure through the real Pi parser', async () => {
+  native.invoke.mockImplementation(async (command, args) => {
+    if (command === 'pi_chat_model_configuration') return { contextWindow: 8192, maxTokens: 2048, images: false, tools: true, reasoningEffort: 'off', reasoningWireEffort: null };
+    if (command === 'pi_chat_validate_authority') return;
+    if (command === 'pi_chat_fetch') {
+      args.frames.onmessage({ type: 'headers', status: 400, content_type: 'application/json' });
+      args.frames.onmessage({ type: 'chunk', bytes: [...new TextEncoder().encode(JSON.stringify({ error: {
+        code: 'provider_model_memory', message: 'SECRET_MODEL_PATH_AND_PROMPT'
+      } }))] });
+      args.frames.onmessage({ type: 'done' }); return;
+    }
+    throw new Error('Unexpected native command');
+  });
+  const binding = { authorityId: 'authority', conversationId: 1, providerSessionId: 'session' };
+  const admit = vi.fn(async (_binding: NativeBinding, message: AssistantMessage) => message);
+  const models = createNativeModels(new Map([['session', binding]]), admit);
+  const model = await models.registerModel('local', 'fixture');
+  const result = await models.completeSimple(model, { messages: [{ role: 'user', content: 'A fictional garden idea', timestamp: 1 }] }, { sessionId: 'session', maxRetries: 0 });
+  expect(result.stopReason).toBe('error');
+  expect(result.errorMessage).toBe('The model server could not load the selected model into memory. Unload other models, reduce its context size, or choose a smaller model, then retry.');
+  const { isRetryableAssistantError } = await import('@earendil-works/pi-ai');
+  expect(isRetryableAssistantError(result)).toBe(false);
+  expect(JSON.stringify(result)).not.toContain('SECRET');
+  expect(admit).not.toHaveBeenCalled();
+});

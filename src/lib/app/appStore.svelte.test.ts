@@ -102,7 +102,7 @@ it('owns bundled Settings snapshot admission independently of the feature lifeti
   const loading = store.loadSettingsView();
   await store.stageVaultSelection('/newer');
   bundle.resolve(settingsViewFixture());
-  expect(await loading).toEqual({ historyHealth: settingsViewFixture().historyHealth,
+  expect(await loading).toEqual({
     semanticSettings: settingsViewFixture().semanticSettings, semanticDebug: settingsViewFixture().semanticDebug });
   expect(store.vaultInfo?.selectedPath).toBe('/newer');
   expect(store.semanticStatus).toEqual(settingsViewFixture().semanticStatus);

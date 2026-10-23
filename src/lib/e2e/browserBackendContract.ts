@@ -34,7 +34,7 @@ declare global {
       releaseHistoryRestore(): void;
       delayNextHistoryPage(delayMillis?: number): void;
       snapshot(): {
-        activeNoteId: string;
+        activeNoteId: string | null;
         notes: NoteFixture[];
         invocations: InvokeRecord[];
       };

@@ -4,13 +4,15 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { createNativeModels, type NativeBinding } from './nativeProvider';
 import { notesExtension } from './notes';
 import { editExtension } from './edit';
+import { renameExtension } from './rename';
+import { publicationExtension } from './publication';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke, Channel: class { onmessage = (_frame: unknown) => {}; } }));
 
 // Exercise extension registration → durable generation → real Pi provider serialization.
 // A flag on a tool alone does not prove the provider receives an enforceable schema.
-it.each(['openai', 'local'] as const)('offers all four tools with supported %s schema enforcement', async provider => {
+it.each(['openai', 'local'] as const)('offers all five tools with supported %s schema enforcement', async provider => {
   const requests: Record<string, any>[] = [];
   native.invoke.mockReset().mockImplementation(async (command, args) => {
     if (command === 'pi_chat_model_configuration') return { contextWindow: 8192, maxTokens: 2048, images: false, tools: true, reasoningEffort: 'off', reasoningWireEffort: null };
@@ -31,6 +33,8 @@ it.each(['openai', 'local'] as const)('offers all four tools with supported %s s
   const registry = createRegistry();
   registry.install(notesExtension(async () => 'authority'));
   registry.install(editExtension(async () => 'authority'));
+  registry.install(renameExtension(async () => 'authority'));
+  registry.install(publicationExtension());
   const harness = await Harness.open(new MemoryStorage(), { registry, models, settings: { retry: { enabled: false }, compaction: { enabled: false } } }, context);
   try {
     const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' }, agent: { model: { provider, modelId: model.id } } }, context);
@@ -38,8 +42,14 @@ it.each(['openai', 'local'] as const)('offers all four tools with supported %s s
     bindings.set(sessionId, { authorityId: 'authority', conversationId: conversation.id, providerSessionId: sessionId });
     expect((await (await conversation.submit({ type: 'input', content: 'Ready' }, context)).wait(context)).status).toBe('done');
     expect(requests).toHaveLength(1);
+    const prompt = provider === 'openai' ? requests[0].input.filter((message: any) => message.role === 'developer' || message.role === 'system').map((message: any) => message.content).join('\n') : requests[0].messages.filter((message: any) => message.role === 'system').map((message: any) => message.content).join('\n');
+    expect(prompt.match(/Never retry an uncertain effect as a new request/g)).toHaveLength(1);
+    expect(prompt).toContain('Before edit_note or rename_note, read_note and supply its exact noteId and source.sourceId');
+    expect(prompt).toContain('copy unique oldText');
+    expect(prompt).toContain('backlinks are not rewritten');
+    expect(prompt).not.toContain('reconcile uncertain effects through the existing request');
     const tools = requests[0].tools.map((tool: any) => provider === 'local' ? tool.function : tool);
-    expect(tools.map((tool: any) => tool.name).sort()).toEqual(['create_note', 'edit_note', 'read_note', 'search_notes']);
+    expect(tools.map((tool: any) => tool.name).sort()).toEqual(['create_note', 'edit_note', 'read_note', 'rename_note', 'search_notes']);
     for (const tool of tools) {
       expect(tool.parameters.additionalProperties).toBe(false);
       if (provider === 'openai') {
@@ -59,5 +69,8 @@ it.each(['openai', 'local'] as const)('offers all four tools with supported %s s
     expect(edit.required).toEqual(['noteId', 'expectedReadSourceId', 'edits']);
     expect(edit.properties.edits.items.required).toEqual(['oldText', 'newText']);
     if (provider === 'openai') expect(edit.properties.edits.items.additionalProperties).toBe(false);
+    const rename = schema('rename_note');
+    expect(rename.required).toEqual(['noteId', 'expectedReadSourceId', 'title']);
+    expect(Object.keys(rename.properties)).toEqual(['noteId', 'expectedReadSourceId', 'title']);
   } finally { await harness.close(context); }
 });

@@ -9,6 +9,23 @@ import { createEmptySessionSnapshot } from '#lib/features/notepad/session/sessio
 import { createWorkspacePersistenceService } from './workspacePersistenceService';
 
 describe('workspacePersistenceService', () => {
+  it.each(['flushAllForNavigation', 'flushAllForBackground'] as const)('settles recovery work before completing %s without changing canonical outcome', async operation => {
+    let release!: () => void;
+    const recovery = new Promise<void>(resolve => { release = resolve; });
+    const complete = vi.fn();
+    const service = createWorkspacePersistenceService({ getDocuments: () => [], flushAllPaneCursorSaves: vi.fn(),
+      cancelPendingAutosave: vi.fn(), enqueueSave: vi.fn(), flushRecoveryCopies: () => recovery });
+    const pending = service[operation]().then(complete);
+    await Promise.resolve(); expect(complete).not.toHaveBeenCalled(); release(); await pending; expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it('a recovery failure does not replace the canonical save failure', async () => {
+    const document = createNoteDraftState(); updateDocumentMarkdown(document, 'unsaved');
+    const service = createWorkspacePersistenceService({ getDocuments: () => [document], flushAllPaneCursorSaves: vi.fn(),
+      cancelPendingAutosave: vi.fn(), enqueueSave: async () => { throw new Error('Canonical failure'); },
+      flushRecoveryCopies: async () => { throw new Error('Recovery failure'); } });
+    await expect(service.flushAllForNavigation()).rejects.toThrow('Canonical failure');
+  });
   it('background saves independent notes while retaining conflicts and failed edits', async () => {
     const failed = createNoteDraftState();
     const healthy = createNoteDraftState();

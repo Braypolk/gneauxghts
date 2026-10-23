@@ -15,10 +15,12 @@ import {
   documentHasUnresolvedConflict,
   externalDocumentSnapshotFromCommittedNote,
   dispatchDocumentExternalSync,
-  type NoteDraftState
+  type NoteDraftState,
+  type DocumentWorkingContent
 } from './documentState';
 import type { ForgottenNote, TagEdit } from '#lib/features/notepad/session/session.js';
 import type { NoteSession } from '#lib/features/notepad/model/types.js';
+import type { DraftBackup, DraftContent } from '../recovery/draftBackup';
 import {
   adoptCommittedDocument,
   findOpenDocument,
@@ -35,12 +37,16 @@ import {
   isDocumentPublicationActive
 } from './documentPublicationAdmission';
 
-export interface AgentPublicationTarget { noteId: string | null; path: string }
-export interface AgentPublicationReceipt extends AgentPublicationTarget {
+export interface AgentPublicationTarget { noteId: string | null; path: string; destinationPath?: string }
+export interface AgentPublicationReceipt {
+  noteId: string | null;
+  path: string;
   markdown: string;
   commitWarning?: CommittedMutationWarning;
 }
 export interface AgentPublicationLease {
+  /** Reconciliation may freeze dirty buffers; a new effect still requires a clean editor. */
+  assertMutationReady(): void;
   adopt(receipt: AgentPublicationReceipt): Promise<'adopted' | 'notOpen' | 'conflict'>;
   captureCanonical(): Promise<void>;
   /** An unacknowledged native settlement keeps the owner protected. */
@@ -89,29 +95,52 @@ export function createDocumentEditingService<TPaneId extends string>(
   deps: DocumentEditingServiceDeps<TPaneId>
 ) {
   let retainedPublicationRelease: (() => void) | null = null;
+  let retainedPublication: { key: string; run<T>(effect: (lease: AgentPublicationLease) => Promise<T>): Promise<T> } | null = null;
 
   async function withAgentPublication<T>(
     target: AgentPublicationTarget,
     effect: (lease: AgentPublicationLease) => Promise<T>
   ): Promise<T> {
+    return withPublicationLease(target, effect, false);
+  }
+
+  async function withAgentPublicationReconciliation<T>(target: AgentPublicationTarget, effect: (lease: AgentPublicationLease) => Promise<T>) {
+    if (!target.noteId || !target.destinationPath) throw new DocumentPublicationBlocked('Reconciled rename admission requires both locations and the retained note identity.');
+    return withPublicationLease(target, effect, true);
+  }
+
+  async function withPublicationLease<T>(
+    target: AgentPublicationTarget,
+    effect: (lease: AgentPublicationLease) => Promise<T>,
+    reconciling: boolean
+  ): Promise<T> {
+    const targetKey = JSON.stringify([target.noteId, target.path, target.destinationPath ?? null]);
+    if (retainedPublication) {
+      if (!reconciling || retainedPublication.key !== targetKey) throw new DocumentPublicationBlocked();
+      return retainedPublication.run(effect);
+    }
     const matchesTarget = (document: NoteDraftState) =>
-      Boolean(target.noteId && getDocumentNoteId(document) === target.noteId) || getDocumentPath(document) === target.path;
+      Boolean(target.noteId && getDocumentNoteId(document) === target.noteId) ||
+      getDocumentPath(document) === target.path ||
+      Boolean(target.destinationPath && getDocumentPath(document) === target.destinationPath);
     const targets = Object.values(deps.state.documentsByHandle).filter(matchesTarget);
     const identities = targets.map(document => ({ document, noteId: getDocumentNoteId(document), path: getDocumentPath(document) }));
+    const hasReadyBuffer = (document: NoteDraftState) => {
+      const root = documentRegistry.get(document.handle)?.resources()?.runtime;
+      return documentHasCleanBuffer(document) && !documentHasUnresolvedConflict(document) &&
+        !deps.isTitleEditing(document) && !deps.isApplyingProgrammaticUpdate(document) &&
+        ['idle', 'saving'].includes(document.operation.kind) &&
+        (!root || root.body.equals(document.working.body));
+    };
     const requireReady = () => {
-      if (deps.isWorkspaceOperationPending?.()) throw new DocumentPublicationBlocked('Wait for the current workspace operation to finish.');
+      if (!reconciling && deps.isWorkspaceOperationPending?.()) throw new DocumentPublicationBlocked('Wait for the current workspace operation to finish.');
       for (const captured of identities) {
         const { document } = captured;
         if (deps.state.documentsByHandle[document.handle] !== document ||
           getDocumentNoteId(document) !== captured.noteId || getDocumentPath(document) !== captured.path ||
-          !documentHasCleanBuffer(document) || documentHasUnresolvedConflict(document) ||
-          deps.isTitleEditing(document) ||
-          deps.isApplyingProgrammaticUpdate(document) ||
-          !['idle', 'saving'].includes(document.operation.kind)) {
+          (!reconciling && !hasReadyBuffer(document))) {
           throw new DocumentPublicationBlocked('Save or resolve the existing editor changes before applying this mutation.');
         }
-        const root = documentRegistry.get(document.handle)?.resources()?.runtime;
-        if (root && !root.body.equals(document.working.body)) throw new DocumentPublicationBlocked('The live editor and saved document differ.');
       }
     };
     requireReady();
@@ -119,14 +148,101 @@ export function createDocumentEditingService<TPaneId extends string>(
     const releaseRoots: Array<() => void> = [];
     let retained = false;
     let released = false;
+    let enteredEffect = false;
     const release = () => {
       if (released) return;
       released = true;
       for (const releaseRoot of releaseRoots.reverse()) releaseRoot();
       admission.release();
       retainedPublicationRelease = null;
+      retainedPublication = null;
       deps.publicationAdmissionChanged?.(false);
     };
+    const lease: AgentPublicationLease = {
+      assertMutationReady() {
+        requireReady();
+        if (deps.isWorkspaceOperationPending?.() || targets.some(document => !hasReadyBuffer(document) || document.operation.kind !== 'idle')) {
+          throw new DocumentPublicationBlocked('Save or resolve the existing editor changes before applying this mutation.');
+        }
+      },
+      retainUntilSettled() {
+        retained = true;
+        retainedPublicationRelease = release;
+        retainedPublication = { key: targetKey, run: runEffect };
+      },
+      async captureCanonical() {
+        for (const captured of identities) {
+          if (!captured.noteId || !captured.path) continue;
+          try {
+            const current = await (deps.readPublicationSession ?? readNoteSession)(captured.noteId, captured.path);
+            dispatchDocumentExternalSync(captured.document, { type: 'externalCaptured', external: {
+              kind: 'snapshot', source: 'watcher', document: externalDocumentSnapshotFromCommittedNote(current)
+            } });
+          } catch (error) {
+            // Settlement without a canonical observation must not expose a stale baseline to autosave.
+            lease.retainUntilSettled(); throw error;
+          }
+        }
+      },
+      async adopt(receipt) {
+        if (released || receipt.path !== (target.destinationPath ?? target.path) || (target.noteId && receipt.noteId !== target.noteId)) {
+          if (target.destinationPath && !released) lease.retainUntilSettled();
+          throw new DocumentPublicationBlocked('The committed target differs from publication admission.');
+        }
+        // Destination buffers are protected by the lease, but a different
+        // identity must never be turned into the renamed source document.
+        const adoptionTargets = target.destinationPath
+          ? targets.filter(document => getDocumentNoteId(document) === target.noteId)
+          : targets;
+        if (!adoptionTargets.length) return 'notOpen';
+        let current: NoteSession;
+        try { current = await (deps.readPublicationSession ?? readNoteSession)(receipt.noteId, receipt.path); }
+        catch (error) { if (target.destinationPath) lease.retainUntilSettled(); throw error; }
+        const matchesReceipt = current.noteId === receipt.noteId && current.path === receipt.path && current.markdown === receipt.markdown;
+        if (!matchesReceipt && !target.destinationPath) {
+          for (const document of adoptionTargets) dispatchDocumentExternalSync(document, {
+            type: 'externalCaptured', external: {
+              kind: 'snapshot', source: 'watcher', document: externalDocumentSnapshotFromCommittedNote(current)
+            }
+          });
+          return 'conflict';
+        }
+        if (current.noteId !== receipt.noteId || current.path !== receipt.path) {
+          lease.retainUntilSettled();
+          throw new DocumentPublicationBlocked('The renamed note could not be located under its committed identity.');
+        }
+        requireReady();
+        let conflict = false;
+        for (const document of adoptionTargets) admission.adopt(document, () => {
+          const preserveWorking = Boolean(target.destinationPath && (!matchesReceipt || !hasReadyBuffer(document)));
+          const untouchedTitle = !deps.isTitleEditing(document) && document.working.title === document.savedBaseline?.content.title;
+          if (preserveWorking) {
+            const root = documentRegistry.get(document.handle)?.resources()?.runtime;
+            if (root && !root.body.equals(document.working.body)) updateDocumentBody(document, root.body);
+          }
+          adoptCommittedDocument(deps.state, document, { ...current, commitWarning: receipt.commitWarning }, { preserveWorking });
+          if (preserveWorking) {
+            if (untouchedTitle) updateDocumentTitle(document, current.title);
+            dispatchDocumentExternalSync(document, { type: 'externalCaptured', external: {
+              kind: 'snapshot', source: 'watcher', document: externalDocumentSnapshotFromCommittedNote(current)
+            } });
+            conflict = true;
+          }
+          // A filename-only effect leaves pane selections and shared Undo
+          // intact; it does not publish a new authored content state.
+          if (!target.destinationPath) resetCommittedRuntime(document, document.working.body);
+        });
+        refreshDerivedViews();
+        return conflict ? 'conflict' : 'adopted';
+      }
+    };
+    async function runEffect<TResult>(effect: (lease: AgentPublicationLease) => Promise<TResult>): Promise<TResult> {
+      retained = false;
+      let ready = false;
+      try { requireReady(); ready = true; return await effect(lease); }
+      catch (error) { if (reconciling && !ready) lease.retainUntilSettled(); throw error; }
+      finally { if (!retained) release(); }
+    }
     try {
       // Freeze before awaiting pending writes; their canonical adoption may finish.
       for (const document of targets) {
@@ -135,48 +251,23 @@ export function createDocumentEditingService<TPaneId extends string>(
         runtime.clearSaveTimer();
       }
       deps.publicationAdmissionChanged?.(true);
-      await Promise.all(targets.map(document => documentRegistry.get(document.handle)!.getSaveQueue()));
+      const saves = await Promise.allSettled(targets.map(document => documentRegistry.get(document.handle)!.getSaveQueue()));
+      for (const save of saves) {
+        // A queued save can be refused by this lease, or an already-started
+        // save can fail its native location guard after the earlier move.
+        // Both have settled; read-only proof still needs to locate that move.
+        if (save.status === 'rejected' && !reconciling) throw save.reason;
+      }
       requireReady();
-      if (targets.some(document => document.operation.kind !== 'idle')) throw new DocumentPublicationBlocked('An editor operation has not settled.');
-      return await effect({
-        retainUntilSettled() { retained = true; retainedPublicationRelease = release; },
-        async captureCanonical() {
-          for (const captured of identities) {
-            if (!captured.noteId || !captured.path) continue;
-            try {
-              const current = await (deps.readPublicationSession ?? readNoteSession)(captured.noteId, captured.path);
-              dispatchDocumentExternalSync(captured.document, { type: 'externalCaptured', external: {
-                kind: 'snapshot', source: 'watcher', document: externalDocumentSnapshotFromCommittedNote(current)
-              } });
-            } catch (error) {
-              // Settlement without a canonical observation must not expose a stale baseline to autosave.
-              retained = true; retainedPublicationRelease = release; throw error;
-            }
-          }
-        },
-        async adopt(receipt) {
-          if (released || receipt.path !== target.path || (target.noteId && receipt.noteId !== target.noteId)) {
-            throw new DocumentPublicationBlocked('The committed target differs from publication admission.');
-          }
-          if (!targets.length) return 'notOpen';
-          const current = await (deps.readPublicationSession ?? readNoteSession)(receipt.noteId, receipt.path);
-          if (current.noteId !== receipt.noteId || current.path !== receipt.path || current.markdown !== receipt.markdown) {
-            for (const document of targets) dispatchDocumentExternalSync(document, {
-              type: 'externalCaptured', external: {
-                kind: 'snapshot', source: 'watcher', document: externalDocumentSnapshotFromCommittedNote(current)
-              }
-            });
-            return 'conflict';
-          }
-          requireReady();
-          for (const document of targets) admission.adopt(document, () => {
-            adoptCommittedDocument(deps.state, document, { ...current, commitWarning: receipt.commitWarning });
-            resetCommittedRuntime(document, document.working.body);
-          });
-          refreshDerivedViews();
-          return 'adopted';
-        }
-      });
+      if (targets.some(document => document.operation.kind !== 'idle' &&
+        !(reconciling && document.operation.kind === 'failed' && document.operation.failedOperation === 'saving'))) {
+        throw new DocumentPublicationBlocked('An editor operation has not settled.');
+      }
+      enteredEffect = true;
+      return await runEffect(effect);
+    } catch (error) {
+      if (reconciling && !enteredEffect) lease.retainUntilSettled();
+      throw error;
     } finally { if (!retained) release(); }
   }
 
@@ -209,6 +300,7 @@ export function createDocumentEditingService<TPaneId extends string>(
   }
 
   function captureSave(document: NoteDraftState): DocumentSaveCapture {
+    assertDocumentMutationAdmitted(document);
     const body = document.working.body;
     return {
       document,
@@ -311,8 +403,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     document: NoteDraftState,
     forgotten: ForgottenNote
   ) {
-    assertDocumentMutationAdmitted(document);
-    const result = restoreTransientDraftToDocument(document, {
+    return restoreTransientContent(document, {
       title: forgotten.title,
       ...(forgotten.tags ? { tags: [...forgotten.tags] } : {}),
       ...(forgotten.tagsError ? { tagsError: forgotten.tagsError } : {}),
@@ -321,6 +412,51 @@ export function createDocumentEditingService<TPaneId extends string>(
       noteId: forgotten.currentNoteId,
       path: forgotten.currentNotePath
     });
+  }
+
+  function restoreRecoveryDraft(document: NoteDraftState, backup: DraftBackup) {
+    assertDocumentMutationAdmitted(document);
+    const noteId = getDocumentNoteId(document), path = getDocumentPath(document);
+    if (backup.sourceNoteId ? noteId !== backup.sourceNoteId : noteId || path || backup.sourcePath) {
+      throw new Error('Recovery requires the original note or an empty never-saved draft.');
+    }
+    if (document.operation.kind !== 'idle' || deps.isTitleEditing(document) ||
+      document.canonicalCollision || documentHasUnresolvedConflict(document)) {
+      throw new Error('Finish the current editor operation before recovering work.');
+    }
+    const matches = (saved: DraftContent, content: DocumentWorkingContent) =>
+      saved.title === content.title && content.body.equals(DocumentBody.fromMarkdown(saved.markdown)) &&
+      tagsEqual(saved.tags, content.tags) && (saved.tagsError ?? null) === (content.tagsError ?? null);
+    // A save may have committed just before the interruption. Do not replay it.
+    if (matches(backup, document.working)) return;
+    if (!documentHasCleanBuffer(document)) throw new Error('Save or resolve current edits before recovering earlier work.');
+    const baseline = document.savedBaseline;
+    if (backup.sourceNoteId && !baseline) throw new Error('The original saved note must be opened before recovery.');
+    const warning = document.publication.warning;
+    const changed = Boolean(backup.sourceNoteId && (!backup.baseline || !baseline || !matches(backup.baseline, baseline.content)));
+    const result = restoreTransientDraftToDocument(document, {
+      title: backup.title, body: DocumentBody.fromMarkdown(backup.markdown), tags: [...backup.tags],
+      ...(backup.tagsError ? { tagsError: backup.tagsError } : {})
+    }, { noteId, path });
+    document.savedBaseline = baseline;
+    document.publication.warning = warning;
+    synchronizeDocumentCanonicalLookup(deps.state, document);
+    restoreTransientRuntime(document, document.working.body.toMarkdown());
+    if (changed && baseline) dispatchDocumentExternalSync(document, {
+      type: 'externalCaptured', external: { kind: 'snapshot', source: 'recovery',
+        document: { content: baseline.content, identity: baseline.identity, savedBaseline: baseline } }
+    });
+    // Uncertain/changed saved bases require the ordinary conflict choice first.
+    if (!changed) deps.scheduleAutosave(document);
+    deps.clearRecentlyForgotten();
+    refreshDerivedViews();
+    return result;
+  }
+
+  function restoreTransientContent(document: NoteDraftState, content: DocumentWorkingContent,
+    identity: { noteId: string | null; path: string | null }) {
+    assertDocumentMutationAdmitted(document);
+    const result = restoreTransientDraftToDocument(document, content, identity);
     synchronizeDocumentCanonicalLookup(deps.state, document);
     restoreTransientRuntime(document, document.working.body.toMarkdown());
     deps.scheduleAutosave(document);
@@ -427,6 +563,7 @@ export function createDocumentEditingService<TPaneId extends string>(
 
   return {
     withAgentPublication,
+    withAgentPublicationReconciliation,
     isAgentPublicationActive: () => isDocumentPublicationActive(deps.state),
     releaseSettledAgentPublication,
     captureSave,
@@ -434,6 +571,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     adoptVersionRestore,
     adoptCleanExternalRefresh,
     restoreTransientForgotten,
+    restoreRecoveryDraft,
     resolveUsingExternal,
     recordUserEdit,
     replaceMarkdown,

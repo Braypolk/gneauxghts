@@ -92,6 +92,26 @@ describe("persistenceController", () => {
     });
   });
 
+  it('captures draft observation immediately and reports canonical adoption with its immutable capture', async () => {
+    const note = dirtyNote(); const onDraftChanged = vi.fn(), onSaved = vi.fn();
+    const controller = controllerFor(note, { onDraftChanged, onSaved,
+      saveNoteSession: vi.fn().mockResolvedValue(committed({ title: 'Draft', markdown: 'draft body' })) });
+    controller.scheduleAutosave(note);
+    expect(onDraftChanged).toHaveBeenCalledWith(note); expect(onSaved).not.toHaveBeenCalled();
+    await controller.enqueueSave(note);
+    expect(onSaved).toHaveBeenCalledWith(note, expect.objectContaining({ document: note, title: 'Draft' }));
+    expect(controller.hasCleanBuffer(note)).toBe(true);
+  });
+
+  it('an advisory recovery or title hook failure cannot reject an authoritative save', async () => {
+    const note = dirtyNote();
+    const controller = controllerFor(note, { onDraftChanged: () => { throw new Error('Recovery offline'); },
+      onSaved: () => { throw new Error('Title offline'); },
+      saveNoteSession: vi.fn().mockResolvedValue(committed({ title: 'Draft', markdown: 'draft body' })) });
+    expect(() => controller.scheduleAutosave(note)).not.toThrow();
+    await expect(controller.enqueueSave(note)).resolves.toBeUndefined(); expect(controller.hasCleanBuffer(note)).toBe(true);
+  });
+
   afterEach(async () => {
     const ownedRuntimes = [...documentRegistry.values()].filter(
       (runtime) => !existingRuntimes.has(runtime)
@@ -123,8 +143,24 @@ describe("persistenceController", () => {
     const saveNoteSession = vi.fn().mockResolvedValue(committed({ tags: ['new'] }));
     const controller = controllerFor(note, { saveNoteSession, documentEditing: editing });
     await controller.enqueueSave(note);
-    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Saved', 'saved body', '/vault/Saved.md', { previous: ['old'], tags: ['new'] });
+    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Saved', 'saved body', '/vault/Saved.md', { previous: ['old'], tags: ['new'] }, 'note-id');
     expect(controller.hasCleanBuffer(note)).toBe(true);
+  });
+
+  it('binds a save to its captured identity even if the document moves before IPC starts', async () => {
+    const note = dirtyNote();
+    const editing = editingServiceFor(note);
+    const captureSave = editing.captureSave;
+    vi.spyOn(editing, 'captureSave').mockImplementation(document => {
+      const capture = captureSave(document);
+      document.identity = { kind: 'persisted', noteId: 'another-note', path: '/vault/Another.md' };
+      return capture;
+    });
+    const failure = new Error('This note moved. Reopen its saved location before saving.');
+    const saveNoteSession = vi.fn().mockRejectedValue(failure);
+    await expect(controllerFor(note, { saveNoteSession, documentEditing: editing }).enqueueSave(note)).rejects.toBe(failure);
+    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Draft', 'draft body', '/vault/Saved.md', undefined, 'note-id');
+    expect(getDocumentMarkdown(note)).toBe('draft body');
   });
 
   it("flushes a backgrounded note through its real save queue before the autosave timer", async () => {
@@ -142,7 +178,7 @@ describe("persistenceController", () => {
 
     await workspace.flushAllForBackground();
 
-    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Draft', 'draft body', '/vault/Saved.md');
+    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Draft', 'draft body', '/vault/Saved.md', undefined, 'note-id');
     expect(controller.hasCleanBuffer(note)).toBe(true);
     await vi.advanceTimersByTimeAsync(1000);
     expect(saveNoteSession).toHaveBeenCalledOnce();
@@ -168,6 +204,8 @@ describe("persistenceController", () => {
       "Draft",
       "draft body",
       "/vault/Saved.md",
+      undefined,
+      "note-id",
     );
     expect(note.operation.kind).toBe("idle");
     expect(controller.hasCleanBuffer(note)).toBe(true);
@@ -206,6 +244,8 @@ describe("persistenceController", () => {
       "Draft",
       "task body",
       "/vault/Saved.md",
+      undefined,
+      "note-id",
     );
     expect(saveTaskNoteSession).toHaveBeenCalledTimes(1);
     expect(controller.hasCleanBuffer(note)).toBe(true);
@@ -374,6 +414,8 @@ describe("persistenceController", () => {
     expect(saveNoteSession).toHaveBeenCalledWith(
       "Background draft",
       "body",
+      null,
+      undefined,
       null,
     );
     expect(markNoteOpened).not.toHaveBeenCalled();
@@ -601,7 +643,7 @@ describe("persistenceController", () => {
     const departure = workspace.flushAllForNavigation().then(navigated).catch((error: Error) => error.message);
     resolveFirst(committed({ title: 'Draft', markdown: 'first', }));
     await vi.advanceTimersByTimeAsync(0);
-    expect(saveNoteSession).toHaveBeenNthCalledWith(2, 'Draft', 'newest typing', '/vault/Saved.md');
+    expect(saveNoteSession).toHaveBeenNthCalledWith(2, 'Draft', 'newest typing', '/vault/Saved.md', undefined, 'note-id');
     expect(getDocumentNoteId(note)).toBe('note-id'); expect(navigated).not.toHaveBeenCalled();
     expect(controller.hasCleanBuffer(note)).toBe(false);
     if (failFollowup) rejectSecond(new Error('History became unavailable'));

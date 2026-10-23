@@ -505,7 +505,7 @@ fn configure_subscription_body(object: &mut serde_json::Map<String, Value>) -> D
         if item["type"] == "function_call"
             && matches!(
                 item["name"].as_str(),
-                Some("search_notes" | "read_note" | "edit_note" | "create_note")
+                Some("search_notes" | "read_note" | "edit_note" | "create_note" | "rename_note")
             )
         {
             item["namespace"] = "gneauxghts_notes".into();
@@ -577,6 +577,17 @@ pub(crate) async fn pi_chat_fetch(
         .map_err(|_| transport_error("invalid_request", "Invalid inference JSON."))?;
     configure_body(&mut body, &provider, &model, &config)?;
     authority.validate_lease(&lease)?;
+    run_fetch(&app, id, lease, config, body, frames).await
+}
+async fn run_fetch(
+    app: &tauri::AppHandle,
+    id: String,
+    lease: AuthorityLease,
+    config: RequestConfiguration,
+    body: Value,
+    frames: Channel<Frame>,
+) -> DomainResult<()> {
+    app.state::<AuthorityStore>().validate_lease(&lease)?;
     let token = CancellationToken::new();
     {
         let transport = app.state::<NativeTransport>();
@@ -606,12 +617,12 @@ pub(crate) async fn pi_chat_fetch(
         requests.active.insert(
             id.clone(),
             ActiveRequest {
-                authority_id,
+                authority_id: lease.snapshot.authority_id.clone(),
                 token: token.clone(),
             },
         );
     }
-    let operation = dispatch(&app, &lease, &config, &body, &frames);
+    let operation = dispatch(app, &lease, &config, &body, &frames);
     let result = tokio::select! {_ = token.cancelled()=>Err(transport_error("cancelled","Native inference cancelled")), result=operation=>result};
     let transport = app.state::<NativeTransport>();
     if let Ok(mut requests) = transport.requests.lock() {
@@ -687,6 +698,31 @@ fn provider_http_failure(status: u16, bytes: &[u8]) -> DomainError {
             "The model server is temporarily unavailable.",
         );
     }
+    // Local servers can reject JIT model loading with HTTP 400. This is not an
+    // invalid conversation or a transient network failure. Keep model paths,
+    // prompts and server diagnostics behind this fixed recovery category.
+    if (400..500).contains(&status)
+        && [
+            "failed to load",
+            "error loading",
+            "unable to load",
+            "could not load",
+        ]
+        .iter()
+        .any(|phrase| message.contains(phrase))
+    {
+        return if message.contains("memory") || message.contains("vram") {
+            transport_error(
+                "provider_model_memory",
+                "The model server could not load the model into memory.",
+            )
+        } else {
+            transport_error(
+                "provider_model_load",
+                "The model server could not load the selected model.",
+            )
+        };
+    }
     transport_error(
         "provider_http",
         &format!("The model server rejected the request (HTTP {status})."),
@@ -741,7 +777,7 @@ async fn dispatch(
                 let _ = crate::chatgpt_auth::recover_rejected_access(app, rejected).await;
             }
         }
-        app.state::<AuthorityStore>().validate_lease(lease)?;
+        app.state::<AuthorityStore>().validate_lease(&lease)?;
         let message = match failure.code.as_str() {
             "provider_context_overflow" => "prompt is too long",
             "provider_limit" => "insufficient_quota",
@@ -776,8 +812,7 @@ async fn dispatch(
     // The request already requires streaming. Some subscription responses omit
     // Content-Type despite carrying valid SSE. Forward the actual header and
     // bytes; Pi's provider parser validates events and terminal completion.
-    let authority = app.state::<AuthorityStore>();
-    authority.validate_lease(lease)?;
+    app.state::<AuthorityStore>().validate_lease(&lease)?;
     frames
         .send(Frame::Headers {
             status,
@@ -788,14 +823,14 @@ async fn dispatch(
     while let Some(chunk) = stream.next().await {
         let bytes =
             chunk.map_err(|_| transport_error("stream", "Native provider stream failed"))?;
-        authority.validate_lease(lease)?;
+        app.state::<AuthorityStore>().validate_lease(&lease)?;
         frames
             .send(Frame::Chunk {
                 bytes: bytes.to_vec(),
             })
             .map_err(|_| transport_error("disconnected", "WebView disconnected."))?;
     }
-    authority.validate_lease(lease)?;
+    app.state::<AuthorityStore>().validate_lease(&lease)?;
     frames
         .send(Frame::Done)
         .map_err(|_| transport_error("disconnected", "WebView disconnected."))?;
@@ -899,6 +934,17 @@ mod tests {
         assert_eq!(body["input"][1]["namespace"], "gneauxghts_notes");
         assert_eq!(body["input"][2]["output"], "note text");
         assert_eq!(body["reasoning"]["effort"], "high");
+    }
+    #[test]
+    fn rename_tool_continuations_use_the_same_subscription_namespace() {
+        let mut configuration = request_configuration(None, "standard", true);
+        configuration.subscription = true;
+        let mut body = json!({"model":"m", "stream":true, "input":[{"type":"function_call", "name":"rename_note", "call_id":"rename-1", "arguments":"{}"}]});
+        configure_body(&mut body, "openai", "m", &configuration).unwrap();
+        assert_eq!(body["input"][0]["namespace"], "gneauxghts_notes");
+        configuration.subscription = false;
+        configure_body(&mut body, "openai", "m", &configuration).unwrap();
+        assert!(body["input"][0].get("namespace").is_none());
     }
     #[test]
     fn hosted_outgoing_reasoning_and_tier_use_current_native_settings() {
@@ -1048,6 +1094,39 @@ mod tests {
         let rejected = provider_http_failure(401, br#"{"error":{"message":"secret credential"}}"#);
         assert_eq!(rejected.code, "credential");
         assert!(!rejected.message.contains("secret"));
+    }
+    #[test]
+    fn model_load_failures_are_terminal_actionable_categories_without_server_details() {
+        for (message, expected) in [
+            (
+                "Failed to load model: insufficient memory SECRET_PATH",
+                "provider_model_memory",
+            ),
+            (
+                "Error loading model: VRAM allocation failed SECRET_PATH",
+                "provider_model_memory",
+            ),
+            ("Unable to load model SECRET_PATH", "provider_model_load"),
+            ("Invalid model parameter SECRET_PATH", "provider_http"),
+        ] {
+            let failure = provider_http_failure(
+                400,
+                &serde_json::to_vec(&json!({"error": message})).unwrap(),
+            );
+            assert_eq!(failure.code, expected);
+            assert!(!failure.message.contains("SECRET"));
+        }
+        // Server/credential recovery has precedence over echoed diagnostic text.
+        for status in [408, 503] {
+            assert_eq!(
+                provider_http_failure(status, br#"{"error":"failed to load memory"}"#).code,
+                "provider_transient"
+            );
+        }
+        assert_eq!(
+            provider_http_failure(401, br#"{"error":"failed to load memory"}"#).code,
+            "credential"
+        );
     }
     #[test]
     fn last_known_capacity_survives_unload_restart_and_refresh() {

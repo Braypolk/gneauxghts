@@ -34,6 +34,9 @@ pub(crate) async fn search_media(
     app: tauri::AppHandle,
     query: Option<String>,
     image_base64: Option<String>,
+    include_passages: Option<bool>,
+    include_images: Option<bool>,
+    modified_since_millis: Option<u64>,
 ) -> Result<Vec<MediaSearchResult>, String> {
     if image_base64.is_none() && query.as_ref().is_none_or(|text| text.trim().is_empty()) {
         return Err("Supply a text query, an image, or both.".into());
@@ -64,6 +67,7 @@ pub(crate) async fn search_media(
             .iter()
             .filter(|(_, note)| {
                 note.document_kind == crate::note::DocumentKind::Note
+                    && modified_since_millis.is_none_or(|cutoff| note.modified_millis >= cutoff)
                     && parsed.as_ref().is_none_or(|q| q.matches(&note.tags))
             })
             .map(|(p, _)| p.to_string_lossy().into_owned())
@@ -77,6 +81,8 @@ pub(crate) async fn search_media(
                     image_bytes.as_deref(),
                     Some(&allowed),
                     &root,
+                    include_passages.unwrap_or(true),
+                    include_images.unwrap_or(true),
                 )?;
                 let image_count = images.len();
                 let mut results = images

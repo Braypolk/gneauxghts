@@ -73,6 +73,180 @@ describe('NotepadSearchStore', () => {
     });
   }
 
+  it('selects independent result channels before their result limits', async () => {
+    const image = { kind: 'image', assetName: 'match.png' };
+    invokeMock.mockResolvedValue([image]);
+    searchNotesMock.mockResolvedValue([result('Note')]);
+    const store = createStore();
+    store.searchQuery = 'idea';
+
+    await store.handleResultTypeChange('notes');
+    expect(searchNotesMock).toHaveBeenCalledOnce();
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(store.imageResults).toEqual([]);
+
+    await store.handleResultTypeChange('images');
+    expect(searchNotesMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', {
+      query: 'idea', imageBase64: null, includePassages: false
+    });
+    expect(store.searchResults).toEqual([]);
+    expect(store.imageResults).toEqual([image]);
+
+    await store.handleResultTypeChange('all');
+    expect(searchNotesMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(store.searchResults).toEqual([result('Note')]);
+    expect(store.imageResults).toEqual([image]);
+  });
+
+  it('retains an edited-time cutoff through retries and removes it when reset', async () => {
+    vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+    searchNotesMock.mockResolvedValue([result('Match')]);
+    const store = createStore();
+    store.searchQuery = 'idea';
+    store.recentNotes = [result('Recent')];
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    await store.handleEditedWindowChange('7d');
+    expect(searchNotesMock).toHaveBeenLastCalledWith('idea', expect.anything(), { modifiedSinceMillis: cutoff });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', {
+      query: 'idea', imageBase64: null, includePassages: false, modifiedSinceMillis: cutoff
+    });
+    vi.setSystemTime(new Date('2026-10-23T12:00:00Z'));
+    await store.retrySearch();
+    expect(searchNotesMock).toHaveBeenLastCalledWith('idea', expect.anything(), { modifiedSinceMillis: cutoff });
+    expect(store.editedWindow).toBe('7d');
+    await store.handleEditedWindowChange('any');
+    expect(searchNotesMock).toHaveBeenLastCalledWith('idea', expect.anything(), { modifiedSinceMillis: null });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', {
+      query: 'idea', imageBase64: null, includePassages: false
+    });
+    expect(store.recentNotes).toEqual([result('Recent')]);
+  });
+
+  it('refreshes relative time for a new query and a cleared search while keeping its preset', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const initialTime = Date.parse('2026-10-22T12:00:00Z');
+    vi.setSystemTime(initialTime);
+    searchNotesMock.mockResolvedValue([result('Match')]);
+    const store = createStore();
+    store.searchQuery = 'idea';
+    await store.handleEditedWindowChange('7d');
+    expect(searchNotesMock).toHaveBeenLastCalledWith('idea', expect.anything(), { modifiedSinceMillis: initialTime - 7 * day });
+
+    vi.setSystemTime(initialTime + 8 * day);
+    store.handleSearchInput('garden');
+    await vi.advanceTimersByTimeAsync(120);
+    const freshCutoff = initialTime + day;
+    expect(searchNotesMock).toHaveBeenLastCalledWith('garden', expect.anything(), { modifiedSinceMillis: freshCutoff });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', {
+      query: 'garden', imageBase64: null, includePassages: false, modifiedSinceMillis: freshCutoff
+    });
+
+    vi.setSystemTime(initialTime + 9 * day);
+    await store.retrySearch();
+    expect(searchNotesMock).toHaveBeenLastCalledWith('garden', expect.anything(), { modifiedSinceMillis: freshCutoff });
+    store.clearSearch();
+    expect(store.editedWindow).toBe('7d');
+    store.handleSearchInput('garden');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(searchNotesMock).toHaveBeenLastCalledWith('garden', expect.anything(), { modifiedSinceMillis: initialTime + 2 * day });
+    store.dispose();
+  });
+
+  it.each(['result type', 'edited time'] as const)('retires results and in-flight work on a new %s cue', async cue => {
+    const old = deferred<SearchItem[]>();
+    const latest = deferred<SearchItem[]>();
+    const image = { kind: 'image', assetName: 'latest.png' };
+    searchNotesMock.mockResolvedValueOnce([result('Retained')])
+      .mockReturnValueOnce(old.promise).mockReturnValueOnce(latest.promise);
+    invokeMock.mockResolvedValue([image]);
+    const store = createStore();
+    store.searchQuery = 'idea';
+    await store.runSearch('idea');
+    const oldSearch = store.retrySearch();
+    const next = cue === 'result type'
+      ? store.handleResultTypeChange('images') : store.handleEditedWindowChange('30d');
+    expect(store.searchResults).toEqual([]);
+    expect(store.imageResults).toEqual([]);
+    old.resolve([result('Obsolete')]);
+    await oldSearch;
+    expect(store.searchResults).toEqual([]);
+    latest.resolve([result('Current')]);
+    await next;
+    expect(store.searchResults.map(item => item.fileName)).toEqual(cue === 'result type' ? [] : ['Current']);
+    expect(store.imageResults).toEqual([image]);
+  });
+
+  it('keeps image-only search pending until image work settles', async () => {
+    const media = deferred<unknown[]>();
+    invokeMock.mockReturnValue(media.promise);
+    const store = createStore();
+    store.resultType = 'images';
+    const search = store.runSearch('diagram');
+    await Promise.resolve();
+    expect(store.isSearching).toBe(true);
+    expect(searchNotesMock).not.toHaveBeenCalled();
+    media.resolve([]);
+    await search;
+    expect(store.isSearching).toBe(false);
+  });
+
+  it('applies type and edited-time cues to image queries before ranking', async () => {
+    vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(); }
+    });
+    const store = createStore();
+    await store.handleResultTypeChange('notes');
+    await store.handleEditedWindowChange('30d');
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    await store.chooseQueryImage({ size: 5 } as File);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', {
+      query: null, imageBase64: 'aW1hZ2U=', includePassages: true,
+      includeImages: false, modifiedSinceMillis: cutoff
+    });
+    await store.handleResultTypeChange('images');
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', {
+      query: null, imageBase64: 'aW1hZ2U=', includePassages: false,
+      includeImages: true, modifiedSinceMillis: cutoff
+    });
+    expect(searchNotesMock).not.toHaveBeenCalled();
+    store.dispose();
+  });
+
+  it('refreshes an image query window on refinement or replacement and retains it for retry', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const initialTime = Date.parse('2026-10-22T12:00:00Z');
+    vi.setSystemTime(initialTime);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(); }
+    });
+    const store = createStore();
+    await store.handleEditedWindowChange('30d');
+    await store.chooseQueryImage({ size: 5 } as File);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', expect.objectContaining({ modifiedSinceMillis: initialTime - 30 * day }));
+    vi.setSystemTime(initialTime + 2 * day);
+    store.handleSearchInput('garden');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', expect.objectContaining({ query: 'garden', modifiedSinceMillis: initialTime - 28 * day }));
+    vi.setSystemTime(initialTime + 3 * day);
+    await store.retrySearch();
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', expect.objectContaining({ modifiedSinceMillis: initialTime - 28 * day }));
+    await store.chooseQueryImage({ size: 5 } as File);
+    expect(store.editedWindow).toBe('30d');
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', expect.objectContaining({ modifiedSinceMillis: initialTime - 27 * day }));
+    store.dispose();
+  });
+
   it('keeps last edited separate from recent opening activity and retires superseded responses', async () => {
     const first = deferred<SearchItem[]>();
     const second = deferred<SearchItem[]>();
@@ -131,7 +305,7 @@ describe('NotepadSearchStore', () => {
     const store = createStore();
     const search = store.chooseQueryImage({ size: 5 } as File);
     await Promise.resolve();
-    expect(invokeMock).toHaveBeenCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=' });
+    expect(invokeMock).toHaveBeenCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=', includePassages: true, includeImages: true });
     await store.handleSearchModeChange('current');
     pending.resolve([{ kind:'image', assetName:'obsolete.png' }]);
     await search;
@@ -185,14 +359,14 @@ describe('NotepadSearchStore', () => {
     const store = createStore();
     store.handleSearchInput('initial context');
     await store.chooseQueryImage({ size: 5 } as File);
-    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'initial context', imageBase64: 'aW1hZ2U=' });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'initial context', imageBase64: 'aW1hZ2U=', includePassages: true, includeImages: true });
     store.handleSearchInput('network settings');
     await vi.advanceTimersByTimeAsync(120);
     expect(store.imageQueryUrl).toBe('blob:query');
-    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'network settings', imageBase64: 'aW1hZ2U=' });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'network settings', imageBase64: 'aW1hZ2U=', includePassages: true, includeImages: true });
     store.handleSearchInput('');
     await vi.advanceTimersByTimeAsync(120);
-    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=' });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=', includePassages: true, includeImages: true });
     expect(store.imageQueryUrl).toBe('blob:query');
     expect(read).toHaveBeenCalledOnce();
     expect(searchNotesMock).not.toHaveBeenCalled();
@@ -217,7 +391,7 @@ describe('NotepadSearchStore', () => {
     else await store.handleMatchWholeWordChange(true);
     await vi.advanceTimersByTimeAsync(120);
     expect(invokeMock).toHaveBeenCalledTimes(2);
-    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=' });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=', includePassages: true, includeImages: true });
     expect(store.isSearching).toBe(false);
     expect(store.imageQueryUrl).toBe('blob:query');
     store.clearSearch();
@@ -244,7 +418,7 @@ describe('NotepadSearchStore', () => {
     pending.resolve([{ ...result('obsolete'), kind: 'passage' }]);
     await search;
     expect(invokeMock).toHaveBeenCalledTimes(2);
-    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'latest refinement', imageBase64: 'aW1hZ2U=' });
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'latest refinement', imageBase64: 'aW1hZ2U=', includePassages: true, includeImages: true });
     expect(store.searchResults.map(item => item.fileName)).toEqual(['refined']);
     store.clearSearch();
   });
@@ -282,6 +456,85 @@ describe('NotepadSearchStore', () => {
     expect(store.isSearching).toBe(false);
   });
 
+  it('retains matches for a failed refresh of the same query and clears the error on retry', async () => {
+    const refresh = deferred<SearchItem[]>();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    searchNotesMock.mockResolvedValueOnce([result('Retained')])
+      .mockReturnValueOnce(refresh.promise).mockResolvedValueOnce([result('Fresh')]);
+    const store = createStore();
+    store.searchQuery = 'idea';
+    await store.runSearch('idea');
+    const pending = store.retrySearch();
+    expect(store.searchResults).toEqual([result('Retained')]);
+    expect(store.isSearching).toBe(true);
+    refresh.reject(new Error('index unavailable'));
+    await pending;
+    expect(store.searchResults).toEqual([result('Retained')]);
+    expect(store.searchError).toContain('Try again');
+    expect(store.isSearching).toBe(false);
+    await store.retrySearch();
+    expect(store.searchResults).toEqual([result('Fresh')]);
+    expect(store.searchError).toBeNull();
+    log.mockRestore();
+  });
+
+  it('clears old matches during a new query debounce and distinguishes failure from empty results', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = createStore();
+    searchNotesMock.mockResolvedValueOnce([result('Old')]).mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([]);
+    store.handleSearchInput('old');
+    await vi.advanceTimersByTimeAsync(120);
+    store.handleSearchInput('new');
+    expect(store.searchResults).toEqual([]);
+    expect(store.isSearching).toBe(true);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(store.searchResults).toEqual([]);
+    expect(store.searchError).not.toBeNull();
+    await store.retrySearch();
+    expect(store.searchResults).toEqual([]);
+    expect(store.searchError).toBeNull();
+    store.clearSearch();
+    expect(store.searchError).toBeNull();
+    log.mockRestore();
+  });
+
+  it.each(['case', 'whole word', 'scope', 'document'] as const)(
+    'does not retain incompatible results after changing %s', async (change) => {
+      const pending = deferred<SearchItem[]>();
+      let path = '/vault/current.md';
+      const store = createNotepadSearchStore({
+        getCurrentTitle: () => 'Current', getCurrentMarkdown: () => 'body', getCurrentPath: () => path,
+        openSearchResult: vi.fn(async () => {}), openRecentTask: vi.fn(async () => {}),
+        openNote: vi.fn(async () => {})
+      });
+      store.searchQuery = 'word';
+      searchNotesMock.mockResolvedValueOnce([result('Old')]).mockReturnValueOnce(pending.promise);
+      await store.runSearch('word');
+      if (change === 'case') store.matchCase = true;
+      else if (change === 'whole word') store.matchWholeWord = true;
+      else if (change === 'scope') store.searchMode = 'current';
+      else path = '/vault/other.md';
+      const next = store.retrySearch();
+      expect(store.searchResults).toEqual([]);
+      pending.resolve([]);
+      await next;
+    }
+  );
+
+  it('admits image matches even when note search fails', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const image = { kind: 'image', assetName: 'match.png' };
+    invokeMock.mockResolvedValue([image]);
+    searchNotesMock.mockRejectedValue(new Error('note index unavailable'));
+    const store = createStore();
+    await store.runSearch('diagram');
+    expect(store.imageResults).toEqual([image]);
+    expect(store.searchError).not.toBeNull();
+    expect(store.mediaError).toBeNull();
+    log.mockRestore();
+  });
+
   it.each(['success', 'error'] as const)(
     'ignores an old %s during replacement debounce without emitting early highlights',
     async (outcome) => {
@@ -309,13 +562,13 @@ describe('NotepadSearchStore', () => {
       await vi.advanceTimersByTimeAsync(119);
 
       expect(store.searchQuery).toBe('new');
-      expect(store.searchResults).toEqual(retained);
+      expect(store.searchResults).toEqual([]);
       expect(searchNotesMock).toHaveBeenCalledTimes(1);
       expect(onSearchHighlightsChange).not.toHaveBeenCalled();
       expect(log).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
-      expect(searchNotesMock).toHaveBeenLastCalledWith('new', expect.anything());
+      expect(searchNotesMock).toHaveBeenLastCalledWith('new', expect.anything(), { modifiedSinceMillis: null });
       expect(store.searchResults).toEqual(latest);
       expect(store.isSearching).toBe(false);
       expect(onSearchHighlightsChange).toHaveBeenCalledExactlyOnceWith({
@@ -400,7 +653,7 @@ describe('NotepadSearchStore', () => {
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: 'body'
-    });
+    }, { modifiedSinceMillis: null });
     expect(onSearchHighlightsChange).toHaveBeenCalledTimes(1);
     expect(onSearchHighlightsChange).toHaveBeenCalledWith({
       searchMode: 'all',

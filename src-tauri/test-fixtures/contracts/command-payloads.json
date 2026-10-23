@@ -5,7 +5,8 @@
       "args": {
         "title": "Title",
         "markdown": "Body",
-        "currentPath": "/vault/Title.md"
+        "currentPath": "/vault/Title.md",
+        "expectedNoteId": "note-1"
       },
       "result": {
         "noteId": "note-1",
@@ -18,7 +19,8 @@
       "args": {
         "title": "Title",
         "markdown": "Body",
-        "currentPath": "/vault/Title.md"
+        "currentPath": "/vault/Title.md",
+        "expectedNoteId": "note-1"
       },
       "result": {
         "noteId": "note-1",

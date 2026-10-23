@@ -348,6 +348,7 @@ impl LexicalIndex {
         query_terms: &[&str],
         limit: usize,
         exclude_path: Option<&Path>,
+        allowed_ids: Option<&HashSet<String>>,
     ) -> Result<Vec<ScoredSearchResult>, String> {
         let inner = self
             .inner
@@ -358,6 +359,7 @@ impl LexicalIndex {
             .filter(|(path, note)| {
                 Some(path.as_path()) != exclude_path
                     && note.document_kind == DocumentKind::Note
+                    && allowed_ids.is_none_or(|ids| ids.contains(&note.note_id))
                     && inner.signatures.get(path.to_string_lossy().as_ref())
                         != Some(note.signature())
             })
@@ -373,6 +375,7 @@ impl LexicalIndex {
                 query_terms,
                 limit,
                 exclude_path,
+                allowed_ids,
             )?
             .into_iter()
             .filter(|candidate| {
@@ -406,6 +409,7 @@ impl LexicalIndex {
             query_terms,
             limit,
             exclude_path,
+            None,
         )
     }
 
@@ -417,6 +421,7 @@ impl LexicalIndex {
         query_terms: &[&str],
         limit: usize,
         exclude_path: Option<&Path>,
+        allowed_ids: Option<&HashSet<String>>,
     ) -> Result<Vec<ScoredSearchResult>, String> {
         if inner.signatures.is_empty() {
             return Ok(Vec::new());
@@ -455,6 +460,15 @@ impl LexicalIndex {
                     self.fields.note_path,
                     &path.to_string_lossy(),
                 )])),
+            ));
+        }
+        if let Some(ids) = allowed_ids {
+            clauses.push((
+                Occur::Must,
+                Box::new(TermSetQuery::new(
+                    ids.iter()
+                        .map(|id| Term::from_field_text(self.fields.note_id, id)),
+                )),
             ));
         }
         let query = BooleanQuery::new(clauses);
@@ -669,7 +683,7 @@ mod tests {
         let entries = HashMap::from([(first_path.clone(), first), (second_path.clone(), second)]);
         let search = || {
             index
-                .search_with_catalog(&entries, "needle", "needle", &["needle"], 40, None)
+                .search_with_catalog(&entries, "needle", "needle", &["needle"], 40, None, None)
                 .unwrap()
         };
         let fallback = search();
@@ -713,6 +727,7 @@ mod tests {
                     &["needle"],
                     40,
                     Some(&current_path),
+                    None,
                 )
                 .unwrap()
         };
@@ -732,6 +747,51 @@ mod tests {
     }
 
     #[test]
+    fn scoped_ordinary_search_admits_before_collector_and_pending_fallback() {
+        let index = LexicalIndex::new().unwrap();
+        let mut entries = HashMap::new();
+        for i in 0..24 {
+            let path = PathBuf::from(format!("notes/Needle {i}.md"));
+            let note = build_indexed_note(
+                &path,
+                &format!("---\ngneauxghts:\n  id: old-{i}\n---\n\nneedle"),
+                1,
+            );
+            entries.insert(path, note);
+        }
+        let path = PathBuf::from("notes/Recent.md");
+        let note = build_indexed_note(&path, "---\ngneauxghts:\n  id: recent\n---\n\nA longer ordinary paragraph includes needle among many unrelated words about gardening and weather.", 2);
+        entries.insert(path.clone(), note);
+        let scope = std::collections::HashSet::from(["recent".to_string()]);
+        let run = || {
+            index
+                .search_with_catalog(
+                    &entries,
+                    "needle",
+                    "needle",
+                    &["needle"],
+                    1,
+                    None,
+                    Some(&scope),
+                )
+                .unwrap()
+        };
+        let fallback = run();
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].result.note_path.as_deref(), path.to_str());
+        for (path, note) in &entries {
+            index.upsert_note(path, note).unwrap();
+        }
+        let indexed = run();
+        assert_eq!(
+            indexed.len(),
+            1,
+            "out-of-scope title matches cannot consume bounded collector"
+        );
+        assert_eq!(indexed[0].result.note_path.as_deref(), path.to_str());
+    }
+
+    #[test]
     fn pending_replacements_search_current_content_without_stale_or_duplicate_results() {
         let index = LexicalIndex::new().unwrap();
         let path = PathBuf::from("notes/changing.md");
@@ -740,7 +800,7 @@ mod tests {
         let mut entries = HashMap::from([(path.clone(), current)]);
         let search = |query: &str, exclude| {
             index
-                .search_with_catalog(&entries, query, query, &[query], 10, exclude)
+                .search_with_catalog(&entries, query, query, &[query], 10, exclude, None)
                 .unwrap()
         };
 
@@ -764,7 +824,7 @@ mod tests {
         entries.remove(&path);
         assert!(
             index
-                .search_with_catalog(&entries, "shared", "shared", &["shared"], 10, None)
+                .search_with_catalog(&entries, "shared", "shared", &["shared"], 10, None, None)
                 .unwrap()
                 .is_empty(),
             "a removed catalog note is no longer searchable"

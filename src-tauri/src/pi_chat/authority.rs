@@ -51,9 +51,10 @@ pub(crate) struct ConversationBinding {
     pub conversation_id: u64,
     pub provider_session_id: String,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum WriteOperation {
+    #[serde(alias = "rename")]
     Update,
     Create,
 }
@@ -129,6 +130,19 @@ fn normalize_read(mut read: ReadPolicy) -> DomainResult<ReadPolicy> {
     read.attached_note_ids.dedup();
     Ok(read)
 }
+fn parse_grant(json: &str, message: &str) -> DomainResult<WriteGrant> {
+    let mut grant: WriteGrant =
+        serde_json::from_str(json).map_err(|_| DomainError::new("storage", message))?;
+    // The retired rename permission is the same existing-note capability now.
+    // Normalize a saved [update, rename] pair to one operation on read.
+    if let WriteGrant::Always { operations, .. } | WriteGrant::Temporary { operations, .. } =
+        &mut grant
+    {
+        operations.sort_unstable();
+        operations.dedup();
+    }
+    Ok(grant)
+}
 pub(super) fn load(connection: &Connection, id: &str) -> DomainResult<AuthoritySnapshot> {
     let row: Option<(u64, String, bool, String, String, bool)> = connection
         .query_row(
@@ -144,10 +158,8 @@ pub(super) fn load(connection: &Connection, id: &str) -> DomainResult<AuthorityS
                 "This conversation has no access authority.",
             )
         })?;
-    let mut grant: WriteGrant = serde_json::from_str(&write)
-        .map_err(|_| DomainError::new("storage", "Conversation write grant is invalid."))?;
-    let vault: WriteGrant = serde_json::from_str(&vault_grant)
-        .map_err(|_| DomainError::new("storage", "Vault write policy is invalid."))?;
+    let mut grant = parse_grant(&write, "Conversation write grant is invalid.")?;
+    let vault = parse_grant(&vault_grant, "Vault write policy is invalid.")?;
     // Always is visible in every chat. A retained Temporary grant cannot hide
     // vault-wide permission from the policy selector.
     if !matches!(vault, WriteGrant::Off) {
@@ -363,8 +375,7 @@ impl AuthorityStore {
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let grant = serde_json::from_str(&grant)
-            .map_err(|_| DomainError::new("storage", "Vault write policy is invalid."))?;
+        let grant = parse_grant(&grant, "Vault write policy is invalid.")?;
         Ok(WritePolicy {
             grant,
             review_before_applying,
@@ -626,6 +637,40 @@ mod tests {
             },
             review_before_applying,
         }
+    }
+    #[test]
+    fn saved_rename_grants_reopen_as_one_existing_note_permission() {
+        let (dir, store) = store();
+        let authority = store
+            .bind(binding(1), policy(ReadMode::FullVault, &[]))
+            .unwrap();
+        let old = r#"{"duration":"temporary","conversationId":1,"operations":["update","create","rename"],"scope":{"noteIds":["one"],"folders":[]}}"#;
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE pi_chat_authorities SET write_json=?1 WHERE authority_id=?2",
+                params![old, authority.authority_id],
+            )
+            .unwrap();
+        let reopened = AuthorityStore::new(dir.path()).unwrap();
+        let current = reopened.snapshot(&authority.authority_id).unwrap();
+        assert_eq!(
+            serde_json::to_value(&current.write.grant).unwrap(),
+            serde_json::json!({"duration":"temporary","conversationId":1,"operations":["update","create"],"scope":{"noteIds":["one"],"folders":[]}})
+        );
+        let old_vault = r#"{"duration":"always","operations":["rename"],"scope":{"noteIds":[],"folders":["Projects"]}}"#;
+        reopened
+            .connection()
+            .unwrap()
+            .execute("UPDATE pi_chat_vault_write SET grant_json=?1", [old_vault])
+            .unwrap();
+        assert!(
+            matches!(reopened.vault_write().unwrap().grant, WriteGrant::Always { operations, .. } if operations == vec![WriteOperation::Update])
+        );
+        assert!(
+            matches!(reopened.snapshot(&authority.authority_id).unwrap().write.grant, WriteGrant::Always { operations, .. } if operations == vec![WriteOperation::Update])
+        );
     }
     #[test]
     fn vault_write_defaults_work_without_a_conversation_and_survive_reopen() {

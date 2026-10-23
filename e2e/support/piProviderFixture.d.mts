@@ -4,6 +4,7 @@ export interface PiProviderFixture {
   model: string;
   setFailure(value: boolean): void;
   setCreate(value: { title: string; markdown: string; folder?: string }): void;
+  setRename(value: { noteId: string; title: string }): void;
   setEdit(value: { noteId: string; oldText: string; newText: string }): void;
   setHoldSummaries(value: boolean): void;
   readonly pendingSummaries: number;

@@ -1,4 +1,4 @@
-import { autoUpdate, computePosition, flip, offset, shift, size, type ReferenceElement } from '@floating-ui/dom';
+import { autoUpdate, computePosition, flip, offset, shift, size, type Placement, type ReferenceElement } from '@floating-ui/dom';
 
 export const hiddenFloatingPanelStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
 
@@ -9,6 +9,8 @@ export function positionFloatingPanel(
   setStyle: (style: string) => void,
   options: {
     boundsElement?: HTMLElement | null;
+    placement?: Placement;
+    fallbackPlacements?: Placement[];
     resize?: (availableHeight: number) => void;
   } = {}
 ): () => void {
@@ -19,10 +21,10 @@ export function positionFloatingPanel(
     const collision = { padding: { top: inset('top'), right: inset('right'), bottom: inset('bottom'), left: inset('left') }, ...(options.boundsElement ? { boundary: options.boundsElement } : {}) };
     const { x, y } = await computePosition(reference, panel, {
       strategy: 'fixed',
-      placement: 'bottom-start',
+      placement: options.placement ?? 'bottom-start',
       middleware: [
         offset(10),
-        flip({ ...collision, fallbackPlacements: ['top-start', 'bottom-end', 'top-end'] }),
+        flip({ ...collision, fallbackPlacements: options.fallbackPlacements ?? ['top-start', 'bottom-end', 'top-end'] }),
         shift(collision),
         size({ ...collision, apply({ availableHeight, availableWidth }) {
           if (disposed) return;
@@ -35,8 +37,7 @@ export function positionFloatingPanel(
       ]
     });
     if (!disposed) {
-      const maxHeight = options.resize ? '' : ` max-height: ${panel.style.maxHeight};`;
-      setStyle(`position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible; max-width: ${panel.style.maxWidth};${maxHeight}`);
+      setStyle(`position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible; max-width: ${panel.style.maxWidth}; max-height: ${panel.style.maxHeight || 'none'};`);
     }
   };
   const cleanup = autoUpdate(reference, panel, () => { void update(); });

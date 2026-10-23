@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentEditingService } from './documentEditingService';
-import { createNoteDraftState, createNotepadState, adoptCommittedDocument, upsertNote } from '../state/noteStore';
-import { updateDocumentMarkdown, updateDocumentTitle, updateDocumentTags } from './documentState';
+import { createNoteDraftState, createNotepadState, adoptCommittedDocument, upsertNote, findOpenDocument } from '../state/noteStore';
+import { dispatchDocumentOperation, getDocumentNoteId, getDocumentPath, getDocumentTitle, updateDocumentMarkdown, updateDocumentTitle, updateDocumentTags } from './documentState';
 import { documentRegistry } from './documentRegistry';
 import { createRuntimePane } from '../editor/testSupport';
 import type { NoteSession } from '../model/types';
@@ -122,6 +122,126 @@ describe('document publication admission', () => {
     await expect(f.service.withAgentPublication(target, async () => {})).rejects.toThrow();
     f.service.releaseSettledAgentPublication();
     expect(() => updateDocumentMarkdown(f.document, 'After settlement')).not.toThrow();
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+  });
+
+  it.each(['body', 'titleDraft', 'conflict', 'runtime'] as const)('admits both rename locations and blocks a %s destination without changing either document', async kind => {
+    const f = fixture();
+    const destination = { ...base, noteId: 'destination-identity', path: '/vault/Renamed.md', title: 'Renamed' };
+    const other = createNoteDraftState(); upsertNote(f.state, other); adoptCommittedDocument(f.state, other, destination);
+    const root = documentRegistry.ensure(other.handle).ensureResources({ assetRootPath: null, storePastedImage: vi.fn() }).runtime;
+    root.ensureMarkdown(destination.markdown);
+    if (kind === 'body') updateDocumentMarkdown(other, 'Unsaved destination');
+    if (kind === 'titleDraft') f.editTitle();
+    if (kind === 'conflict') other.externalSync = { kind: 'conflict', sequence: 1, conflictId: 1, phase: 'awaitingChoice', external: { kind: 'deletion', source: 'watcher', path: destination.path } };
+    if (kind === 'runtime') root.replaceMarkdown('Unrecorded destination input', { notifyBodyChange: false });
+    const effect = vi.fn();
+    await expect(f.service.withAgentPublication({ ...target, destinationPath: destination.path }, effect)).rejects.toThrow();
+    expect(effect).not.toHaveBeenCalled();
+    expect(getDocumentPath(f.document)).toBe(base.path);
+    expect(getDocumentNoteId(other)).toBe(destination.noteId);
+    expect(getDocumentPath(other)).toBe(destination.path);
+  });
+
+  it('freezes clean destination buffers while a rename settles without adopting a different identity', async () => {
+    const f = fixture();
+    const other = createNoteDraftState(); upsertNote(f.state, other);
+    const destination = { ...base, noteId: 'destination-identity', path: '/vault/Renamed.md', title: 'Renamed' };
+    adoptCommittedDocument(f.state, other, destination);
+    const pending = Promise.withResolvers<void>();
+    const publishing = f.service.withAgentPublication({ ...target, destinationPath: destination.path }, () => pending.promise);
+    expect(() => updateDocumentMarkdown(other, 'Concurrent destination edit')).toThrow();
+    expect(() => updateDocumentMarkdown(f.document, 'Concurrent source edit')).toThrow();
+    pending.resolve(); await publishing;
+    expect(getDocumentNoteId(other)).toBe(destination.noteId);
+    expect(() => updateDocumentMarkdown(other, 'After settlement')).not.toThrow();
+  });
+
+  it('adopts a rename in both panes under the retained handle, lookup and shared Undo root', async () => {
+    const f = fixture(); const handle = f.document.handle;
+    const first = createRuntimePane(f.root, base.markdown, 2);
+    const second = createRuntimePane(f.root, base.markdown, 4);
+    first.view.dispatch({ changes: { from: 6, insert: ' saved' }, userEvent: 'input.type' });
+    const saved = { ...base, markdown: 'Before saved' };
+    adoptCommittedDocument(f.state, f.document, saved);
+    const renamed = { ...saved, title: 'Renamed', path: '/vault/Renamed.md' };
+    f.read.mockResolvedValue(renamed);
+    await f.service.withAgentPublication({ ...target, destinationPath: renamed.path }, async lease => {
+      expect(await lease.adopt({ noteId: base.noteId, path: renamed.path, markdown: renamed.markdown })).toBe('adopted');
+    });
+    expect(f.document.handle).toBe(handle);
+    expect(Object.keys(f.state.documentsByHandle)).toEqual([handle]);
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(getDocumentTitle(f.document)).toBe('Renamed');
+    expect(getDocumentNoteId(f.document)).toBe(base.noteId);
+    expect(findOpenDocument(f.state, { noteId: base.noteId, path: renamed.path })).toBe(f.document);
+    expect(findOpenDocument(f.state, { noteId: null, path: base.path })).toBeNull();
+    expect(first.readState().doc.toString()).toBe(renamed.markdown);
+    expect(second.readState().doc.toString()).toBe(renamed.markdown);
+    expect(documentRegistry.get(handle)?.resources()?.runtime).toBe(f.root);
+    expect(f.root.undo(second.controller.paneKey)).toBe(true);
+    expect(first.readState().doc.toString()).toBe(base.markdown);
+  });
+
+  it('retains an uncertain rename lease and resumes only that exact target after settlement', async () => {
+    const f = fixture(); const renameTarget = { ...target, destinationPath: '/vault/Renamed.md' };
+    await expect(f.service.withAgentPublication(renameTarget, async lease => {
+      lease.retainUntilSettled(); throw new Error('Uncertain rename');
+    })).rejects.toThrow('Uncertain rename');
+    await expect(f.service.withAgentPublication({ ...renameTarget, destinationPath: '/vault/Other.md' }, async () => {})).rejects.toThrow();
+    expect(() => updateDocumentMarkdown(f.document, 'Stale-path edit')).toThrow();
+    f.read.mockResolvedValue({ ...base, path: renameTarget.destinationPath, title: 'Renamed' });
+    await expect(f.service.withAgentPublicationReconciliation(renameTarget, lease =>
+      lease.adopt({ ...target, path: '/vault/Other.md', markdown: base.markdown })
+    )).rejects.toThrow('differs');
+    expect(await f.service.withAgentPublicationReconciliation(renameTarget, lease =>
+      lease.adopt({ ...target, path: renameTarget.destinationPath, markdown: base.markdown })
+    )).toBe('adopted');
+    expect(getDocumentPath(f.document)).toBe(renameTarget.destinationPath);
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(() => updateDocumentMarkdown(f.document, 'Current-path edit')).not.toThrow();
+  });
+
+  it('refuses an already queued old-path save before its effect, then reconciles the proven move', async () => {
+    const f = fixture(); const renameTarget = { ...target, destinationPath: '/vault/Renamed.md' };
+    updateDocumentMarkdown(f.document, 'Human draft'); f.root.restoreTransientMarkdown('Human draft');
+    const first = Promise.withResolvers<void>();
+    const active = f.runtime.requestSave(() => first.promise);
+    const canonicalSave = vi.fn();
+    const queued = f.runtime.requestSave(async () => {
+      dispatchDocumentOperation(f.document, { type: 'start', operation: 'saving' });
+      const capture = f.service.captureSave(f.document);
+      canonicalSave(capture.path);
+    });
+    const refused = expect(queued).rejects.toThrow();
+    const renamed = { ...base, path: renameTarget.destinationPath, title: 'Renamed' };
+    f.read.mockResolvedValue(renamed);
+    const adoption = f.service.withAgentPublicationReconciliation(renameTarget, lease =>
+      lease.adopt({ ...target, path: renamed.path, markdown: base.markdown })
+    );
+    first.resolve(); await refused; await active.catch(() => {});
+    expect(await adoption).toBe('conflict');
+    expect(canonicalSave).not.toHaveBeenCalled();
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(f.document.working.body.toMarkdown()).toBe('Human draft');
+  });
+
+  it('retains a recovered rename lease when the captured document location changes before retry', async () => {
+    const f = fixture(); const renameTarget = { ...target, destinationPath: '/vault/Renamed.md' };
+    await f.service.withAgentPublicationReconciliation(renameTarget, async lease => { lease.retainUntilSettled(); });
+    const capturedIdentity = f.document.identity;
+    // Simulate canonical adoption completing from a save that started before the lease.
+    f.document.identity = { kind: 'persisted', noteId: base.noteId, path: '/vault/Unexpected.md' };
+    const effect = vi.fn();
+    await expect(f.service.withAgentPublicationReconciliation(renameTarget, effect)).rejects.toThrow();
+    expect(effect).not.toHaveBeenCalled();
+    expect(f.service.isAgentPublicationActive()).toBe(true);
+    expect(() => f.service.captureSave(f.document)).toThrow();
+    f.document.identity = capturedIdentity;
+    f.read.mockResolvedValue({ ...base, path: renameTarget.destinationPath, title: 'Renamed' });
+    await expect(f.service.withAgentPublicationReconciliation(renameTarget, lease =>
+      lease.adopt({ ...target, path: renameTarget.destinationPath, markdown: base.markdown })
+    )).resolves.toBe('adopted');
     expect(f.service.isAgentPublicationActive()).toBe(false);
   });
 });

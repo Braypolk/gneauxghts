@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod rename_tests;
+
 /// Exact canonical publication prepared by NoteTimeline. Only the trusted native
 /// effect ledger retains this opaque proof; Pi review documents never receive it.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -9,6 +12,18 @@ pub(crate) struct PublicationProof {
     note_id: String,
     path: PathBuf,
     canonical_markdown: String,
+    #[serde(default)]
+    effect: PublicationEffect,
+}
+
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum PublicationEffect {
+    #[default]
+    Write,
+    Rename {
+        source_path: PathBuf,
+    },
 }
 type ProofRecorder<'a> = &'a dyn Fn(&PublicationProof) -> Result<(), HistoryError>;
 
@@ -78,9 +93,9 @@ impl<'a> NoteTimeline<'a> {
             .filter(|note_id| !note_id.trim().is_empty());
         if let (Some(retained), Some(catalog)) = (retained_identity, catalog_identity.as_deref()) {
             if retained != catalog {
-                return Err(format!(
+                return Err(HistoryError::Stale(format!(
                     "Note identity continuity conflict: retained identity {retained} does not match catalog identity {catalog}."
-                ).into());
+                )));
             }
         }
         let historical_identity = if catalog_identity.is_none() && retained_identity.is_none() {
@@ -159,6 +174,19 @@ impl<'a> NoteTimeline<'a> {
                         &raw,
                         &candidate,
                     )?;
+                    // Preflight can have admitted this buffer before another
+                    // publication moved its identity. Recheck under the file
+                    // owner so a queued save cannot recreate its former path
+                    // or overwrite a different note that now occupies it.
+                    if let Some(path) = continuity_path {
+                        if history_store::current_path(&self.runtime.store, &identity)?
+                            .is_some_and(|current| current != path)
+                        {
+                            return Err(HistoryError::Stale(
+                                "Note location changed while the save was waiting; refresh before saving".into(),
+                            ));
+                        }
+                    }
                     if !self.runtime.is_note_ready(&identity)? {
                         candidate = identity;
                         return Ok(None);
@@ -190,6 +218,7 @@ impl<'a> NoteTimeline<'a> {
             .unwrap_or_else(|| fallback.clone()))
     }
 
+    #[cfg(test)]
     pub(crate) fn save_note(
         &self,
         source: MutationSource,
@@ -200,6 +229,7 @@ impl<'a> NoteTimeline<'a> {
         self.save_note_with_tags(source, title, markdown, current_path, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn save_note_with_tags(
         &self,
         source: MutationSource,
@@ -208,8 +238,25 @@ impl<'a> NoteTimeline<'a> {
         current_path: Option<String>,
         tag_edit: Option<&crate::tags::TagEdit>,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.save_note_with_expected_identity(source, title, markdown, current_path, None, tag_edit)
+    }
+
+    pub(crate) fn save_note_with_expected_identity(
+        &self,
+        source: MutationSource,
+        title: &str,
+        markdown: &str,
+        current_path: Option<String>,
+        expected_identity: Option<&NoteIdentity>,
+        tag_edit: Option<&crate::tags::TagEdit>,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
         let root = self.runtime.store.vault_root();
         let current_path = crate::state::validate_current_path(current_path, root)?;
+        if expected_identity.is_some() && current_path.is_none() {
+            return Err(HistoryError::Stale(
+                "A saved Note Identity requires its captured note path".into(),
+            ));
+        }
         let source = if current_path.is_none() {
             MutationSource::NoteCreation
         } else {
@@ -224,7 +271,7 @@ impl<'a> NoteTimeline<'a> {
         }
         self.with_admitted_publication(
             current_path.as_deref(),
-            None,
+            expected_identity,
             |candidate| {
                 Ok(crate::state::prepare_note_save(
                     root,
@@ -323,10 +370,22 @@ impl<'a> NoteTimeline<'a> {
                     ));
                 }
 
-                let repaired =
-                    self.prepare_publication(Some(&current), Some(identity), markdown)?;
-                let canonical =
-                    crate::note::prepare_note_markdown(&repaired, Some(&raw), Some(None))?.0;
+                // The issued editing base exposes authored content only. Treat its full
+                // replacement as authoritative for body and unmanaged properties,
+                // including removing the final property. Managed metadata comes
+                // exclusively from the admitted canonical base, never the model.
+                let authored = crate::note::parse_note(markdown);
+                let properties = authored.frontmatter.raw_other.map(|mut properties| {
+                    if !properties.ends_with('\n') {
+                        properties.push('\n');
+                    }
+                    properties
+                });
+                let canonical = crate::note::replace_authored_content(
+                    &raw,
+                    properties.as_deref(),
+                    &authored.body,
+                )?;
                 Ok(self
                     .publish_authored(
                         MutationSource::AgentPublication,
@@ -390,12 +449,240 @@ impl<'a> NoteTimeline<'a> {
         )
     }
 
+    /// Move the admitted source without changing a single canonical byte. The
+    /// durable two-path proof precedes the no-replace syscall, and every replay
+    /// verifies that original effect instead of attempting a second rename.
+    pub(crate) fn rename_note_with_proof(
+        &self,
+        source: &Path,
+        destination: &Path,
+        identity: &NoteIdentity,
+        expected_raw_hash: &str,
+        record: ProofRecorder<'_>,
+    ) -> Result<NoteMutationResult, HistoryError> {
+        let root = self.runtime.store.vault_root();
+        self.runtime.store.require_path(source)?;
+        self.runtime.store.require_path(destination)?;
+        if source == destination || source.parent() != destination.parent() {
+            return Err(
+                "A note rename requires a different filename in its current directory".into(),
+            );
+        }
+        let source =
+            crate::state::validate_current_path(Some(source.to_string_lossy().into_owned()), root)?
+                .ok_or("Missing rename source")?;
+        let destination = destination.to_path_buf();
+        let resolve = || -> Result<(PathBuf, String), HistoryError> {
+            if crate::state::resolve_note_path_by_id(root, identity.as_str())?.as_deref()
+                != Some(source.as_path())
+            {
+                return Err(HistoryError::Stale(
+                    "Rename source location changed; read and review again".into(),
+                ));
+            }
+            if !fs::symlink_metadata(&source)?.file_type().is_file() {
+                return Err(HistoryError::Stale(
+                    "Rename source is no longer an ordinary file".into(),
+                ));
+            }
+            let raw = fs::read_to_string(&source)?;
+            require_raw_publication_base(&raw, identity, expected_raw_hash)?;
+            match fs::symlink_metadata(&destination) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+                Ok(_) => return Err(HistoryError::Stale("Rename destination is occupied".into())),
+            }
+            if crate::note::parse_note(&raw)
+                .frontmatter
+                .managed
+                .as_ref()
+                .is_none_or(|managed| managed.trashed_at.is_some())
+            {
+                return Err(HistoryError::Stale(
+                    "Rename source is no longer an active note".into(),
+                ));
+            }
+            Ok((source.clone(), raw))
+        };
+        self.with_admitted_publication(Some(&source), Some(identity), |_| resolve(), |_, raw, admitted| {
+            if admitted != *identity {
+                return Err(HistoryError::Stale("Rename source identity changed".into()));
+            }
+            let _mutation = self.begin_current_content_mutation()?;
+            self.finalize_editor_capture(identity)?;
+            // A fresh authorized read can see an external edit before its watcher
+            // event. Retain that observed source state through the existing
+            // history owner; the following filename-only effect adds no content
+            // revision and cannot claim authorship of the independent edit.
+            if history_store::current_content_hash(&self.runtime.store, identity)?
+                .is_some_and(|head| head != history_store::authored_content_hash(&raw))
+            {
+                history_store::record_external_revision(&self.runtime.store, identity,
+                    &source, &raw, crate::time::current_time_millis()?, None)?;
+            }
+            let intent = history_store::prepare_rename_publication(
+                &self.runtime.store, &source, &destination, &raw,
+                crate::time::current_time_millis()?,
+            )?;
+            let proof = PublicationProof {
+                token: intent.as_str().into(), note_id: identity.as_str().into(),
+                path: destination.clone(), canonical_markdown: raw.clone(),
+                effect: PublicationEffect::Rename { source_path: source.clone() },
+            };
+            if let Err(error) = record(&proof) {
+                return Err(intent.abandon_after_history_failure(error));
+            }
+            #[cfg(feature = "e2e-wdio")]
+            crate::e2e_process_fault::hit("rename-prepared");
+            // Proof recording can block on durable external state. Revalidate
+            // source bytes/location and destination after it returns.
+            if let Err(error) = resolve() {
+                return Err(intent.abandon_after_history_failure(error));
+            }
+            let removal = crate::vault_watcher::record_expected_removal(&source);
+            let write = crate::vault_watcher::record_expected_write(&destination, &raw);
+            if let Err(error) = crate::state::atomic_move_note_no_replace(&source, &destination) {
+                // The kernel can have moved successfully before an I/O/sync
+                // acknowledgement fails. Never abandon an unproven effect.
+                let source_unchanged = fs::read_to_string(&source).is_ok_and(|current| current == raw);
+                let destination_absent = fs::symlink_metadata(&destination).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+                if source_unchanged && (destination_absent || error.kind() == std::io::ErrorKind::AlreadyExists) {
+                    return Err(intent.abandon_after_history_failure(error.into()));
+                }
+                let _ = history_store::release_publication_receipt(&self.runtime.store, &intent);
+                let _ = self.runtime.require_released_capture_recovery();
+                return Err(HistoryError::from(error).with_context("Rename outcome is uncertain; reconcile its retained two-path proof before retrying"));
+            }
+            removal.commit();
+            write.commit();
+            #[cfg(feature = "e2e-wdio")]
+            crate::e2e_process_fault::hit("rename-moved");
+            // An external writer can change the source inode between the final
+            // read and rename. Keep that changed file intact and retain proof;
+            // no rollback or stale-byte publication can restore the reviewed input.
+            if !fs::symlink_metadata(&destination).is_ok_and(|metadata| metadata.file_type().is_file())
+                || !fs::read_to_string(&destination).is_ok_and(|current| current == raw)
+                || !fs::symlink_metadata(&source).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            {
+                let _ = history_store::release_publication_receipt(&self.runtime.store, &intent);
+                let _ = self.runtime.require_released_capture_recovery();
+                return Err("Rename moved a concurrently changed source; retained effect requires reconciliation".into());
+            }
+            if let Err(error) = history_store::record_rename_effect(&self.runtime.store, &intent) {
+                let _ = history_store::release_publication_receipt(&self.runtime.store, &intent);
+                let _ = self.runtime.require_released_capture_recovery();
+                return Err(error.with_context("Rename moved; its exact effect observation still requires reconciliation"));
+            }
+            #[cfg(feature = "e2e-wdio")]
+            crate::e2e_process_fault::hit("rename-observed");
+            Ok(self.mutate(NoteMutation {
+                source: MutationSource::AgentPublication,
+                history_intent: intent,
+                path: destination.clone(),
+                previous_path: Some(source.clone()),
+                fallback_markdown: raw,
+            }))
+        })
+    }
+
+    fn reconcile_rename_publication(
+        &self,
+        proof: &PublicationProof,
+        source: &Path,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.runtime.store.require_path(source)?;
+        self.runtime.store.require_path(&proof.path)?;
+        if source.parent() != proof.path.parent() || source == proof.path {
+            return Err("Invalid retained rename locations".into());
+        }
+        self.retry_history_recovery(self.runtime.store.vault_root())?;
+        let identity = NoteIdentity::new(proof.note_id.clone());
+        if !history_store::verify_rename_publication(
+            &self.runtime.store,
+            &proof.token,
+            &identity,
+            source,
+            &proof.path,
+            &proof.canonical_markdown,
+        )? {
+            return Ok(None);
+        }
+        let (diagnostics, warning) = crate::state::with_note_file_mutation(|| {
+            let _operation = self.runtime.begin_operation()?;
+            let _mutation = self.begin_current_content_mutation()?;
+            let current = fs::symlink_metadata(&proof.path)
+                .ok()
+                .filter(|metadata| metadata.file_type().is_file())
+                .and_then(|_| fs::read_to_string(&proof.path).ok())
+                .filter(|raw| {
+                    crate::note::parse_note(raw)
+                        .frontmatter
+                        .managed
+                        .as_ref()
+                        .is_some_and(|managed| {
+                            managed.id == proof.note_id && managed.trashed_at.is_none()
+                        })
+                });
+            match current {
+                Some(raw) => {
+                    // A newly created old-path file is independent data. Upsert
+                    // that current file separately, never remove its projection
+                    // merely because it shares a former location.
+                    let old_present = fs::symlink_metadata(source).is_ok();
+                    let mut outcome = post_publication::synchronize_canonical_file(
+                        self.state,
+                        proof.path.clone(),
+                        (!old_present).then(|| source.to_path_buf()),
+                        raw,
+                    );
+                    if old_present {
+                        if let Some(old_raw) = fs::symlink_metadata(source)
+                            .ok()
+                            .filter(|metadata| metadata.file_type().is_file())
+                            .and_then(|_| fs::read_to_string(source).ok())
+                        {
+                            let old = post_publication::synchronize_canonical_file(
+                                self.state,
+                                source.to_path_buf(),
+                                None,
+                                old_raw,
+                            );
+                            outcome.issues.extend(old.issues);
+                        }
+                    }
+                    let warning = outcome.required_consistency_warning();
+                    Ok::<_, HistoryError>((outcome.issues, warning))
+                }
+                None => Ok((
+                    vec![],
+                    Some(NoteMutationWarning::single(
+                        MutationWarningStage::CanonicalRead,
+                        "The rename committed; its current location could not be verified.".into(),
+                        "The current destination is unavailable or has another identity.".into(),
+                    )),
+                )),
+            }
+        })?;
+        Ok(Some(NoteMutationResult {
+            payload_version: PayloadVersion::V1,
+            source: MutationSource::AgentPublication,
+            note_id: identity,
+            path: proof.path.clone(),
+            canonical_markdown: proof.canonical_markdown.clone(),
+            diagnostics,
+            warning,
+        }))
+    }
+
     /// Verification recovers retained history only; it never publishes new Markdown.
     /// Token, identity and canonical bytes must verify against the retained receipt.
     pub(crate) fn reconcile_publication(
         &self,
         proof: &PublicationProof,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        if let PublicationEffect::Rename { source_path } = &proof.effect {
+            return self.reconcile_rename_publication(proof, source_path);
+        }
         let path = &proof.path;
         self.runtime.store.require_path(path)?;
         let identity = NoteIdentity::new(proof.note_id.clone());
@@ -480,6 +767,7 @@ impl<'a> NoteTimeline<'a> {
                 note_id: identity,
                 path: path.clone(),
                 canonical_markdown: canonical.clone(),
+                effect: PublicationEffect::Write,
             };
             if let Err(error) = record(&proof) {
                 return Err(history_intent.abandon_after_history_failure(error));

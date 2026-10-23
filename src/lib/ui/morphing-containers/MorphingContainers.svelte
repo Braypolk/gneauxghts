@@ -165,13 +165,22 @@
       window.removeEventListener('resize', finish); media.removeEventListener('change', finish); } };
   }
   function measureContent(node: HTMLElement, id: string) {
+    let measureFrame: number | undefined;
     const read = () => {
       const height = node.getBoundingClientRect().height;
       if (height && heights[id] !== height) heights = { ...heights, [id]: height };
     };
-    const observer = new ResizeObserver(read);
+    // Publishing a content height can resize its containing dock. Leave the
+    // observer delivery before changing ancestor geometry, and coalesce reads.
+    const observer = new ResizeObserver(() => {
+      if (measureFrame !== undefined) return;
+      measureFrame = requestAnimationFrame(() => { measureFrame = undefined; read(); });
+    });
     observer.observe(node); read();
-    return { destroy: () => observer.disconnect() };
+    return { destroy() {
+      observer.disconnect();
+      if (measureFrame !== undefined) cancelAnimationFrame(measureFrame);
+    } };
   }
   onDestroy(cancel);
 </script>

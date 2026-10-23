@@ -118,6 +118,27 @@ Starting a New Idea leaves a nonempty document through the existing save/departu
 boundary and rebinds only the invoking pane to a fresh draft. Other panes retain
 the existing document. Starting from an empty draft reuses it.
 
+### Recovery Drafts restore unfinished work to its original Note Identity
+
+Dirty body, tags and title input are coalesced into vault-private Recovery Drafts
+alongside the saved content they were based on.
+A clean canonical adoption clears only its matching work; newer edits remain.
+Versioned tombstones prevent delayed writes from reviving saved/discarded work or
+old removals from deleting newer work. Backup errors are visible and retryable,
+independent of canonical save errors. Coalescing and abrupt platform termination
+retain a loss window; typing is not synchronously durable.
+
+Recovered work is offered explicitly and opens the original Note Identity through
+ordinary workspace navigation before restoring unfinished edits. Never-saved ideas
+resume as drafts. Already-saved matching content is acknowledged without replay.
+Changed or unknown saved bases (including legacy backups) require the existing
+conflict choice; current unsaved edits and unresolved conflicts cannot be replaced.
+A second interruption preserves that conflict requirement. Missing originals retain
+the backup without publishing a replacement. Restored work is backed up before
+the old backup is retired. Normal departure, editor ownership and mandatory Note
+Timeline preparation still apply. Next-launch vault staging cannot redirect the
+Running Vault's Recovery Drafts.
+
 ### Chat context and note navigation agree with visible content
 
 The composer context indicator estimates Pi's derived active model context,
@@ -370,7 +391,13 @@ intersect and remaining words use ordinary relevance. Tags are normalized to
 lowercase and matched exactly by filters. Only the authored `tags` field is
 indexed as tags; body hashtags remain prose. Tag changes refresh search and Atlas
 metadata without changing content embeddings, graph edges, or geometry inputs.
-Atlas tag searches highlight existing positions; they do not regroup notes.
+Atlas searches filter rendered nodes, filenames and connections at their existing
+positions; clearing the filter restores the admitted inventory. Search never
+regroups notes or changes accepted geography, and does not offer an editor-style
+note suggestion panel. Native query relevance admits matches using the active
+provider's text floor or sufficient lexical/title/tag/path evidence; recency and
+opening frequency affect ordering only. The frontend does not apply another
+model-independent similarity threshold.
 
 ### External changes never overwrite dirty local work
 
@@ -387,6 +414,13 @@ bytes happen to be on disk later.
 
 ### Committed adoption belongs to the document boundary
 
+Explicit formatting actions are isolated shared Undo steps, including selected
+text, caret commands and table cells. Empty paired markers remain writable;
+inline code chooses a delimiter longer than backticks in its content and toggles
+that complete delimiter. Formatting shortcuts yield from composition start,
+including the interval before the first composing edit. Pane presentation may
+conceal markers without changing the canonical source or shared Undo history.
+
 Editor changes update the authoritative draft synchronously using an immutable
 body value. A captured save retains that exact body and metadata even if editing
 continues or every pane unmounts. Undo back to saved content is clean; revisions
@@ -396,7 +430,7 @@ remain intact until editing; root and pane offsets use the same CodeMirror
 line-ending normalization.
 
 Ordinary save, Version Restore, admitted agent publication, clean external refresh, and
-transient Forgotten-Note Recovery enter fixed-purpose document adoption methods.
+transient Forgotten-Note Recovery and Recovery Drafts enter fixed-purpose document adoption methods.
 Callers do not choose identity, baseline, warning, rekey, runtime-reset, or
 derived-refresh policy. A committed warning is adopted as part of the successful
 result and never authorizes another write. Ordinary save preserves eligible later
@@ -502,7 +536,7 @@ a preparation failure publishes nothing. Target verification and retryable
 recovery admission do not hold the canonical file owner. A ready note remains
 saveable while another save waits for its target. Admission is checked again
 under ownership; newly retained observations settle before the authored save.
-A failed rename/save restores the original path when rollback succeeds and
+A failed ordinary editor rename/save restores the original path when rollback succeeds and
 returns an error, preserving the requested dirty edit. An indeterminate rollback
 retains recovery evidence and must never report old bytes as a successful save. An opaque intent identity correlates
 that preparation with exact finalization, and the shared note-file mutation
@@ -516,7 +550,12 @@ A history-finalization failure follows the same committed-warning rule and is
 completed idempotently from its prepared intent and authoritative Markdown.
 If authoritative Markdown cannot be read after publication, history remains
 pending and the committed result carries a warning; caller fallback bytes are
-never finalized as history truth.
+never finalized as history truth. A raw-preserving agent rename instead retains a
+two-location journal: exact destination bytes/identity and source absence must be
+witnessed before its unchanged authored history can settle. A durable witnessed
+effect may finish that original lifecycle capture after a subsequent external
+edit; recovery never republishes the retained bytes. Without that witness, mixed
+or changed states remain uncertain and untouched.
 Finalization verifies both authored bytes and managed Note Identity, and the
 revision's committed time is issued by the app into the durable intent
 immediately before publication, so immediate finalization and restart recovery
@@ -704,6 +743,20 @@ observation and publication. No managed chat projection classification or
 transcript-specific write restriction participates.
 
 ### Semantic search preserves the last usable result
+
+Optional result-type and edited-time cues constrain admission before ranking and
+limits. They remain reversible retrieval controls; writing needs no classification.
+Date/type changes supersede old requests and participate in cache compatibility.
+Current-note passage search retains occurrence navigation and opening behavior.
+Atlas ranked results and highlights use the same admitted scores and cannot
+reorganize accepted geography.
+
+Ordinary text media retrieval omits duplicate passage ranking when the note
+channel already owns it. Image-query defaults retain passage retrieval. Shared
+query preparation retains only the last exact text embedding for one compatible
+provider generation; it caches neither authority nor results. Canonical byte
+fingerprints still detect watcher-missed changes, with file reads outside the
+notes catalog mutex and identity/path bindings checked around those reads.
 
 Discovered ordinary notes are keyword-searchable as soon as they enter the
 note catalog. While their lexical projection is missing or outdated, search
@@ -985,7 +1038,7 @@ current target and do not silently inherit a Temporary write grant.
 Provider and model remain distinct choices. Local capability/reasoning metadata
 is discovered and validated rather than guessed from model names. The compatible
 transport maps supported reasoning options; unavailable metadata sends no invented
-override. Switching conversations or deriving titles does not trigger inference.
+override. Switching conversations or deriving ordinary chat titles does not trigger inference.
 
 ### Related notes do not resize authored content
 
@@ -1132,8 +1185,9 @@ settling instead of moving the scrollbar every frame.
 
 ## Agent publication
 
-Chat exposes targeted saved-note updates and new Markdown note creation with
-independent write settings and exact review. Pi's public edit tool prepares edit arguments and computes staged
+Chat exposes targeted saved-note updates, new Markdown note creation and same-folder filename renaming with
+shared existing-note write permission for edits/renames, separate creation permission,
+and a common default-on review setting. Pi's public edit tool prepares edit arguments and computes staged
 replacements; domain identifiers remain exact strings and arbitrary path arguments
 are rejected. Only native
 authority, the document owner and NoteTimeline can publish them. The original
@@ -1149,8 +1203,9 @@ breaks with a legend. These are presentation transforms; exact candidate bytes a
 the full technical diff remain unchanged.
 The review document is seeded atomically with its publication task. New task inputs
 retain references and the approval hash, without a duplicate review title/patch.
-Review data is explicitly either an edit patch or a creation destination and
-authored Markdown; creations carry no empty patch. Pi's document upgrade preserves
+Review data is explicitly an edit patch, a creation destination and authored
+Markdown, or exact rename source/destination paths; creations and renames carry no
+empty patch. Pi's document upgrade preserves
 pending review content and decisions across this representation change.
 There is no older review-input migration. Update admission requires the exact raw
 base hash. Create admission requires its own explicit operation grant and an
@@ -1161,26 +1216,48 @@ all existing destinations, including late arrivals; it never overwrites or choos
 a suffix. Creation reuses Pi's checkpointed validated tool arguments without a
 duplicate candidate memo. The same stable Pi request reopens its original intent, and native
 proof/result reconciliation survives restart and lost acknowledgements without
-creating a second note. Both operations retain the same publication task and
-document-owner lease; creation introduces no separate scheduler.
+creating a second note. All three operations retain the same publication task and
+document-owner lease; neither creation nor rename introduces a separate scheduler.
+
+Rename requires Update permission, an exact issued read and source identity/location
+admission. The same explicit note or descendant-folder scope applies to edits and
+renames. The normal review setting applies to both; enabled rename review binds the
+exact source and destination paths. Prepared intents retain their original review requirement.
+Native code derives one safe visible Markdown filename in the existing folder;
+ambiguous case/normalization-only names, unsafe/reserved names, symlinks and occupied
+destinations are rejected. There is no suffix, overwrite, directory creation,
+arbitrary-path input or backlink rewrite. ID references retain identity; ordinary
+filename/path links may stop resolving, as the review explains.
+NoteTimeline durably prepares both paths and exact raw source bytes before the
+platform atomic no-replace move, rechecks the source and destination under the
+canonical owner, and retains the existing identity and history chain. Managed
+metadata and authored bytes remain unchanged; the existing rename Lifecycle Event
+adds no duplicate content revision. Unsupported primitives fail closed. Recovery
+observes the original proof and repairs projections, never moves or republishes
+bytes, and preserves a foreign file that has reoccupied either path. Uncertain
+outcomes retain their evidence. See [ADR 0015](../adr/0015-prove-agent-renames-across-both-locations.md).
 
 A read grant cannot authorize a write. Off/Temporary/Always grants specify
 operations and explicit note/folder scope; Temporary belongs to one conversation
 across reopen and ends on revocation or deletion, while Always belongs to the
-Running Vault. Update permission never implies create permission. Review is independent and
-default-on. Always is projected into every chat rather than hidden by an earlier
+Running Vault. Update permission includes content, properties and filename
+changes; it never implies Create permission. Review is independent and default-on. Always is projected into every chat rather than hidden by an earlier
 Temporary grant. Choosing Temporary or Off atomically removes Always; other
 independently granted Temporary conversations retain their grants. Mounted views
 refresh from native policy changes. Direct publication requires a current scoped
-grant and explicitly disabled review; approval binds one exact payload and cannot
-widen its scope.
+grant and explicitly disabled review. When enabled, approval binds one exact
+payload and cannot widen its scope.
 First-use permission creation and selection stay bound to the originating draft.
 If selection changes or the view is disposed before the target chat is ready, no
 permission command is sent. A delayed response never adopts authority into a
 different selected chat; native revision and scope validation remain mandatory.
 
-Chat and Settings expose creation as a separate, default-unchecked permission.
-Changing duration preserves already explicit operations and scope.
+Chat and Settings expose shared content/property/filename editing permission and
+a separate, default-unchecked Create permission. Changing duration preserves already
+explicit operations and scope. Both surfaces expose existing relative folders;
+all enabled operations include descendants, and renames remain in the current
+folder. Saving folders preserves note identity scopes and the selected operations, and stays bound to the originating
+authority revision.
 Settings exposes that same vault-owned Off/Always grant and review policy without
 requiring or creating a conversation. Saving applies to existing and new chats,
 invalidates affected authority revisions, and preserves individually granted
@@ -1189,8 +1266,33 @@ Temporary permissions. Chat and Settings never retain independent write defaults
 Changed canonical content, dirty editor body/title/tags/identity, unresolved
 conflict or a pending operation blocks conflicting publication. A short
 `DocumentEditingService.withAgentPublication` lease prevents editor races and adopts
-the verified canonical receipt through the document boundary. A refreshed WebView
+the verified canonical receipt through the document boundary. Rename leases bind
+both source and destination, freeze matching shared editor runtimes, and preserve
+the Document Handle and shared undo root while adopting the new canonical path.
+A proven committed rename recovered with newer local edits adopts its new path
+and saved baseline while preserving working text and an explicit external
+conflict. Adoption failure retains the lease and committed fact for retry; it
+cannot authorize an old-path autosave or another rename effect. A rename
+reconciliation lease freezes both locations before awaiting its first native
+proof query. If that query or a later outcome check fails before a receipt is
+available, the original intent and visible Retry remain with the retained lease.
+Retry joins active publication/cancellation work and any pending native admission
+release, then only reconciles: committed proof adopts the canonical location,
+confirmed non-publication releases the pause, and unavailable proof retains it.
+A previously proven commit cannot be downgraded by a later proof failure.
+Ordinary saved-buffer captures also retain the expected Note
+Identity into Timeline admission: a delayed old-path save is rejected after that
+identity has moved, including when another note has reoccupied the old path.
+New drafts remain explicit creations, and Keep My Edits may restore a disappeared
+note whose identity has not moved. A refreshed WebView
 must bind a new native page generation rather than wait forever on a stale owner.
+When a native session read/open supplies a Note Identity, an existing path hint
+or warm catalog hint is accepted only if it still belongs to that identity.
+Post-read validation rejects a replacement that races resolution. Missing
+metadata may retain catalog ownership only at a location admitted by Note
+Timeline's durable continuity evidence; an old filename reused after rename
+cannot become the original document. Path-only reads keep their explicit path
+semantics.
 Ordinary save, external refresh and History Mode keep their existing owners.
 
 Pi tasks own checkpoints and progression; native intent/receipt and NoteTimeline
@@ -1200,8 +1302,22 @@ blocks new effects without pretending a published effect was undone. Committed
 warnings remain successful canonical outcomes and cannot authorize replay.
 Their repair messages survive Pi task settlement and tool output, and remain
 visible outside collapsed activity, including after Stop and reopening.
+Agent updates replace the complete authored body and unmanaged frontmatter from
+the reviewed candidate, including removing the final authored property. Managed
+identity and lifecycle metadata remain native-owned; an update candidate containing
+the reserved managed block is rejected before review.
 Legacy editable proposal workflows and chat-to-note promotion are retired; the native
 publication/conflict/proof requirements continue independently of that UI.
+
+## Note naming
+
+Automatic AI titles are retired. Creating, saving or opening a note cannot start
+background title inference. The editor offers no automatic-title preference,
+suggestion controls or application timer. Ordinary saves use the explicit title,
+or derive a filename from the first nonempty body line when the title is blank.
+Existing titles are not rewritten by background work. Retired blank-title captures
+remain readable and join ordinary naming on their next save. Explicit Pi renaming
+retains its separate grant, exact review and Note Timeline publication boundary.
 
 ## Image interactions
 

@@ -1,6 +1,6 @@
 import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
-import type { SearchMode } from '#lib/features/notepad/search/search.js';
+import type { SearchMode, SearchResultType, SearchEditedWindow } from '#lib/features/notepad/search/search.js';
 
 /**
  * Forget/unforget bundle: the chrome on the left of the command bar.
@@ -29,6 +29,12 @@ export interface NotepadCommandBarSearchProps {
   imageResults?: ImageSearchItem[];
   imageQueryUrl?: string | null;
   mediaError?: string | null;
+  searchError?: string | null;
+  onSearchRetry?: () => void | Promise<void>;
+  resultType?: SearchResultType;
+  editedWindow?: SearchEditedWindow;
+  onResultTypeChange?: (type: SearchResultType) => void | Promise<void>;
+  onEditedWindowChange?: (window: SearchEditedWindow) => void | Promise<void>;
   onQueryImage?: (file: File) => void | Promise<void>;
   onSearchClear?: () => void;
   onImageSelect?: (item: ImageSearchItem) => void | Promise<void>;

@@ -1,19 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Harness, MemoryStorage, createRegistry, defineDoc } from '@earendil-works/pi-durable';
+import { Harness, MemoryStorage, createRegistry, defineDoc, defineTask } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { invoke } from '@tauri-apps/api/core';
-import { bindPublicationDocumentOwner, mountPublicationDocumentOwner, publishPreparedMutation, publicationExtension, PublicationTask, EditReviewDoc, type PublicationResult } from './publication';
+import { bindPublicationDocumentOwner, mountPublicationDocumentOwner, publishPreparedMutation, publicationExtension, PublicationTask, EditReviewDoc, decideEditReview, retryPublicationAdoption, subscribePublicationAdoptionRecovery, type PublicationAdoptionRecovery, type PublicationIntent, type PublicationResult } from './publication';
 import { createDocumentEditingService } from '#lib/features/notepad/document/documentEditingService.js';
 import { adoptCommittedDocument, createNoteDraftState, createNotepadState } from '#lib/features/notepad/state/noteStore.js';
-import { getDocumentMarkdown, updateDocumentMarkdown } from '#lib/features/notepad/document/documentState.js';
+import { dispatchDocumentExternalSync, dispatchDocumentOperation, getDocumentMarkdown, getDocumentPath, getDocumentTitle, updateDocumentMarkdown } from '#lib/features/notepad/document/documentState.js';
 import { documentRegistry } from '#lib/features/notepad/document/documentRegistry.js';
+import { createRuntimePane } from '#lib/features/notepad/editor/testSupport.js';
+import { DocumentPublicationBlocked } from '#lib/features/notepad/document/documentPublicationAdmission.js';
 import type { NoteSession } from '#lib/features/notepad/model/types.js';
 
 const original: NoteSession = { noteId: 'note-1', path: '/vault/Note.md', title: 'Note', markdown: 'Original', tags: [] };
-const target = { noteId: original.noteId, path: original.path! };
-const intent = { authorityId: 'authority-1', intentId: 'intent-1', target };
+const target = { noteId: original.noteId!, path: original.path! };
+const intent = { effect: 'write' as const, authorityId: 'authority-1', intentId: 'intent-1', target };
 const committed: PublicationResult = { status: 'committed', receiptId: 'receipt-1', noteId: 'note-1', path: target.path, markdown: 'Published' };
 const hostNative = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: hostNative.invoke }));
@@ -41,7 +43,7 @@ function fixture() {
     if (command === 'pi_chat_publish_mutation') { canonical = { ...original, markdown: 'Published' }; return outcome = committed; }
   });
   const bind = async () => { const owner = await bindPublicationDocumentOwner(service, native as typeof invoke); closers.push(owner.close); return owner; };
-  return { document, root, service, native, read, bind, setOutcome(value: PublicationResult) { outcome = value; }, publishCanonical() { canonical = { ...original, markdown: 'Published' }; } };
+  return { document, root, service, native, read, bind, setOutcome(value: PublicationResult) { outcome = value; }, setCanonical(value: NoteSession) { canonical = value; }, publishCanonical() { canonical = { ...original, markdown: 'Published' }; } };
 }
 afterEach(async () => {
   await Promise.all(harnesses.splice(0).map(harness => harness.close(context)));
@@ -50,6 +52,54 @@ afterEach(async () => {
 });
 
 describe('publication task execution seam', () => {
+  it.each(['write', 'rename'] as const)('reopens a v3 %s awaiting review and publishes its original intent once', async effect => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = effect === 'rename'
+      ? { ...committed, path: renamed.path, markdown: renamed.markdown } : committed;
+    const normal = f.native.getMockImplementation()!;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_publish_mutation' && effect === 'rename') {
+        f.setCanonical(renamed); f.setOutcome(receipt); return receipt;
+      }
+      return normal(command);
+    });
+    hostNative.invoke.mockImplementation(f.native);
+    const previous = { ...intent, target: effect === 'rename' ? { ...target, destinationPath: renamed.path } : target,
+      review: { payloadHash: 'original-approval-hash' } };
+    const { effect: _effect, ...input } = previous;
+    type Checkpoint = { phase: 'review' } | { phase: 'publish' };
+    // Unregistered legacy definitions can be persisted but cannot execute.
+    const PreviousTask = defineTask<Omit<PublicationIntent, 'effect'>, Checkpoint, unknown>({
+      name: PublicationTask.definition.name, version: 3, initial: () => ({ phase: 'review' }),
+      phases: { review: async () => { throw new Error('Legacy task must not run.'); }, publish: async () => { throw new Error('Legacy task must not run.'); } },
+      abort: async () => { throw new Error('Legacy task must not run.'); }
+    });
+    const storage = new MemoryStorage(); storage.close = async () => {};
+    const models = createModels();
+    const before = await Harness.open(storage, { registry: createRegistry(), models }, context); harnesses.push(before);
+    const conversation = await before.createConversation({ ownership: { kind: 'ownerless' } }, context);
+    const taskId = await before.commit(async tx => {
+      const id = await tx.createTask(PreviousTask, input, { ownership: { kind: 'conversation' }, conversationId: conversation.id });
+      (await tx.doc(EditReviewDoc, conversation.id)).items[String(id)] = { taskId: id, title: 'Original review', decision: 'pending',
+        ...(effect === 'rename' ? { kind: 'rename', sourcePath: 'Note.md', destinationPath: 'Renamed.md' } : { kind: 'edit', patch: '-Original\n+Published' }) };
+      return id;
+    }, context);
+    expect((await before.getTask(taskId, context))?.version).toBe(3);
+    await before.close(context);
+    const registry = createRegistry(); registry.install(publicationExtension());
+    const after = await Harness.open(storage, { registry, models }, context); harnesses.push(after);
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_publish_mutation')).toBe(false);
+    await decideEditReview(after, conversation.id, taskId, 'approved');
+    expect((await after.waitForTask(taskId, context)).state).toMatchObject({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: committed.receiptId } } });
+    expect((await after.getTask(taskId, context))?.version).toBe(4);
+    expect((await after.getTask(taskId, context))?.input).toEqual({ ...input, effect });
+    expect(hostNative.invoke).toHaveBeenCalledWith('pi_chat_approve_mutation', { authorityId: intent.authorityId, intentId: intent.intentId, payloadHash: 'original-approval-hash' });
+    expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_prepare_mutation')).toBe(false);
+    expect(getDocumentPath(f.document)).toBe(receipt.path);
+    expect(await after.snapshot(EditReviewDoc, conversation.id, context)).toEqual({ items: {} });
+  });
   it('upgrades retained reviews on reopen without losing their content or decisions', async () => {
     const PreviousReviewDoc = defineDoc({ kind: 'gneauxghts.editReviews', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ items: {
       '7': { taskId: 7, title: 'Existing note', patch: '-old\n+new\n', decision: 'pending' },
@@ -185,6 +235,132 @@ describe('publication task execution seam', () => {
     expect(f.native.mock.calls.map(([command]) => command)).toEqual(['pi_chat_bind_editor_owner', 'pi_chat_reconcile_mutation']);
     expect(getDocumentMarkdown(f.document)).toBe('Original');
   });
+  it('reconciles a committed rename into the retained handle without another native effect', async () => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    f.setCanonical(renamed); f.setOutcome(receipt);
+    const handle = f.document.handle;
+    await expect(publishPreparedMutation({ ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } })).resolves.toEqual(receipt);
+    expect(f.document.handle).toBe(handle); expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(getDocumentTitle(f.document)).toBe('Renamed');
+    expect(f.native.mock.calls.map(([command]) => command)).toEqual(['pi_chat_bind_editor_owner', 'pi_chat_reconcile_mutation']);
+  });
+  it('preserves fresh-page human edits and the committed receipt while retiring the old rename save location', async () => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    f.setCanonical(renamed); f.setOutcome(receipt);
+    updateDocumentMarkdown(f.document, 'Human edits after reloading');
+    f.root.restoreTransientMarkdown('Human edits after reloading');
+    await expect(publishPreparedMutation({ ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } })).resolves.toEqual(receipt);
+    expect(getDocumentMarkdown(f.document)).toBe('Human edits after reloading');
+    expect(f.root.markdown).toBe('Human edits after reloading');
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(getDocumentTitle(f.document)).toBe('Renamed');
+    expect(f.document.savedBaseline?.content.body.toMarkdown()).toBe('Original');
+    expect(f.document.externalSync.kind).toBe('conflict');
+    if (f.document.externalSync.kind !== 'conflict') throw new Error('Expected an explicit conflict choice.');
+    dispatchDocumentExternalSync(f.document, { type: 'keepWorking', conflictId: f.document.externalSync.conflictId });
+    expect(f.service.captureSave(f.document).path).toBe(renamed.path);
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_publish_mutation')).toBe(false);
+  });
+  it('retains an uncertain two-path rename lease until reconciliation proves the original receipt', async () => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    const renameIntent = { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } };
+    const normal = f.native.getMockImplementation()!;
+    let reconciliations = 0;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_reconcile_mutation' && ++reconciliations === 2) throw new Error('Two-path proof unavailable');
+      if (command === 'pi_chat_publish_mutation') {
+        f.setCanonical(renamed); f.setOutcome(receipt); throw new Error('Rename acknowledgement lost');
+      }
+      return normal(command);
+    });
+    await expect(publishPreparedMutation(renameIntent)).rejects.toThrow('Two-path proof unavailable');
+    expect(f.service.isAgentPublicationActive()).toBe(true);
+    expect(() => updateDocumentMarkdown(f.document, 'Stale-path write')).toThrow();
+    await expect(publishPreparedMutation(renameIntent)).resolves.toEqual(receipt);
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
+  });
+  it('keeps fresh-page editors protected when a proven rename cannot yet be read back', async () => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    const renameIntent = { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } };
+    f.setCanonical(renamed); f.setOutcome(receipt);
+    updateDocumentMarkdown(f.document, 'Human draft'); f.root.restoreTransientMarkdown('Human draft');
+    f.read.mockRejectedValueOnce(new Error('Canonical read temporarily unavailable'));
+    const recovery: Array<PublicationAdoptionRecovery | null> = [];
+    const unsubscribe = subscribePublicationAdoptionRecovery(value => recovery.push(value));
+    await expect(publishPreparedMutation(renameIntent)).resolves.toMatchObject({ ...receipt, commitWarning: { issues: [{ stage: 'editorAdoption', message: 'Canonical read temporarily unavailable' }] } });
+    expect(f.service.isAgentPublicationActive()).toBe(true);
+    expect(() => updateDocumentMarkdown(f.document, 'Stale-path edit')).toThrow();
+    expect(recovery.at(-1)?.message).toContain('Retry editor refresh');
+    await retryPublicationAdoption();
+    expect(getDocumentMarkdown(f.document)).toBe('Human draft');
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(f.document.externalSync.kind).toBe('conflict');
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(recovery.at(-1)).toBeNull(); unsubscribe();
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_publish_mutation')).toBe(false);
+  });
+
+  it('freezes dirty old-path editors and autosave captures before a delayed initial rename reconciliation', async () => {
+    const f = fixture(); await f.bind();
+    updateDocumentMarkdown(f.document, 'Human draft'); f.root.restoreTransientMarkdown('Human draft');
+    const pane = createRuntimePane(f.root, 'Human draft', 0);
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    f.setCanonical(renamed); f.setOutcome(receipt);
+    const pending = Promise.withResolvers<PublicationResult>(); const normal = f.native.getMockImplementation()!;
+    f.native.mockImplementation(async command => command === 'pi_chat_reconcile_mutation' ? pending.promise : normal(command));
+    const publishing = publishPreparedMutation({ ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } });
+    await vi.waitFor(() => expect(f.native).toHaveBeenCalledWith('pi_chat_reconcile_mutation', { intentId: intent.intentId }));
+    try {
+      expect(f.service.isAgentPublicationActive()).toBe(true);
+      expect(() => f.service.captureSave(f.document)).toThrow();
+      expect(() => updateDocumentMarkdown(f.document, 'Late old-path edit')).toThrow();
+      pane.view.dispatch({ changes: { from: 0, insert: 'Rejected pane input' } });
+      expect(f.root.markdown).toBe('Human draft');
+    } finally { pending.resolve(receipt); }
+    await expect(publishing).resolves.toEqual(receipt);
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(getDocumentMarkdown(f.document)).toBe('Human draft');
+    expect(f.document.externalSync.kind).toBe('conflict');
+  });
+  it.each(['committed', 'unpublished'] as const)('joins a started save refusal before read-only rename proof reports %s', async proof => {
+    const f = fixture(); await f.bind();
+    updateDocumentMarkdown(f.document, 'Human draft'); f.root.restoreTransientMarkdown('Human draft');
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    if (proof === 'committed') { f.setCanonical(renamed); f.setOutcome(receipt); }
+    const nativeSave = Promise.withResolvers<void>();
+    dispatchDocumentOperation(f.document, { type: 'start', operation: 'saving' });
+    const token = f.document.operation.token;
+    const saving = documentRegistry.get(f.document.handle)!.requestSave(async () => {
+      try { await nativeSave.promise; }
+      catch (error) { dispatchDocumentOperation(f.document, { type: 'fail', token, error }); throw error; }
+    });
+    const refused = expect(saving).rejects.toThrow('The saved note has moved.');
+    const publishing = publishPreparedMutation({ ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } });
+    await vi.waitFor(() => expect(f.service.isAgentPublicationActive()).toBe(true));
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_reconcile_mutation')).toBe(false);
+    nativeSave.reject(new Error('The saved note has moved.')); await refused;
+    if (proof === 'committed') await expect(publishing).resolves.toEqual(receipt);
+    else await expect(publishing).resolves.toMatchObject({ status: 'blocked', code: 'editor_busy' });
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_reconcile_mutation')).toBe(true);
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_publish_mutation')).toBe(false);
+    expect(getDocumentPath(f.document)).toBe(proof === 'committed' ? renamed.path : original.path);
+    expect(getDocumentMarkdown(f.document)).toBe('Human draft');
+    expect(f.document.operation).toMatchObject({ kind: 'failed', failedOperation: 'saving', message: 'The saved note has moved.' });
+    if (proof === 'committed') expect(f.document.externalSync.kind).toBe('conflict');
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+  });
   it('returns an editor-busy block for a dirty owner before native effect admission', async () => {
     const f = fixture(); await f.bind(); updateDocumentMarkdown(f.document, 'Human draft');
     await expect(publishPreparedMutation(intent)).resolves.toMatchObject({ status: 'blocked', code: 'editor_busy' });
@@ -255,6 +431,19 @@ describe('publication task execution seam', () => {
     expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_release_editor_publication')).toBe(true);
     expect(getDocumentMarkdown(f.document)).toBe('Original');
   });
+  it('releases a rename lease when cancellation reconciliation proves no effect', async () => {
+    const f = fixture(); await f.bind(); const controller = new AbortController(); const normal = f.native.getMockImplementation()!;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_admit_editor_publication') { controller.abort(new Error('Cancelled rename')); return 'admission-1'; }
+      return normal(command);
+    });
+    const renameIntent = { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: '/vault/Renamed.md' } };
+    await expect(publishPreparedMutation(renameIntent, controller.signal)).rejects.toThrow('Cancelled rename');
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(getDocumentPath(f.document)).toBe(target.path);
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_publish_mutation')).toBe(false);
+    expect(() => updateDocumentMarkdown(f.document, 'Continued human editing')).not.toThrow();
+  });
   it('owner close joins frontend canonical adoption after the native effect has settled', async () => {
     const f = fixture(); const owner = await f.bind(); const observed = Promise.withResolvers<NoteSession>();
     f.read.mockImplementation(() => observed.promise);
@@ -279,6 +468,99 @@ describe('publication task execution seam', () => {
     expect(getDocumentMarkdown(f.document)).toBe('Published');
     expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
   });
+  it('keeps a live rename committed through coded editor adoption failure and retries without publishing again', async () => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    const normal = f.native.getMockImplementation()!;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_publish_mutation') { f.setCanonical(renamed); f.setOutcome(receipt); return receipt; }
+      return normal(command);
+    });
+    f.read.mockRejectedValueOnce(new DocumentPublicationBlocked('The committed identity is temporarily unreadable.'));
+    const registry = createRegistry(); registry.install(publicationExtension());
+    const models = createModels(); models.setProvider(fauxProvider().provider);
+    const harness = await Harness.open(new MemoryStorage(), { registry, models }, context); harnesses.push(harness);
+    const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' } }, context);
+    const taskId = await harness.commit(tx => tx.createTask(PublicationTask, { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } }, { ownership: { kind: 'conversation' }, conversationId: conversation.id }), context);
+    const result = await harness.waitForTask(taskId, context);
+    expect(result.state).toMatchObject({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: receipt.receiptId, noteId: receipt.noteId, commitWarning: { issues: [{ stage: 'editorAdoption' }] } } } });
+    expect(f.service.isAgentPublicationActive()).toBe(true);
+    expect(() => f.service.captureSave(f.document)).toThrow();
+    await retryPublicationAdoption();
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
+  });
+
+  it.each(['committed', 'unpublished', 'blocked'] as const)('recovers a terminal uncertain rename through visible Retry when proof becomes %s', async outcome => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    const normal = f.native.getMockImplementation()!;
+    let uncertain = true, moved = false;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_publish_mutation') {
+        moved = true; f.setCanonical(renamed); f.setOutcome(receipt);
+        throw { code: 'uncertain_publication', message: 'Rename acknowledgement lost' };
+      }
+      if (command === 'pi_chat_reconcile_mutation') {
+        if (uncertain && (outcome !== 'committed' || moved)) throw { code: 'uncertain_publication', message: 'Two-path proof temporarily unavailable' };
+        if (!uncertain && outcome === 'blocked') return { status: 'blocked', code: 'rejected', message: 'The original mutation was rejected.' };
+      }
+      return normal(command);
+    });
+    const recovery: Array<PublicationAdoptionRecovery | null> = [];
+    const unsubscribe = subscribePublicationAdoptionRecovery(value => recovery.push(value));
+    try {
+      const registry = createRegistry(); registry.install(publicationExtension());
+      const models = createModels(); models.setProvider(fauxProvider().provider);
+      const harness = await Harness.open(new MemoryStorage(), { registry, models }, context); harnesses.push(harness);
+      const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' } }, context);
+      const taskId = await harness.commit(tx => tx.createTask(PublicationTask,
+        { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } },
+        { ownership: { kind: 'conversation' }, conversationId: conversation.id }), context);
+      expect((await harness.waitForTask(taskId, context)).state).toMatchObject({ status: 'terminal', outcome: { status: 'failed', error: { detail: { code: 'uncertain_publication' } } } });
+      expect(f.service.isAgentPublicationActive()).toBe(true);
+      expect(() => f.service.captureSave(f.document)).toThrow();
+      expect(recovery.at(-1)?.message).toContain('Retry verification');
+      await expect(retryPublicationAdoption()).rejects.toMatchObject({ code: 'uncertain_publication' });
+      expect(f.service.isAgentPublicationActive()).toBe(true);
+      expect(recovery.at(-1)?.error).toContain('Two-path proof temporarily unavailable');
+      uncertain = false;
+      const before = f.native.mock.calls.filter(([command]) => command === 'pi_chat_reconcile_mutation').length;
+      await Promise.all([retryPublicationAdoption(), retryPublicationAdoption()]);
+      expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_reconcile_mutation')).toHaveLength(before + 1);
+      expect(getDocumentPath(f.document)).toBe(outcome === 'committed' ? renamed.path : original.path);
+      expect(f.service.isAgentPublicationActive()).toBe(false);
+      expect(recovery.at(-1)).toBeNull();
+      expect(() => f.service.captureSave(f.document)).not.toThrow();
+      expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(outcome === 'committed' ? 1 : 0);
+    } finally { unsubscribe(); }
+  });
+
+  it('retains and joins the original native admission after a committed rename release failure', async () => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    const normal = f.native.getMockImplementation()!; let releaseFailed = false;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_publish_mutation') { f.setCanonical(renamed); f.setOutcome(receipt); return receipt; }
+      if (command === 'pi_chat_release_editor_publication' && !releaseFailed) { releaseFailed = true; throw new Error('Native join acknowledgement lost'); }
+      return normal(command);
+    });
+    const renameIntent = { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } };
+    await expect(publishPreparedMutation(renameIntent)).resolves.toMatchObject({ ...receipt, commitWarning: { issues: [{ stage: 'editorAdoption', message: 'Native join acknowledgement lost' }] } });
+    expect(f.service.isAgentPublicationActive()).toBe(true);
+    f.read.mockRejectedValueOnce(new Error('Read-back still unavailable'));
+    await expect(retryPublicationAdoption()).rejects.toThrow('Read-back still unavailable');
+    expect(f.service.isAgentPublicationActive()).toBe(true);
+    await retryPublicationAdoption();
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_release_editor_publication')).toHaveLength(2);
+    expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
+  });
   it('Pi cancellation joins an already admitted native effect and retains its committed fact', async () => {
     const f = fixture(); await f.bind(); const pending = Promise.withResolvers<PublicationResult>(); const normal = f.native.getMockImplementation()!;
     f.native.mockImplementation(async command => command === 'pi_chat_publish_mutation' ? pending.promise : normal(command));
@@ -298,6 +580,47 @@ describe('publication task execution seam', () => {
     expect(result.state).toEqual({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: committed.receiptId, noteId: committed.noteId } } });
     expect(f.service.isAgentPublicationActive()).toBe(false);
     expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
+  });
+
+  it.each([false, true])('Pi cancellation of recovered rename retains its committed fact with unavailable adoption %j', async adoptionUnavailable => {
+    const f = fixture(); await f.bind();
+    const renamed = { ...original, path: '/vault/Renamed.md', title: 'Renamed' };
+    const receipt: PublicationResult = { status: 'committed', receiptId: 'rename-receipt', noteId: original.noteId!, path: renamed.path, markdown: renamed.markdown };
+    const renameIntent = { ...intent, effect: 'rename' as const, target: { ...target, destinationPath: renamed.path } };
+    updateDocumentMarkdown(f.document, 'Human draft'); f.root.restoreTransientMarkdown('Human draft');
+    f.setCanonical(renamed); f.setOutcome(receipt);
+    if (adoptionUnavailable) f.read.mockRejectedValue(new DocumentPublicationBlocked('Committed rename is temporarily unreadable.'));
+    const pending = Promise.withResolvers<PublicationResult>(); const normal = f.native.getMockImplementation()!;
+    let firstReconciliation = true;
+    f.native.mockImplementation(async command => {
+      if (command === 'pi_chat_reconcile_mutation' && firstReconciliation) { firstReconciliation = false; return pending.promise; }
+      return normal(command);
+    });
+    hostNative.invoke.mockImplementation(f.native);
+    const registry = createRegistry(); registry.install(publicationExtension());
+    const models = createModels(); models.setProvider(fauxProvider().provider);
+    const harness = await Harness.open(new MemoryStorage(), { registry, models }, context); harnesses.push(harness);
+    const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' } }, context);
+    const taskId = await harness.commit(tx => tx.createTask(PublicationTask, renameIntent, { ownership: { kind: 'conversation' }, conversationId: conversation.id }), context);
+    const terminal = harness.waitForTask(taskId, context);
+    await vi.waitFor(() => expect(firstReconciliation).toBe(false));
+    const aborting = harness.abortTask(taskId, context);
+    pending.resolve(receipt); await aborting;
+    const result = await terminal;
+    expect(result.state).toMatchObject({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: receipt.receiptId, noteId: receipt.noteId,
+      ...(adoptionUnavailable ? { commitWarning: { issues: [{ stage: 'editorAdoption' }] } } : {})
+    } } });
+    if (adoptionUnavailable) {
+      expect(f.service.isAgentPublicationActive()).toBe(true);
+      expect(() => f.service.captureSave(f.document)).toThrow();
+      f.read.mockResolvedValue(renamed);
+      await retryPublicationAdoption();
+    }
+    expect(getDocumentPath(f.document)).toBe(renamed.path);
+    expect(getDocumentMarkdown(f.document)).toBe('Human draft');
+    expect(f.document.externalSync.kind).toBe('conflict');
+    expect(f.service.isAgentPublicationActive()).toBe(false);
+    expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_publish_mutation')).toBe(false);
   });
 
 });

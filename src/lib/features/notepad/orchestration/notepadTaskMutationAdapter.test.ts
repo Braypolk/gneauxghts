@@ -206,7 +206,9 @@ describe('notepad task mutation adapter', () => {
       expect(saveTaskNoteSession).toHaveBeenCalledWith(
         'Tasks',
         '- [x] Trace me\n\nUnsaved local context',
-        path
+        path,
+        undefined,
+        'system-trace-note'
       );
       expect(saveTaskNoteSession).toHaveBeenCalledTimes(1);
       expect(saveNoteSession).not.toHaveBeenCalled();

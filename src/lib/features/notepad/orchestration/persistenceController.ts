@@ -2,7 +2,7 @@ import type { TagEdit } from "../session/session";
 import type { HistoryReadiness } from "#lib/contracts/historyReadiness.js";
 import { documentRegistry } from "#lib/features/notepad/document/documentRegistry.js";
 import type { NoteSession } from "#lib/features/notepad/model/types.js";
-import type { DocumentEditingService } from "#lib/features/notepad/document/documentEditingService.js";
+import type { DocumentEditingService, DocumentSaveCapture } from "#lib/features/notepad/document/documentEditingService.js";
 import {
   dispatchDocumentOperation,
   documentHasCleanBuffer,
@@ -21,16 +21,20 @@ export interface PersistenceControllerParams {
     markdown: string,
     currentPath: string | null,
     tagEdit?: TagEdit,
+    expectedNoteId?: string | null,
   ) => Promise<NoteSession>;
   saveTaskNoteSession?: (
     title: string,
     markdown: string,
     currentPath: string | null,
     tagEdit?: TagEdit,
+    expectedNoteId?: string | null,
   ) => Promise<NoteSession>;
   loadHistoryReadiness?: (noteId: string | null) => Promise<HistoryReadiness>;
   markNoteOpened?: (noteId: string) => Promise<void>;
   isActiveNote?: (note: NoteDraftState) => boolean;
+  onDraftChanged?: (note: NoteDraftState) => void;
+  onSaved?: (note: NoteDraftState, capture: DocumentSaveCapture) => void;
   documentEditing: Pick<
     DocumentEditingService<string>,
     "captureSave" | "adoptSavedResult"
@@ -116,9 +120,7 @@ export function createNotepadPersistenceController(
     }
     // Start the authoritative IPC immediately. Observation never gates or
     // retries publication and must not change its result (including warnings).
-    const saving = capture.tagEdit
-      ? save(capture.title, markdown, capture.path, capture.tagEdit)
-      : save(capture.title, markdown, capture.path);
+    const saving = save(capture.title, markdown, capture.path, capture.tagEdit, capture.noteId);
     const stopObserving = observePendingSave(
       note,
       capture.operationToken,
@@ -167,6 +169,8 @@ export function createNotepadPersistenceController(
           ? capture.operationToken
           : savedNote.operation.token,
     });
+    try { params.onSaved?.(savedNote, capture); }
+    catch (error) { console.error('Post-save observation failed:', error); }
   }
 
   function observePendingSave(note: NoteDraftState, token: number, noteId: string | null) {
@@ -221,6 +225,8 @@ export function createNotepadPersistenceController(
   function scheduleAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
+    try { params.onDraftChanged?.(note); }
+    catch (error) { console.error('Draft observation failed:', error); }
     const runtime = documentRegistry.ensure(note.handle);
     runtime.clearSaveTimer();
     runtime.setSaveTimer(

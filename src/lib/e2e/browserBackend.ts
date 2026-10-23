@@ -1,10 +1,16 @@
 import { taskDueDate, setTaskLineDueDate } from '#lib/features/tasks/taskDates.js';
 import type { RelatedNotesResponse } from '#lib/types/semantic.js';
 import type { VaultAtlasResponse } from '#lib/types/atlas.js';
+import type { DraftBackup } from '#lib/features/notepad/recovery/draftRecoveryController.svelte.js';
 
 import type { NoteFixture, InvokeRecord, TauriCallback, BrowserCommandOverrides } from './browserBackendContract';
 
 export function createBrowserE2eBackend(overrides: BrowserCommandOverrides = {}) {
+const recoveryStorageKey = 'gneauxghts.e2e.draft-backups';
+const fixtureStorage = typeof window !== 'undefined' ? window.localStorage : undefined;
+const draftBackups = new Map<string, { version: number; draft: DraftBackup | null }>(
+  JSON.parse(fixtureStorage?.getItem(recoveryStorageKey) ?? '[]'));
+const persistDraftBackups = () => fixtureStorage?.setItem(recoveryStorageKey, JSON.stringify([...draftBackups]));
 const alphaMarkdown = Array.from(
   { length: 80 },
   (_, index) => `Alpha line ${index + 1}: browser regression fixture`
@@ -216,13 +222,13 @@ function vaultInfo() {
   };
 }
 
-function session(note: NoteFixture) {
+function session(note: NoteFixture | null) {
   return {
-    noteId: note.noteId,
-    title: note.title,
-    markdown: note.markdown,
-    tags: note.tags ?? [],
-    path: note.path
+    noteId: note?.noteId ?? null,
+    title: note?.title ?? '',
+    markdown: note?.markdown ?? '',
+    tags: note?.tags ?? [],
+    path: note?.path ?? null
   };
 }
 
@@ -515,7 +521,7 @@ function historicalDiff(
   let createdNoteCount = 0;
   const listeners = new Map<number, { event: string; handler: number }>();
   let pendingRestore: { promise: Promise<void>; release: () => void } | null = null;
-  let activeNote = notes.get('note-alpha')!;
+  let activeNote: NoteFixture | null = notes.get('note-alpha')!;
   let lastChatLocation: { conversationId: string; contextNoteId: string | null; contextNotePath: string | null } | null = null;
   const pinnedNoteIds = new Set<string>();
   let nextHistoryPageDelayMillis = 0;
@@ -528,6 +534,22 @@ function historicalDiff(
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     invocations.push({ command, args });
     if (Object.hasOwn(overrides, command)) return overrides[command](args);
+    if (command === 'save_draft_backup') {
+      const draft = args.draft as DraftBackup;
+      if (!draft?.id || !Number.isSafeInteger(draft.version) || draft.version < 1) throw new Error('Invalid recovery copy');
+      if (draft.version > (draftBackups.get(draft.id)?.version ?? 0)) {
+        draftBackups.set(draft.id, { version: draft.version, draft: { ...draft, tags: [...draft.tags], updatedAtMillis: Date.now() } });
+        persistDraftBackups();
+      }
+      return;
+    }
+    if (command === 'list_draft_backups') return [...draftBackups.values()].flatMap(item => item.draft ? [{ ...item.draft, tags: [...item.draft.tags] }] : []).sort((a, b) => b.updatedAtMillis - a.updatedAtMillis);
+    if (command === 'remove_draft_backup') {
+      const id = String(args.id), version = Number(args.version);
+      if (!Number.isSafeInteger(version) || version < 1) throw new Error('Invalid recovery version');
+      if (version >= (draftBackups.get(id)?.version ?? 0)) { draftBackups.set(id, { version, draft: null }); persistDraftBackups(); }
+      return;
+    }
     if (command === 'list_vault_folders') return [];
 
     if (command === 'read_image_asset_fingerprint') {
@@ -638,6 +660,10 @@ function historicalDiff(
     // Browser tests exercise the DOM preference; there is no native app theme.
     if (command === 'plugin:app|set_app_theme') return null;
     if (command === 'load_note_session') return session(activeNote);
+    if (command === 'clear_last_opened_note') {
+      activeNote = null;
+      return null;
+    }
     if (command === 'open_note' || command === 'read_note') {
       const note = findNote(args);
       if (command === 'open_note') activeNote = note;
@@ -654,6 +680,10 @@ function historicalDiff(
         // save_note/save_task_note reject with String, unlike History commands.
         if (held.fail) throw 'History is unavailable. Retry history from Settings.';
       }
+      if (typeof args.expectedNoteId === 'string' &&
+        (target.noteId !== args.expectedNoteId || notes.get(args.expectedNoteId)?.path !== args.currentPath)) {
+        throw 'This note moved. Reopen its saved location before saving.';
+      }
       const saved: NoteFixture = {
         ...target,
         updatedAtMillis: Date.now(),
@@ -662,7 +692,7 @@ function historicalDiff(
         markdown: String(args.markdown ?? target.markdown)
       };
       notes.set(saved.noteId, saved);
-      if (activeNote.noteId === saved.noteId || args.currentPath == null) activeNote = saved;
+      if (activeNote?.noteId === saved.noteId || args.currentPath == null) activeNote = saved;
       return session(saved);
     }
     if (command === 'get_note_history_context') {
@@ -773,7 +803,6 @@ function historicalDiff(
     if (command === 'get_settings_view') {
       return {
         vault: vaultInfo(),
-        historyHealth: historyHealth(),
         semanticStatus,
         semanticSettings: semanticStatus.settings,
         semanticDebug: null
@@ -937,7 +966,9 @@ function historicalDiff(
     }
     if (command === 'pi_chat_get_write_defaults') return (await import('./piBrowserFixture')).browserPiWriteDefaults();
     if (command === 'pi_chat_set_write_defaults') {
-      const result = (await import('./piBrowserFixture')).changeBrowserPiWriteDefaults(args.write as import('#lib/features/chat/pi/authority.js').VaultWritePolicy);
+      // Native IPC receives JSON, including plain arrays from reactive Settings state.
+      const write = JSON.parse(JSON.stringify(args.write)) as import('#lib/features/chat/pi/authority.js').VaultWritePolicy;
+      const result = (await import('./piBrowserFixture')).changeBrowserPiWriteDefaults(write);
       bridge.emit('pi-chat-authority-changed', { retiredAuthorityIds: [], writePolicyChanged: true });
       return result;
     }
@@ -1017,7 +1048,7 @@ function historicalDiff(
     },
     snapshot() {
       return {
-        activeNoteId: activeNote.noteId,
+        activeNoteId: activeNote?.noteId ?? null,
         notes: [...notes.values()].map((note) => ({ ...note })),
         invocations: invocations.map((entry) => ({ ...entry }))
       };

@@ -74,10 +74,37 @@ pub(crate) fn retrieve_vault_notes(
             retrieve_vault_notes_unchecked(
                 state,
                 query,
-                limit,
+                limit.min(20),
                 allowed_note_ids,
                 excluded_note_ids,
                 date_filters,
+                1024,
+            )
+        })
+}
+
+/// The same canonical ranking with a larger bounded work page for authorized
+/// consumers that own pagination. Scope and delivery remain native policy.
+pub(crate) fn retrieve_scoped_notes(
+    state: &AppState,
+    query: &str,
+    limit: usize,
+    allowed_note_ids: Option<&HashSet<String>>,
+    excluded_note_ids: &HashSet<String>,
+    date_filters: VaultDateFilters,
+) -> Result<Vec<VaultRetrievalItem>, String> {
+    state
+        .note_timeline()
+        .current_content(AllowedScope::policy(allowed_note_ids, excluded_note_ids))
+        .read_refreshable(|| {
+            retrieve_vault_notes_unchecked(
+                state,
+                query,
+                limit.min(4096),
+                allowed_note_ids,
+                excluded_note_ids,
+                date_filters,
+                4096,
             )
         })
 }
@@ -89,6 +116,7 @@ fn retrieve_vault_notes_unchecked(
     allowed_note_ids: Option<&HashSet<String>>,
     excluded_note_ids: &HashSet<String>,
     date_filters: VaultDateFilters,
+    query_bytes: usize,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
     if query.trim().is_empty() && !date_filters.is_active() {
         return Ok(Vec::new());
@@ -107,7 +135,7 @@ fn retrieve_vault_notes_unchecked(
         .map(|n| n.note_id.clone())
         .collect();
     let eligible = eligible.difference(excluded_note_ids).cloned().collect();
-    search::search(state, &eligible, query, limit)
+    search::search(state, &eligible, query, limit, query_bytes)
 }
 
 #[cfg(test)]

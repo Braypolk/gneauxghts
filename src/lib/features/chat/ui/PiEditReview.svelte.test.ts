@@ -40,6 +40,32 @@ describe('readable edit reviews', () => {
     expect(body).not.toContain('Show technical diff');
   });
 
+  it('reviews the exact rename and ordinary-link consequence without an invented content diff', () => {
+    const body = render(PiEditReview, { props: {
+      review: { taskId: 2, title: 'Old <name>', kind: 'rename', decision: 'pending', sourcePath: 'Projects/Old <name>.md', destinationPath: 'Projects/New & useful.md' }, onDecision: vi.fn()
+    } }).body;
+    expect(body).toContain('Projects/Old &lt;name>.md'); expect(body).toContain('Projects/New &amp; useful.md');
+    expect(body).toContain('content and properties stay unchanged');
+    expect(body).toContain('Note-identity links still open this note');
+    expect(body).toContain('Filename and path links may stop resolving; backlinks will not be changed');
+    expect(body).toContain('Rename note'); expect(body).toContain('Discard rename');
+    expect(body).not.toContain('Show technical diff');
+    expect(body).not.toContain('<name>');
+  });
+
+  it('retains repeated spaces and isolates readable Unicode paths while exposing hidden directional controls', () => {
+    const directionalControl = String.fromCodePoint(0x202e);
+    const c1Control = String.fromCodePoint(0x85);
+    const body = render(PiEditReview, { props: {
+      review: { taskId: 3, title: 'Unicode names', kind: 'rename', decision: 'pending', sourcePath: `ملف/ישן${directionalControl}${c1Control}  שם.md`, destinationPath: 'ملف/A  B.md' }, onDecision: vi.fn()
+    } }).body;
+    expect(body).toContain('<bdi dir="ltr">ملف/ישן\\u{202e}\\u{0085}  שם.md</bdi>');
+    expect(body).toContain('<bdi dir="ltr">ملف/A  B.md</bdi>');
+    expect(body).toContain('Control characters in filenames are shown as Unicode escapes.');
+    expect(body).not.toContain(directionalControl);
+    expect(body).not.toContain(c1Control);
+  });
+
   it.each(['inline', 'side-by-side'] as const)('makes internal spaces, tabs and indentation visible in %s review', async layout => {
     editDiffLayout.setPreference(layout);
     for (const [before, after, marker] of [['Buy milk', 'Buy  milk', '··'], ['Buy milk', 'Buy\tmilk', '⇥'], ['  - Task', '    - Task', '····'], ['Buy milk', 'Buy\u00a0milk', '⍽']]) {

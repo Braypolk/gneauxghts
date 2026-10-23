@@ -10,11 +10,13 @@ import { notesExtension } from './notes';
 import { admitProviderMessage } from './citations';
 import { EditReviewDoc, publicationExtension } from './publication';
 import { editExtension } from './edit';
+import { renameExtension } from './rename';
 import { createPiDiagnostics, type PiDiagnostics } from './diagnostics';
 
 export const PI_CONTEXT = BACKGROUND_CONTEXT;
+// Keep the retired purpose discriminator so old application jobs never appear as chats.
 export const ChatDoc = defineDoc({ kind: 'gneauxghts.chat', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
-  initial: () => ({ title: '', authorityId: '', createdAtMillis: Date.now(), retired: false as boolean, forgotten: false as boolean }) });
+  initial: () => ({ title: '', authorityId: '', createdAtMillis: Date.now(), retired: false as boolean, forgotten: false as boolean, purpose: 'chat' as 'chat' | 'noteTitles' }) });
 export const initializeChatDocuments: NonNullable<HarnessOptions['conversationCreated']> = async (tx, conversation) => {
   await tx.doc(ChatDoc, conversation.id);
   await tx.doc(EditReviewDoc, conversation.id);
@@ -28,7 +30,7 @@ export const defaultReadPolicy = (settings: PiChatSettings): ReadPolicy => ({
   mode: settings.defaultAccess === 'full' ? 'fullVault' : 'attachedNotesOnly', attachedNoteIds: []
 });
 export type NewPiConversation = { title?: string; firstMessage?: string; provider?: ChatProvider; model?: string; read?: ReadPolicy };
-export type PiConversationSummary = { id: ConversationId; title: string; createdAtMillis: number; authorityId: string; retired: boolean; forgotten?: boolean; model?: ModelRef };
+export type PiConversationSummary = { id: ConversationId; title: string; createdAtMillis: number; authorityId: string; retired: boolean; forgotten?: boolean; purpose?: 'chat' | 'noteTitles'; model?: ModelRef };
 export type PiChat = {
   harness: Harness; storage: SqliteStorage; models: ReturnType<typeof createNativeModels>;
   diagnostics: PiDiagnostics;
@@ -57,6 +59,7 @@ async function compose(): Promise<PiChat> {
   const diagnostics = createPiDiagnostics();
   registry.install(publicationExtension());
   registry.install(editExtension(async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? ''));
+  registry.install(renameExtension(async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? ''));
   registry.install(notesExtension(
     async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? '',
     async (input, context) => {
@@ -86,6 +89,7 @@ async function compose(): Promise<PiChat> {
     const provider = await harness.snapshot(ProviderDoc, conversation.id, PI_CONTEXT);
     const doc = await harness.snapshot(ChatDoc, conversation.id, PI_CONTEXT);
     if (!provider || !doc) throw new Error('Unknown application conversation');
+    if (doc.purpose === 'noteTitles') throw new Error('Application title jobs are not chat conversations.');
     const binding = { conversationId: conversation.id, providerSessionId: provider.sessionId };
     const authority = doc.authorityId ? await readAuthority(doc.authorityId)
       : await bindAuthority(binding, read ?? defaultReadPolicy(await readPiChatSettings()));
@@ -117,7 +121,7 @@ async function compose(): Promise<PiChat> {
       const items: PiConversationSummary[] = [];
       for (const record of page.items) {
         const doc = await harness.snapshot(ChatDoc, record.id, context);
-        if (!doc || doc.forgotten) continue;
+        if (!doc || doc.forgotten || doc.purpose === 'noteTitles') continue;
         const agent = await harness.snapshot(AgentDoc, record.id, context);
         items.push({ id: record.id, ...doc, ...(agent?.model ? { model: agent.model } : {}) });
       }
@@ -148,6 +152,8 @@ async function compose(): Promise<PiChat> {
       for (const record of page.items) {
         const conversation = await harness.conversation(record.id, PI_CONTEXT);
         const doc = await harness.snapshot(ChatDoc, record.id, PI_CONTEXT);
+        // Retired application-job conversations remain hidden and cannot resume.
+        if (doc?.purpose === 'noteTitles') continue;
         if (!conversation || !doc?.authorityId) continue;
         const authority = await readAuthority(doc.authorityId).catch(() => undefined);
         if (!authority || authority.retired) { denied.push(conversation); continue; }
@@ -169,7 +175,7 @@ async function compose(): Promise<PiChat> {
       await chat.close(); await invoke('pi_chat_quiesced', { token: event.payload.token });
     }));
     unlisten.push(await listen<{ retiredAuthorityIds: string[] }>('pi-chat-authority-changed', async event => {
-      for (const binding of bindings.values()) if (event.payload.retiredAuthorityIds.includes(binding.authorityId)) {
+      for (const binding of bindings.values()) if ('authorityId' in binding && event.payload.retiredAuthorityIds.includes(binding.authorityId)) {
         await chat.retireConversation(binding.conversationId as ConversationId);
       }
     }));

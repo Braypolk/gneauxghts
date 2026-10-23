@@ -8,6 +8,7 @@
   import { History, ArrowUp, Square, X, ShieldCheck, ShieldOff, ChevronDown, Check } from '@lucide/svelte';
   import PaneHeader from '#lib/ui/PaneHeader.svelte';
   import { mountInSlot } from '#lib/ui/mountInSlot.js';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '#lib/ui/floatingPanel.js';
   import { registerBackgroundSave } from '#lib/app/backgroundPersistence.js';
   import { createComposerDraftPersistence } from './ui/composerDraftPersistence';
   import { chatScrollPositionsFor, createChatMessageScroll } from './ui/chatMessageScroll';
@@ -21,7 +22,8 @@
   import PiModelSelector from './ui/PiModelSelector.svelte';
   import PiContextUsage from './ui/PiContextUsage.svelte';
   import PiConversationPicker from './ui/PiConversationPicker.svelte';
-  import { writeGrantForDuration, withCreationPermission } from './pi/authority';
+  import { writeGrantForDuration, withCreationPermission, withWriteFolders } from './pi/authority';
+  import WriteFoldersField from './ui/WriteFoldersField.svelte';
   import PiEditReview from './ui/PiEditReview.svelte';
   import type { ChatSurfaceHandle } from './types';
   import './ui/chatPanel.css';
@@ -42,7 +44,11 @@
   const runtimeUnavailable = $derived(snapshot.runtimeState !== 'open');
   const chatPending = $derived(snapshot.loading || (!snapshot.initialized && !snapshot.error));
   let draft = $state(''), titleDraft = $state(''), titleFocused = $state(false), submitting = $state(false);
-  let menu = $state<'history' | 'access' | 'model' | 'reasoning' | null>(null), input = $state<HTMLTextAreaElement | null>(null), scrollRoot = $state<HTMLDivElement | null>(null);
+  let menu = $state<'history' | 'access' | 'writeFolders' | 'model' | 'reasoning' | null>(null), input = $state<HTMLTextAreaElement | null>(null), scrollRoot = $state<HTMLDivElement | null>(null);
+  let folderDraft = $state(''), folderSaving = $state(false), folderError = $state<string | null>(null);
+  let accessButton = $state<HTMLButtonElement | null>(null), folderPanel = $state<HTMLDivElement | null>(null);
+  let folderPanelStyle = $state(hiddenFloatingPanelStyle);
+  let folderAuthority: { id: string; revision: number } | undefined;
   let composerSelection = 0, reported: string | null | undefined;
   // Successful source navigation is local feedback, never a retained chat error.
   let sourceNotice = $state<string | null>(null), sourceNavigation = 0;
@@ -60,6 +66,13 @@
   $effect(() => { if (!titleFocused) titleDraft = snapshot.title; });
   $effect(() => { if (snapshot.initialized && !snapshot.loading && reported !== visibleId) { reported = visibleId; onConversationChange?.(visibleId); } });
   $effect(() => { if (!input || !onSurfaceHandleChange) return; const notify = onSurfaceHandleChange; notify({ focusComposer() { focusComposer(); return true; } }); return () => notify(null); });
+  $effect(() => {
+    if (menu !== 'writeFolders' || !accessButton || !folderPanel) return;
+    folderPanelStyle = hiddenFloatingPanelStyle;
+    return positionFloatingPanel(accessButton, folderPanel, style => { folderPanelStyle = style; }, {
+      placement: 'top-start', fallbackPlacements: ['top-end', 'bottom-start', 'bottom-end']
+    });
+  });
   $effect.pre(() => {
     transcript; progress; snapshot.loading; snapshot.editReviews;
     if (!scrollRoot || !scrollController) return;
@@ -73,6 +86,29 @@
   }
   function focusComposer() { composerDock?.onExpand(); requestAnimationFrame(() => input?.focus({ preventScroll: true })); }
   async function action(work: () => Promise<unknown>) { try { await work(); } catch (error) { binding.report(error); } }
+  function openWriteFolders() {
+    if (folderSaving) return;
+    const authority = snapshot.authority;
+    if (!authority || authority.write.grant.duration === 'off') return;
+    folderAuthority = { id: authority.authorityId, revision: authority.revision };
+    folderDraft = authority.write.grant.scope.folders.join('\n'); folderError = null; menu = 'writeFolders';
+  }
+  async function saveWriteFolders() {
+    const authority = snapshot.authority;
+    if (folderSaving) return;
+    if (!authority || authority.write.grant.duration === 'off' || folderAuthority?.id !== authority.authorityId || folderAuthority.revision !== authority.revision) {
+      folderError = 'Chat access changed. Reopen Allowed write folders before saving.'; return;
+    }
+    folderSaving = true; folderError = null;
+    try {
+      await binding.changeWrite(withWriteFolders(authority.write, folderDraft));
+      if (snapshot.authority?.authorityId === folderAuthority.id) menu = null;
+    } catch (error) {
+      folderError = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message : 'Allowed write folders could not be saved. Reopen the controls to check current access.';
+    }
+    finally { folderSaving = false; }
+  }
   async function submit() {
     if (runtimeUnavailable || submitting || !draft.trim()) return;
     sourceNotice = null; ++sourceNavigation;
@@ -152,7 +188,7 @@
       <textarea bind:this={input} bind:value={draft} class="chat-composer-input" aria-label="Message" placeholder="What are you thinking about?" rows="1" enterkeyhint="enter" disabled={runtimeUnavailable || !snapshot.initialized || snapshot.loading || snapshot.authority?.retired} onfocus={() => composerDock?.onExpand()} onkeydown={onComposerKeydown}></textarea>
       <div class="chat-composer-toolbar">
         <div class="relative" data-chat-menu>
-          <button type="button" class="chat-composer-chip chat-composer-access" aria-label="Vault access" aria-haspopup="menu" aria-expanded={menu === 'access'} disabled={runtimeUnavailable || !snapshot.initialized || snapshot.authority?.retired} onclick={() => menu = menu === 'access' ? null : 'access'}>
+          <button bind:this={accessButton} type="button" class="chat-composer-chip chat-composer-access" aria-label="Vault access" aria-haspopup="menu" aria-expanded={menu === 'access'} disabled={runtimeUnavailable || !snapshot.initialized || snapshot.authority?.retired} onclick={() => menu = menu === 'access' ? null : 'access'}>
             {#if snapshot.read.mode === 'fullVault'}<ShieldCheck class="h-3.5 w-3.5 shrink-0" />{:else}<ShieldOff class="h-3.5 w-3.5 shrink-0" />{/if}
             <span class="chat-composer-access-label">{snapshot.read.mode === 'fullVault' ? 'Full vault' : snapshot.read.attachedNoteIds.length ? 'Limited vault' : 'No notes'}</span><ChevronDown class="h-3 w-3 shrink-0 opacity-60" />
           </button>
@@ -161,7 +197,7 @@
               <button type="button" class="chat-menu-item w-full" role="menuitemradio" aria-checked={snapshot.read.mode === option.mode} onclick={() => { menu = null; void action(() => binding.changeRead({ mode: option.mode, attachedNoteIds: [] })); }}><span class="flex-1">{option.label}</span>{#if snapshot.read.mode === option.mode}<Check size={14} />{/if}</button>
             {/each}
             <div class="px-3 py-2 text-xs text-muted-foreground">Write notes in the vault</div>
-            <p class="px-3 pb-2 text-xs text-muted-foreground">Always and review settings apply to all chats. Review covers edits and new notes. Choosing this chat turns off Always.</p>
+            <p class="px-3 pb-2 text-xs text-muted-foreground">Changes include note content, properties and filenames. Always and review settings apply to all chats. Choosing this chat turns off Always.</p>
             {#each [{ duration: 'off' as const, label: 'Editing off' }, { duration: 'temporary' as const, label: 'Allow edits in this chat' }, { duration: 'always' as const, label: 'Always allow edits' }] as option}
               <button type="button" class="chat-menu-item w-full" role="menuitemradio" aria-checked={(snapshot.authority?.write.grant.duration ?? 'off') === option.duration} onclick={() => { menu = null; void action(() => binding.changeWrite({ grant: writeGrantForDuration(snapshot.authority?.write, option.duration, snapshot.conversation?.id ?? 0), reviewBeforeApplying: snapshot.authority?.write.reviewBeforeApplying ?? true })); }}><span class="flex-1">{option.label}</span>{#if (snapshot.authority?.write.grant.duration ?? 'off') === option.duration}<Check size={14} />{/if}</button>
             {/each}
@@ -171,7 +207,21 @@
               onclick={() => { const write = snapshot.authority?.write; if (write && write.grant.duration !== 'off') { const next = withCreationPermission(write, !write.grant.operations.includes('create')); menu = null; void action(() => binding.changeWrite(next)); } }}>
               <span class="flex-1">Allow creating new notes</span>{#if snapshot.authority && snapshot.authority.write.grant.duration !== 'off' && snapshot.authority.write.grant.operations.includes('create')}<Check size={14} />{/if}
             </button>
+            <button type="button" class="chat-menu-item w-full" role="menuitem" disabled={folderSaving || !snapshot.authority || snapshot.authority.write.grant.duration === 'off'} onclick={openWriteFolders}>
+              Allowed write folders…
+            </button>
             <button type="button" class="chat-menu-item w-full" role="menuitemcheckbox" aria-checked={snapshot.authority?.write.reviewBeforeApplying ?? true} disabled={!snapshot.authority} onclick={() => { const write = snapshot.authority?.write; if (write) { menu = null; void action(() => binding.changeWrite({ ...write, reviewBeforeApplying: !write.reviewBeforeApplying })); } }}><span class="flex-1">Review before applying edits</span>{#if snapshot.authority?.write.reviewBeforeApplying ?? true}<Check size={14} />{/if}</button>
+          </div>{/if}
+          {#if menu === 'writeFolders'}<div bind:this={folderPanel} use:mountInSlot={document.body} data-chat-menu style={folderPanelStyle} class="chat-menu chat-write-folders p-3" role="dialog" aria-label="Write folder permissions">
+            <fieldset disabled={folderSaving || runtimeUnavailable} class="grid gap-3">
+              <legend class="sr-only">Write folder permissions</legend>
+              <WriteFoldersField bind:value={folderDraft} />
+              {#if folderError}<p role="alert" class="text-xs text-destructive">{folderError}</p>{/if}
+              <div class="flex justify-end gap-3">
+                <button type="button" class="text-xs" onclick={() => menu = 'access'}>Cancel</button>
+                <button type="button" class="rounded-lg bg-foreground px-3 py-2 text-xs text-background" onclick={() => void saveWriteFolders()}>{folderSaving ? 'Saving…' : 'Save folders'}</button>
+              </div>
+            </fieldset>
           </div>{/if}
         </div>
         <div class="chat-composer-primary">

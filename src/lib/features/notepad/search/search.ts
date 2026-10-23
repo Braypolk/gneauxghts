@@ -8,6 +8,8 @@ import type { RecentTaskItem } from '#lib/features/notepad/model/types.js';
 import { callWithDraft, computeDraftHash } from '#lib/features/notepad/search/draftRef.js';
 
 export type SearchMode = 'current' | 'all';
+export type SearchResultType = 'all' | 'notes' | 'images';
+export type SearchEditedWindow = 'any' | '7d' | '30d';
 const RECENT_ITEMS_LIMIT = 20;
 
 export interface SearchContext {
@@ -25,7 +27,11 @@ export function isSemanticOnlyResult(result: SearchItem) {
   return result.reasonLabels.includes('semantic') && !isKeywordResult(result);
 }
 
-export async function searchNotes(query: string, context: SearchContext) {
+export async function searchNotes(
+  query: string,
+  context: SearchContext,
+  options: { modifiedSinceMillis?: number | null } = {}
+) {
   const hash = computeDraftHash(context.currentMarkdown);
   return callWithDraft(
     context.currentPath,
@@ -39,6 +45,7 @@ export async function searchNotes(query: string, context: SearchContext) {
         currentTitle: context.currentTitle,
         currentMarkdown,
         currentBodyHash,
+        ...(options.modifiedSinceMillis != null ? { modifiedSinceMillis: options.modifiedSinceMillis } : {}),
         limit: 12
       })
   );

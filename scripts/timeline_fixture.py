@@ -15,7 +15,7 @@ import tempfile
 KIND = 'gneauxghts-editing-window-v3'
 SCALE_KIND = 'gneauxghts-current-scale-v2'
 KINDS = (KIND, SCALE_KIND)
-SCHEMA = 14
+SCHEMA = 15
 DB = Path('.gneauxghts/history.sqlite3')
 DEFAULT = Path(tempfile.gettempdir()) / 'gneauxghts-window-fixture-v3'
 

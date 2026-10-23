@@ -1,7 +1,7 @@
 <script lang="ts">
   import RelatedResults from '../related/RelatedResults.svelte';
   import WorkspaceInputDock from './WorkspaceInputDock.svelte';
-  import SearchResultsPanel from './SearchResultsPanel.svelte';
+  import SearchResultsPanel from '#lib/ui/search/SearchResultsPanel.svelte';
   import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
   import SearchNoteResult from '#lib/ui/search/SearchNoteResult.svelte';
   import SplitSearchResultAction from '#lib/ui/search/SplitSearchResultAction.svelte';
@@ -44,6 +44,7 @@
   import '#lib/ui/search/searchDock.css';
   import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
   import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
+  import type { SearchResultType, SearchEditedWindow } from '../search/search';
 
   interface Props {
     forget: NotepadCommandBarForgetProps;
@@ -153,6 +154,28 @@
   );
 
   const searchMode = $derived(search.searchMode);
+  const resultType = $derived(search.resultType ?? 'all');
+  const editedWindow = $derived(search.editedWindow ?? 'any');
+  const resultTypeChoices: { id: SearchResultType; label: string }[] = [
+    { id: 'all', label: 'All' }, { id: 'notes', label: 'Notes' }, { id: 'images', label: 'Images' }
+  ];
+  const editedWindowChoices: { id: SearchEditedWindow; label: string; description: string }[] = [
+    { id: 'any', label: 'Any time', description: 'Search edits from any time' },
+    { id: '7d', label: '7 days', description: 'Edited in last 7 days' },
+    { id: '30d', label: '30 days', description: 'Edited in last 30 days' }
+  ];
+  function handleSearchCueKeydown(event: KeyboardEvent) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key === 'Escape') {
+      commandBarState.handleSearchKeydown(event);
+      searchBar?.focusSearch();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      commandBarState.resetActiveIndex();
+      commandBarState.searchNavigationMode = 'keyboard';
+      searchBar?.focusSearch();
+    }
+  }
   const imageResults = $derived(search.imageResults ?? []);
   const imageQueryUrl = $derived(search.imageQueryUrl ?? null);
   const thumbnails = createImageAssetLoader(key => {
@@ -736,7 +759,6 @@
     {/snippet}
 
     {#snippet searchPanel()}
-      {#key relatedMode ? false : isSearching}
         <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode} onkeydown={handleSearchResultsKeydown}>
           {#if relatedMode}
             <div id={relatedPopupId} class="max-h-80 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label="Related notes">
@@ -744,7 +766,44 @@
                 onOpenInSplit={related?.onOpenInSplit ? (item) => chooseSplit(() => related?.onOpenInSplit?.(item)) : undefined} />
             </div>
           {:else}
-          {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
+          {#if searchMode === 'all' && (searchQuery.trim() !== '' || imageQueryUrl) && search.onResultTypeChange && search.onEditedWindowChange}
+            <div class="search-retrieval-cues flex flex-wrap items-center gap-x-4 gap-y-2 px-3 pb-2 pt-1">
+              <div class="flex items-center gap-1" role="group" aria-label="Result type">
+                {#each resultTypeChoices as choice}
+                  <button type="button" data-search-focus-independent data-search-result-type={choice.id}
+                    class="search-retrieval-cue rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                    aria-label={`Show ${choice.id === 'all' ? 'all result types' : choice.id}`}
+                    aria-pressed={resultType === choice.id}
+                    onkeydown={handleSearchCueKeydown}
+                    onmousedown={(event) => event.preventDefault()}
+                    onclick={() => void search.onResultTypeChange?.(choice.id)}>{choice.label}</button>
+                {/each}
+              </div>
+              <div class="search-retrieval-edited flex flex-wrap items-center gap-1" role="group" aria-label="Edited">
+                <span class="search-edited-label mr-1 text-xs text-muted-foreground">Edited</span>
+                {#each editedWindowChoices as choice}
+                  <button type="button" data-search-focus-independent data-search-edited-window={choice.id}
+                    class="search-retrieval-cue rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                    aria-label={choice.description} title={choice.id === 'any' ? choice.description : `${choice.description}, by file modification time`}
+                    aria-pressed={editedWindow === choice.id}
+                    onkeydown={handleSearchCueKeydown}
+                    onmousedown={(event) => event.preventDefault()}
+                    onclick={() => void search.onEditedWindowChange?.(choice.id)}>{choice.label}</button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if search.searchError || search.mediaError}
+            <div class="flex items-center justify-between gap-2 px-4 py-2 text-sm text-muted-foreground" role="status">
+              <span>{search.searchError ?? search.mediaError}{#if visibleItems.length > 0}{' '}Showing available matches.{/if}</span>
+              {#if search.onSearchRetry}
+                <button type="button" class="rounded px-2 py-1 text-foreground hover:bg-accent disabled:opacity-50" data-search-focus-independent disabled={isSearching} onclick={() => void search.onSearchRetry?.()}>Retry</button>
+              {/if}
+            </div>
+          {/if}
+          {#if isSearching && visibleItems.length > 0}
+            <p class="px-4 py-2 text-xs text-muted-foreground" role="status">Updating matches…</p>
+          {/if}
           {#if searchQuery.trim() === '' && !imageQueryUrl}
             <div class="flex justify-center px-3 pb-1 pt-2">
               <div bind:this={browseControls} class="inline-flex gap-1 rounded-full border border-border/80 bg-muted/40 p-1" role="group" aria-label="Browse notes">
@@ -766,16 +825,18 @@
               </div>
             {/if}
           {/if}
-          {#if isSearching && (searchQuery.trim() !== '' || imageQueryUrl)}
-            <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
-          {:else if imageQueryUrl && visibleItems.length === 0}
-            {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">No matching images or text passages yet.</p>{/if}
+          {#if isSearching && visibleItems.length === 0 && (searchQuery.trim() !== '' || imageQueryUrl)}
+            <div class="px-4 py-3 text-sm text-muted-foreground">Searching {resultType === 'images' && searchMode === 'all' ? 'images' : 'notes'}…</div>
+          {:else if imageQueryUrl && visibleItems.length === 0 && !search.mediaError}
+            {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">{resultType !== 'all' || editedWindow !== 'any' ? 'No matches with these filters. Try All or Any time.' : 'No matching images or text passages yet.'}</p>{/if}
           {:else if searchQuery.trim() === '' && !imageQueryUrl && browseMode === 'edited' && search.isLoadingLastEdited && lastEditedNotes.length === 0}
             <div class="px-4 py-3 text-sm text-muted-foreground" role="status">Loading last edited notes…</div>
-          {:else if !hasVisibleSearchContent}
+          {:else if !hasVisibleSearchContent && !search.searchError && !search.mediaError}
             <div class="px-4 py-3 text-sm text-muted-foreground">
               {#if searchQuery.trim() === ''}
                 {browseMode === 'edited' ? 'No saved notes yet.' : `Start typing to search ${searchMode === 'current' ? 'this note' : 'all notes'}.`}
+              {:else if searchMode === 'all' && (resultType !== 'all' || editedWindow !== 'any')}
+                No matches with these filters. Try All or Any time.
               {:else}
                 No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
               {/if}
@@ -939,7 +1000,6 @@
           {/if}
           {/if}
         </SearchResultsPanel>
-      {/key}
     {/snippet}
 
     {#snippet imageQueryPreview()}
@@ -1033,6 +1093,23 @@
 </div>
 
 <style>
+  .search-retrieval-cues { container-type: inline-size; }
+  .search-retrieval-cue {
+    border-color: transparent;
+    color: var(--muted-foreground);
+    background: color-mix(in oklab, var(--muted) 45%, transparent);
+  }
+  .search-retrieval-cue[aria-pressed='true'] {
+    border-color: color-mix(in oklab, var(--foreground) 18%, transparent);
+    color: var(--foreground);
+    background: var(--card);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  }
+  @container (max-width: 18rem) {
+    .search-edited-label { display: none; }
+    .search-retrieval-edited { flex-wrap: nowrap; gap: 0.125rem; }
+    .search-retrieval-cue { min-height: 2rem; padding-inline: 0.375rem; }
+  }
   .notepad-discovery-dock { --discovery-gap: 0.5rem; }
   .related-search-heading { padding-right: var(--search-bar-height); }
   @media (min-width: 640px) {

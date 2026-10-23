@@ -10,6 +10,7 @@ export interface WorkspacePersistenceServiceDeps {
   getDocuments: () => Iterable<NoteDraftState>;
   cancelPendingAutosave: (document: NoteDraftState) => void;
   enqueueSave: (document: NoteDraftState) => Promise<void>;
+  flushRecoveryCopies?: () => Promise<void>;
 }
 
 /**
@@ -36,7 +37,9 @@ export function createWorkspacePersistenceService(
       deps.cancelPendingAutosave(document);
     }
 
-    await flushCanonicalDocuments(documents);
+    const recovery = Promise.resolve().then(() => deps.flushRecoveryCopies?.()).catch(() => undefined);
+    try { await flushCanonicalDocuments(documents); }
+    finally { await recovery; }
   }
 
   async function flushCanonicalDocuments(documents: NoteDraftState[]): Promise<void> {
@@ -68,6 +71,12 @@ export function createWorkspacePersistenceService(
 
   /** Backgrounding cannot be vetoed; one blocked note must not delay the rest. */
   async function flushAllForBackground(): Promise<void> {
+    const recovery = Promise.resolve().then(() => deps.flushRecoveryCopies?.()).catch(() => undefined);
+    try { await flushForBackground(); }
+    finally { await recovery; }
+  }
+
+  async function flushForBackground(): Promise<void> {
     deps.flushAllPaneCursorSaves();
     const documents = [...deps.getDocuments()];
     for (const document of documents) deps.cancelPendingAutosave(document);

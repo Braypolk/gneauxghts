@@ -592,6 +592,7 @@ pub(crate) async fn search_notes_hybrid(
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
     current_tags: Option<Vec<String>>,
+    modified_since_millis: Option<u64>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     search_notes_hybrid_for_state(
         state.inner(),
@@ -604,6 +605,7 @@ pub(crate) async fn search_notes_hybrid(
         semantic_weight,
         lexical_weight,
         current_tags,
+        modified_since_millis,
     )
     .await
 }
@@ -620,6 +622,7 @@ async fn search_notes_hybrid_for_state(
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
     current_tags: Option<Vec<String>>,
+    modified_since_millis: Option<u64>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     state
         .note_timeline()
@@ -636,6 +639,7 @@ async fn search_notes_hybrid_for_state(
                 semantic_weight,
                 lexical_weight,
                 current_tags,
+                modified_since_millis,
             )
             .await?;
             #[cfg(test)]
@@ -662,6 +666,7 @@ async fn search_notes_hybrid_unchecked(
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
     current_tags: Option<Vec<String>>,
+    modified_since_millis: Option<u64>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let _foreground_guard = state.foreground_guard();
     let cache_generation = result_cache_generation();
@@ -704,8 +709,8 @@ async fn search_notes_hybrid_unchecked(
     let semantic_weight = semantic_weight.unwrap_or(settings.semantic_weight).max(0.0);
     let cache_fingerprint = build_search_fingerprint(
         &format!(
-            "{}|{:?}|{:?}",
-            normalized_query, tag_query.tags, current_tags
+            "{}|{:?}|{:?}|{:?}",
+            normalized_query, tag_query.tags, current_tags, modified_since_millis
         ),
         current_path.as_deref(),
         Some(&cache_body_hash),
@@ -730,6 +735,7 @@ async fn search_notes_hybrid_unchecked(
         &query_terms,
         &tag_query,
         current_tags.as_deref(),
+        modified_since_millis,
     )?;
     let current_path_raw = current_path
         .as_deref()
@@ -774,7 +780,7 @@ async fn search_notes_hybrid_unchecked(
 
     let semantic = state.semantic.clone();
     let semantic_query = tag_query.text.clone();
-    let allowed_paths = if tag_query.tags.is_empty() {
+    let allowed_paths = if tag_query.tags.is_empty() && modified_since_millis.is_none() {
         None
     } else {
         Some(
@@ -785,11 +791,12 @@ async fn search_notes_hybrid_unchecked(
                 .entries
                 .iter()
                 .filter(|(path, note)| {
-                    tag_query.matches(if current_path.as_ref() == Some(*path) {
-                        current_tags.as_deref().unwrap_or(&note.tags)
-                    } else {
-                        &note.tags
-                    })
+                    modified_since_millis.is_none_or(|cutoff| note.modified_millis >= cutoff)
+                        && tag_query.matches(if current_path.as_ref() == Some(*path) {
+                            current_tags.as_deref().unwrap_or(&note.tags)
+                        } else {
+                            &note.tags
+                        })
                 })
                 .map(|(path, _)| path.to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
@@ -865,6 +872,87 @@ fn semantic_query_or_empty(
     match result {
         Ok(matches) => (matches, None),
         Err(error) => (Vec::new(), Some(error)),
+    }
+}
+
+#[cfg(test)]
+mod modified_time_filter_tests {
+    use super::*;
+
+    #[test]
+    fn edited_cue_filters_before_ranking_limits_and_separates_cached_queries() {
+        let vault = crate::test_support::TestVault::new("edited-search-cue");
+        let foreground = vault.state.foreground_guard();
+        let mut old = None;
+        for i in 0..16 {
+            let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+                &vault.state,
+                format!("Needle {i}"),
+                "earlier prose".into(),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            let path = std::path::PathBuf::from(saved.path.as_ref().unwrap());
+            let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            file.set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(2)),
+            )
+            .unwrap();
+            let raw = std::fs::read_to_string(&path).unwrap();
+            vault.state.notes_index.lock().unwrap().upsert_note(
+                path.clone(),
+                crate::index::build_indexed_note(&path, &raw, 2_000),
+            );
+            old = Some(saved);
+        }
+        let recent = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &vault.state,
+            "Recent".into(),
+            "needle matching body".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let run = |cutoff, path, title, body| {
+            tauri::async_runtime::block_on(search_notes_hybrid_unchecked(
+                &vault.state,
+                "needle".into(),
+                path,
+                title,
+                Some(body),
+                None,
+                1,
+                None,
+                None,
+                None,
+                cutoff,
+            ))
+            .unwrap()
+        };
+        assert_eq!(run(None, None, String::new(), String::new()).len(), 1);
+        let cutoff = current_time_millis().unwrap() - 86_400_000;
+        let filtered = run(Some(cutoff), None, String::new(), String::new());
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].note_id, recent.note_id);
+        let old = old.unwrap();
+        let dirty = run(
+            Some(cutoff),
+            old.path.clone(),
+            old.title.clone(),
+            "needle newly written".into(),
+        );
+        assert!(dirty.iter().any(|r| r.note_path == old.path));
+        // Unsaved work has no filesystem timestamp and remains date-eligible.
+        let unsaved = run(
+            Some(cutoff),
+            None,
+            "Needle fresh draft".into(),
+            "newly written".into(),
+        );
+        assert!(unsaved.iter().any(|r| r.note_path.is_none()));
+        drop(foreground);
     }
 }
 
@@ -1241,8 +1329,25 @@ fn collect_lexical_candidates(
     query_terms: &[&str],
     tag_query: &crate::tags::TagQuery,
     current_tags: Option<&[String]>,
+    modified_since_millis: Option<u64>,
 ) -> Result<Vec<ScoredSearchResult>, String> {
     state.ensure_interactive_index(notes_dir, "search_notes_all")?;
+    // A date cue applies to saved modification time. An unsaved document, or a
+    // current editor whose authored body/title differs from disk, was edited
+    // now. Compare one current document outside the catalog lock; do not infer
+    // dirty state from its synthetic override timestamp.
+    let current_was_edited = modified_since_millis.is_some()
+        && current_path.is_none_or(|path| {
+            std::fs::read_to_string(path).map_or(true, |raw| {
+                let title = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                let (saved_title, saved_body) =
+                    crate::note::extract_file_name_title_and_body(&raw, title);
+                saved_title != current_title || saved_body != current_markdown
+            })
+        });
     let index = state
         .notes_index
         .lock()
@@ -1260,12 +1365,26 @@ fn collect_lexical_candidates(
         if let Some(canonical) = canonical {
             note.note_id = canonical.note_id.clone();
             note.document_kind = canonical.document_kind;
+            note.modified_millis = canonical.modified_millis;
+        }
+        if current_was_edited
+            || current_tags.is_some_and(|tags| canonical.is_some_and(|note| note.tags != tags))
+        {
+            note.modified_millis = current_time_millis().unwrap_or(u64::MAX);
         }
         note.tags = current_tags
             .map(<[String]>::to_vec)
             .unwrap_or_else(|| canonical.map(|note| note.tags.clone()).unwrap_or_default());
     }
     let mut candidates = Vec::new();
+    let allowed_ids = modified_since_millis.map(|cutoff| {
+        index
+            .entries
+            .values()
+            .filter(|note| note.modified_millis >= cutoff)
+            .map(|note| note.note_id.clone())
+            .collect::<HashSet<_>>()
+    });
     if tag_query.tags.is_empty() && !query_terms.is_empty() {
         candidates.extend(state.lexical.search_with_catalog(
             &index.entries,
@@ -1274,6 +1393,7 @@ fn collect_lexical_candidates(
             query_terms,
             MAX_SEARCH_RESULTS,
             current_path,
+            allowed_ids.as_ref(),
         )?);
     }
     for (path, note) in index
@@ -1283,7 +1403,10 @@ fn collect_lexical_candidates(
         .map(|(path, note)| (Some(path.as_path()), note))
         .chain(current_override.as_ref().map(|note| (current_path, note)))
     {
-        if note.document_kind != crate::note::DocumentKind::Note || !tag_query.matches(&note.tags) {
+        if note.document_kind != crate::note::DocumentKind::Note
+            || !tag_query.matches(&note.tags)
+            || modified_since_millis.is_some_and(|cutoff| note.modified_millis < cutoff)
+        {
             continue;
         }
         if query_terms.is_empty() {
@@ -1707,6 +1830,7 @@ mod pending_keyword_tests {
                         None,
                         None,
                         None,
+                        None,
                     )),
             )
             .unwrap()
@@ -1998,6 +2122,7 @@ mod tag_search_tests {
                 None,
                 None,
                 None,
+                None,
             ))
             .unwrap()
         };
@@ -2032,6 +2157,7 @@ mod tag_search_tests {
                         None,
                         None,
                         Some(vec!["renovation".into()]),
+                        None,
                     )),
             )
             .unwrap();
@@ -2086,6 +2212,7 @@ mod command_composition_regressions {
                 None,
                 None,
                 8,
+                None,
                 None,
                 None,
                 None,
@@ -2158,6 +2285,7 @@ mod command_composition_regressions {
                 Some(body.into()),
                 None,
                 12,
+                None,
                 None,
                 None,
                 None,
@@ -2250,6 +2378,7 @@ mod actual_search_delivery_tests {
                     Some(String::new()),
                     None,
                     12,
+                    None,
                     None,
                     None,
                     None,

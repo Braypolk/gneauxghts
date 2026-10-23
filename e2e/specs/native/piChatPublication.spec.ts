@@ -41,14 +41,18 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     const write: WritePolicy = { grant: off ? { duration: 'off' } : { duration: 'temporary', conversationId: (await paneState()).conversationId!, operations: ['update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying };
     return invokeNative<AuthoritySnapshot>('pi_chat_set_write_policy', { authorityId: current.authorityId, expectedRevision: current.revision, write });
   };
-  const prepare = async (mutation: Mutation) => invokeNative<PreparedMutation>('pi_chat_prepare_mutation', { authorityId: (await authority()).authorityId, requestId: `acceptance-${crypto.randomUUID()}`, mutation });
+  const prepare = async (mutation: Mutation) => {
+    const prepared = await invokeNative<PreparedMutation>('pi_chat_prepare_mutation', { authorityId: (await authority()).authorityId, requestId: `acceptance-${crypto.randomUUID()}`, mutation });
+    if (prepared.operation !== 'update') throw new Error('Expected a prepared update.');
+    return prepared;
+  };
   const update = async (title: string, markdown: string): Promise<Mutation> => {
     const note = await savePiFixtureNote(title, 'Original synthetic update base.');
     const read = await invokeNative<{ source: { sourceId: string } }>('pi_chat_read_note', { authorityId: (await authority()).authorityId, noteId: note.noteId });
     return { operation: 'update', noteId: note.noteId, expectedReadSourceId: read.source.sourceId, markdown };
   };
-  const run = async (prepared: PreparedMutation) => {
-    const settled = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target });
+  const run = async (prepared: Extract<PreparedMutation, { operation: 'update' }>) => {
+    const settled = await publishPiIntent({ effect: 'write', authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target });
     evidence.push(settled);
     assert.equal(settled.state.outcome.status, 'completed', JSON.stringify(settled.state.outcome));
     assert(settled.state.outcome.result);
@@ -133,7 +137,7 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     const prepared = await prepare({ operation: 'update', noteId: note.noteId, expectedReadSourceId: read.source.sourceId, markdown: 'Agent replacement must never erase the human editor.' });
     await activatePiEditor();
     const human = 'Human input entered through the actual mounted editor immediately before the Pi publication task.';
-    const settled = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target }, human);
+    const settled = await publishPiIntent({ effect: 'write', authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target }, human);
     evidence.push({ kind: 'actual-mounted-dirty-editor', settled });
     assert.equal(settled.editorAtTaskCreation?.editor?.markdown, human);
     const result = settled.state.outcome.result;
@@ -185,7 +189,7 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     }), prepared.intentId);
     assert.equal(armed, null);
     try {
-      const settled = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target }, null, async () => {
+      const settled = await publishPiIntent({ effect: 'write', authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target }, null, async () => {
         await browser.waitUntil(async () => await browser.execute(() => Boolean((window as RemountHost).__PI_PUBLICATION_REMOUNT__?.receipt)), { timeout: 30_000, timeoutMsg: 'Real native committed acknowledgement was not parked' });
         assert(readFileSync(note.path, 'utf8').includes(markdown), 'Canonical bytes must exist before SPA departure');
         await navigateAppTab('Settings');
@@ -230,14 +234,14 @@ describe('synthetic actual Pi publication tasks through the real document owner'
       await openPiPane();
       await browser.waitUntil(async () => (await paneState()).conversationId === conversationId, { timeout: 30_000 });
       assert.equal((await paneState()).error, null);
-      const replay = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target });
+      const replay = await publishPiIntent({ effect: 'write', authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target });
       assert.deepEqual(replay.state.outcome.result, settled.state.outcome.result);
       assert.equal(replay.publicationInvokes, 0, 'Receipt replay must not invoke a second native publication');
       assert.deepEqual((await history()).records.map(row => row.recordId), afterHistory.records.map(row => row.recordId));
       const freshRead = await invokeNative<{ source: { sourceId: string } }>('pi_chat_read_note', { authorityId: (await authority()).authorityId, noteId: note.noteId });
       const secondMarkdown = 'A second real publication succeeds through the replacement workspace owner.';
       const second = await prepare({ operation: 'update', noteId: note.noteId, expectedReadSourceId: freshRead.source.sourceId, markdown: secondMarkdown });
-      const secondSettled = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: second.intentId, target: second.target });
+      const secondSettled = await publishPiIntent({ effect: 'write', authorityId: (await authority()).authorityId, intentId: second.intentId, target: second.target });
       assert.equal(secondSettled.state.outcome.status, 'completed', JSON.stringify(secondSettled.state.outcome));
       assert.equal(secondSettled.state.outcome.result?.status, 'committed');
       assert.equal(secondSettled.publicationInvokes, 1);

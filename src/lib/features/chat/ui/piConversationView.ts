@@ -132,7 +132,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
           (await invoke<{ conversationId: string } | null>('get_last_chat_location'))?.conversationId ?? null))().catch(() => null);
         if (remembered && /^\d+$/.test(remembered) && !disposed && selection === lifetime) {
           const doc = await runtime.harness.snapshot(ChatDoc, Number(remembered) as ConversationId, listObservation.context).catch(reportObservationError);
-          if (doc && !doc.forgotten && !disposed && selection === lifetime) await select(remembered);
+          if (doc && !doc.forgotten && doc.purpose !== 'noteTitles' && !disposed && selection === lifetime) await select(remembered);
         }
       }
       if (!id && !disposed && selection === lifetime) state.update(value => ({ ...value, loading: false }));
@@ -143,7 +143,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
   function changedRow(row: PiConversationSummary, change?: ListChange): PiConversationSummary | undefined {
     if (change?.chat === null) return;
     let result = change?.chat ? { ...row, ...change.chat } : row;
-    if (result.forgotten) return;
+    if (result.forgotten || result.purpose === 'noteTitles') return;
     if (change && 'agent' in change) {
       const { model: _previous, ...rest } = result;
       result = { ...rest, ...(change.agent?.model ? { model: change.agent.model } : {}) };
@@ -248,7 +248,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
       const titleWatch = await chat.harness.watchDoc(ChatDoc, conversation.id, context);
       if (context.abortSignal?.aborted) return;
       const doc = titleWatch?.value;
-      if (!doc) throw new Error('This conversation is unavailable.');
+      if (!doc || doc.purpose === 'noteTitles') throw new Error('This conversation is unavailable.');
       if (doc.forgotten) throw new Error('This conversation was forgotten.');
       let authority = await chat.authorityForConversation(conversation.id);
       if (context.abortSignal?.aborted) return;

@@ -290,7 +290,9 @@ describe('standard compaction through the mandatory native provider', () => {
     expect(requestedBodies).toHaveLength(1);
     const retained = JSON.stringify(await storage.scanEntries({ conversationId: conversation.id }, 100, undefined, context));
     expect(retained).not.toContain(PRIVATE_SERVER_ECHO);
-    expect(retained).toContain('The model request could not complete');
+    expect(retained).toContain(code === 'provider_limit'
+      ? 'insufficient_quota: the model account cannot accept this request'
+      : 'The model server rejected this request. Check the selected model and its server settings, then retry.');
     expect(JSON.stringify(await storage.scanTasks({}, 100, undefined, context))).not.toContain(PRIVATE_SERVER_ECHO);
   });
 

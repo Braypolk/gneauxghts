@@ -137,12 +137,14 @@ export async function saveNoteSession(
   markdown: string,
   currentPath: string | null,
   tagEdit?: TagEdit,
+  expectedNoteId?: string | null,
 ) {
   startupMark("editor-save-ipc-start", { currentPath, markdownBytes: markdown.length });
   const saved = await invoke<NoteSession>("save_note", {
     title,
     markdown,
     currentPath,
+    ...(expectedNoteId !== undefined ? { expectedNoteId } : {}),
     ...(tagEdit ? { tagEdit } : {}),
   });
   startupMark("editor-save-ipc-resolved", { noteId: saved.noteId, commitWarning: saved.commitWarning ?? null });
@@ -154,11 +156,13 @@ export async function saveTaskNoteSession(
   markdown: string,
   currentPath: string | null,
   tagEdit?: TagEdit,
+  expectedNoteId?: string | null,
 ) {
   return invoke<NoteSession>("save_task_note", {
     title,
     markdown,
     currentPath,
+    ...(expectedNoteId !== undefined ? { expectedNoteId } : {}),
     ...(tagEdit ? { tagEdit } : {}),
   });
 }

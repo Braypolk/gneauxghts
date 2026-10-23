@@ -337,6 +337,9 @@ pub fn run() {
 
             commands::bootstrap_app,
             commands::get_settings_view,
+            commands::draft_commands::save_draft_backup,
+            commands::draft_commands::list_draft_backups,
+            commands::draft_commands::remove_draft_backup,
             commands::load_note_session,
             commands::open_note,
             commands::read_note,

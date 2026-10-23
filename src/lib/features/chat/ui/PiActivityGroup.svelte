@@ -77,11 +77,11 @@
   {/if}
 </Trace.Root>
 {#each appliedBeforeStop as tool (tool.key)}
-  <p role="status" class="edit-notice" data-testid="pi-edit-applied">{tool.name === 'create_note' ? 'Note created before the response stopped.' : 'Edit applied before the response stopped.'}</p>
+  <p role="status" class="edit-notice" data-testid="pi-edit-applied">{tool.name === 'create_note' ? 'Note created before the response stopped.' : tool.name === 'rename_note' ? 'Note renamed before the response stopped.' : 'Edit applied before the response stopped.'}</p>
 {/each}
 {#each tools as tool (tool.key)}
   {@const warning = toolCommitWarning(tool)}
-  {#if warning}<p role="status" class="edit-notice" data-testid="pi-edit-warning">{tool.name === 'create_note' ? 'Note created.' : 'Edit saved.'} {warning}</p>{/if}
+  {#if warning}<p role="status" class="edit-notice" data-testid="pi-edit-warning">{tool.name === 'create_note' ? 'Note created.' : tool.name === 'rename_note' ? 'Note renamed.' : 'Edit saved.'} {warning}</p>{/if}
 {/each}
 
 <style>

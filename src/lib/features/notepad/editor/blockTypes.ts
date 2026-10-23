@@ -218,63 +218,6 @@ function detectLineBlockType(text: string): BlockTypeId {
   return 'paragraph';
 }
 
-function describeBlankLineBlock(state: EditorState, lineNumber: number): BlockDescriptor {
-  const { from, to, moveTo } = lineContentRange(state, lineNumber);
-
-  return {
-    from,
-    to,
-    moveTo,
-    startLine: lineNumber,
-    endLine: lineNumber,
-    typeId: 'paragraph',
-    indent: 0
-  };
-}
-
-function findFenceEnd(state: EditorState, startLine: number, fenceText: string) {
-  for (let lineNo = startLine + 1; lineNo <= state.doc.lines; lineNo += 1) {
-    const line = state.doc.line(lineNo).text;
-    if (line.trim().startsWith(fenceText)) {
-      return lineNo;
-    }
-  }
-  return startLine;
-}
-
-function findListItemEnd(state: EditorState, startLine: number) {
-  const startText = state.doc.line(startLine).text;
-  const baseIndent = countIndent(startText);
-  let endLine = startLine;
-
-  for (let lineNo = startLine + 1; lineNo <= state.doc.lines; lineNo += 1) {
-    const text = state.doc.line(lineNo).text;
-    if (isBlank(text)) {
-      endLine = lineNo;
-      continue;
-    }
-
-    const indent = countIndent(text);
-    const listHere = matchesList(text);
-    if (indent < baseIndent) {
-      break;
-    }
-    if (indent === baseIndent && listHere) {
-      break;
-    }
-    if (indent === 0 && !listHere && baseIndent === 0) {
-      break;
-    }
-    endLine = lineNo;
-  }
-
-  while (endLine > startLine && isBlank(state.doc.line(endLine).text)) {
-    endLine -= 1;
-  }
-
-  return endLine;
-}
-
 function describeBlockStartingAt(state: EditorState, startLine: number): BlockDescriptor {
   const start = getLineInfo(state, startLine);
   const text = start.text;
@@ -531,15 +474,21 @@ export function insertParagraphBelow(
 }
 
 function reorderText(text: string, source: BlockDescriptor, target: BlockDescriptor, before: boolean) {
-  const sourceSlice = text.slice(source.from, source.moveTo);
-  const withoutSource = text.slice(0, source.from) + text.slice(source.moveTo);
+  const sourceSlice = text.slice(source.from, source.to);
+  // Separators belong between blocks, not to their contents. A final block has
+  // no trailing newline, so remove its preceding separator and recreate the
+  // destination separator on the appropriate side instead of joining two lines.
+  const removeFrom = source.moveTo === source.to && source.from > 0 ? source.from - 1 : source.from;
+  const withoutSource = text.slice(0, removeFrom) + text.slice(source.moveTo);
   let targetPos = before ? target.from : target.moveTo;
-  if (targetPos > source.from) {
-    targetPos -= source.moveTo - source.from;
+  if (targetPos > removeFrom) {
+    targetPos -= source.moveTo - removeFrom;
   }
+  const afterFinalBlock = !before && target.moveTo === target.to;
+  const insert = afterFinalBlock ? `\n${sourceSlice}` : `${sourceSlice}\n`;
   return {
-    text: withoutSource.slice(0, targetPos) + sourceSlice + withoutSource.slice(targetPos),
-    anchor: targetPos
+    text: withoutSource.slice(0, targetPos) + insert + withoutSource.slice(targetPos),
+    anchor: targetPos + (afterFinalBlock ? 1 : 0)
   };
 }
 

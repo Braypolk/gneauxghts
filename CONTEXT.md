@@ -33,7 +33,7 @@ The local origin through which a revision or lifecycle event entered the timelin
 _Avoid_: Author, collaborator
 
 **Agent Publication**:
-A canonical note creation or change made under explicit agent write authority. When review is required, approval applies to the exact content being published.
+A canonical note creation or change made under explicit agent write authority. When review is required, approval applies to the exact change, including its content and locations.
 _Avoid_: Accepted chat proposal, chat suggestion
 
 **Current-Content Provenance**:
@@ -63,6 +63,10 @@ _Avoid_: Revert, rollback, note recovery
 **Forgotten-Note Recovery**:
 The lifecycle transition that returns a forgotten note to the active vault without treating its content as an earlier version.
 _Avoid_: Version restore, unforget
+
+**Recovery Draft**:
+A private durable backup of unfinished editor content, restored to its original Note Identity after an interruption. Never-saved work resumes as a draft. A changed or unknown saved base requires an explicit conflict choice.
+_Avoid_: Note Revision, duplicate note, automatic restore
 
 **Running Vault**:
 The one vault whose canonical notes and vault-scoped services are bound to the current application process. It remains active when another folder is staged in Settings and changes only after a new process starts.

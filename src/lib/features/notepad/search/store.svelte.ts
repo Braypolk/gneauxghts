@@ -13,13 +13,17 @@ import {
   listLastEditedNotes,
   searchNotes,
   setNotePinned,
-  type SearchMode
+  type SearchMode,
+  type SearchResultType,
+  type SearchEditedWindow
 } from '#lib/features/notepad/search/search.js';
 import type { RecentTaskItem } from '#lib/features/notepad/model/types.js';
 import { buildCurrentNoteSearchResults } from '#lib/features/notepad/search/currentNoteSearch.js';
 
 export interface NotepadSearchState {
   searchMode: SearchMode;
+  resultType: SearchResultType;
+  editedWindow: SearchEditedWindow;
   searchQuery: string;
   matchCase: boolean;
   matchWholeWord: boolean;
@@ -60,6 +64,8 @@ interface ImageQuerySource { file: File; encoded?: string }
  */
 export class NotepadSearchStore {
   searchMode: SearchMode = $state('all');
+  resultType: SearchResultType = $state('all');
+  editedWindow: SearchEditedWindow = $state('any');
   searchQuery = $state('');
   matchCase = $state(false);
   matchWholeWord = $state(false);
@@ -71,16 +77,20 @@ export class NotepadSearchStore {
   lastEditedError = $state<string | null>(null);
   recentTasks = $state<RecentTaskItem[]>([]);
   isSearching = $state(false);
+  searchError = $state<string | null>(null);
   imageResults = $state<ImageSearchItem[]>([]);
   imageQueryUrl = $state<string | null>(null);
   mediaError = $state<string | null>(null);
   #queryImage: ImageQuerySource | null = null;
   #pendingImage: { source: ImageQuerySource; query: string | null; requestId: number } | null = null;
   #processingImage = false;
+  #modifiedSinceMillis: number | null = null;
+  #editedWindowQuery: string | null = null;
 
   #deps: SearchStoreDeps;
   #searchTimer: number | null = null;
   #activeSearchRequest = 0;
+  #searchResultsKey: string | null = null;
   #activeRecentNotesRequest = 0;
   #activeRecentTasksRequest = 0;
   #activeLastEditedRequest = 0;
@@ -122,10 +132,34 @@ export class NotepadSearchStore {
     this.#searchTimer = null;
   }
 
+  #prepareSearch(query: string) {
+    const normalizedQuery = query.trim();
+    if (normalizedQuery !== this.#editedWindowQuery) {
+      this.#editedWindowQuery = normalizedQuery;
+      this.#modifiedSinceMillis = this.#cutoffForEditedWindow();
+    }
+    const key = JSON.stringify([
+      normalizedQuery, this.searchMode, this.matchCase, this.matchWholeWord,
+      this.resultType, this.#modifiedSinceMillis,
+      this.#deps.getCurrentPath()
+    ]);
+    if (key !== this.#searchResultsKey) {
+      this.searchResults = [];
+      this.imageResults = [];
+      this.#searchResultsKey = key;
+    }
+    this.searchError = null;
+    this.mediaError = null;
+  }
+
   clearSearch = () => {
     this.#releaseImageQuery();
     this.imageResults = [];
     this.mediaError = null;
+    this.searchError = null;
+    this.#searchResultsKey = null;
+    this.#editedWindowQuery = null;
+    this.#modifiedSinceMillis = null;
     this.searchQuery = '';
     this.searchResults = [];
     this.isSearching = false;
@@ -152,6 +186,7 @@ export class NotepadSearchStore {
     this.imageQueryUrl = URL.createObjectURL(file);
     this.#queryImage = { file };
     this.searchQuery = query;
+    this.#prepareSearch(query);
     await this.#queueImageQuery(query, this.#activeSearchRequest);
   };
 
@@ -174,7 +209,12 @@ export class NotepadSearchStore {
           });
           source.encoded = encoded;
           if (requestId !== this.#activeSearchRequest) continue;
-          const results = await invoke<MediaSearchItem[]>('search_media', { query, imageBase64: encoded });
+          const results = await invoke<MediaSearchItem[]>('search_media', {
+            query, imageBase64: encoded,
+            includePassages: this.resultType !== 'images',
+            includeImages: this.resultType !== 'notes',
+            ...(this.#modifiedSinceMillis !== null ? { modifiedSinceMillis: this.#modifiedSinceMillis } : {})
+          });
           if (requestId !== this.#activeSearchRequest) continue;
           this.imageResults = results.filter((item): item is ImageSearchItem => item.kind === 'image');
           this.searchResults = results.filter((item): item is SearchItem & { kind: 'passage' } => item.kind === 'passage');
@@ -190,8 +230,7 @@ export class NotepadSearchStore {
 
   runSearch = async (query: string) => {
     const requestId = ++this.#activeSearchRequest;
-    this.imageResults = [];
-    this.mediaError = null;
+    this.#prepareSearch(query);
     const trimmedQuery = query.trim();
     if (this.#queryImage && this.searchMode === 'all') {
       this.#emitHighlightsChange();
@@ -231,33 +270,47 @@ export class NotepadSearchStore {
         return;
       }
 
-      const media = invoke<MediaSearchItem[]>('search_media', { query: trimmedQuery, imageBase64: null })
-        .then(results => ({ results, error: null }), error => ({ results: [] as MediaSearchItem[], error: String(error) }));
-      const results = await searchNotes(trimmedQuery, {
+      const media = (this.resultType === 'notes' ? Promise.resolve([] as MediaSearchItem[])
+        : invoke<MediaSearchItem[]>('search_media', {
+          query: trimmedQuery, imageBase64: null, includePassages: false,
+          ...(this.#modifiedSinceMillis !== null ? { modifiedSinceMillis: this.#modifiedSinceMillis } : {})
+        })).then(results => ({ results, error: null }), error => ({ results: [] as MediaSearchItem[], error: String(error) }));
+      const notes = await (this.resultType === 'images' ? Promise.resolve([] as SearchItem[]) : searchNotes(trimmedQuery, {
         currentPath: this.#deps.getCurrentPath(),
         currentTitle: this.#deps.getCurrentTitle(),
         ...(this.#deps.getCurrentTags ? { currentTags: this.#deps.getCurrentTags() } : {}),
         currentMarkdown: this.#deps.getCurrentMarkdown()
-      });
+      }, { modifiedSinceMillis: this.#modifiedSinceMillis }))
+        .then(results => ({ results, error: null }), error => ({ results: null, error }));
 
       if (requestId !== this.#activeSearchRequest) {
         return;
       }
 
-      this.searchResults = results;
-      this.isSearching = false;
+      if (notes.results) {
+        this.searchResults = notes.results;
+      } else {
+        this.searchError = 'Could not search notes. Try again.';
+        console.error('Failed to search notes:', notes.error);
+      }
       const images = await media;
       if (requestId !== this.#activeSearchRequest) return;
-      this.imageResults = images.results.filter((item): item is ImageSearchItem => item.kind === 'image');
+      if (!images.error) this.imageResults = images.results.filter((item): item is ImageSearchItem => item.kind === 'image');
       this.mediaError = images.error;
+      this.isSearching = false;
     } catch (error) {
       if (requestId !== this.#activeSearchRequest) {
         return;
       }
       console.error('Failed to search notes:', error);
-      this.searchResults = [];
+      this.searchError = 'Could not search notes. Try again.';
       this.isSearching = false;
     }
+  };
+
+  retrySearch = () => {
+    this.#clearPendingSearchTimer();
+    return this.runSearch(this.searchQuery);
   };
 
   scheduleSearch = () => {
@@ -265,12 +318,15 @@ export class NotepadSearchStore {
     // for the debounce would admit old results under the new visible query.
     this.#activeSearchRequest += 1;
     this.#clearPendingSearchTimer();
+    this.#prepareSearch(this.searchQuery);
 
     if (this.searchQuery.trim() === '' && !this.#queryImage) {
       this.searchResults = [];
       this.isSearching = false;
       return;
     }
+
+    this.isSearching = true;
 
     this.#searchTimer = window.setTimeout(() => {
       this.#searchTimer = null;
@@ -372,9 +428,8 @@ export class NotepadSearchStore {
   };
 
   handleSearchInput = (value: string) => {
-    this.imageResults = [];
-    this.mediaError = null;
     this.searchQuery = value;
+    this.#prepareSearch(value);
 
     if (value.trim() === '' && !this.#queryImage) {
       this.#activeSearchRequest += 1;
@@ -400,6 +455,9 @@ export class NotepadSearchStore {
     this.#releaseImageQuery();
     this.imageResults = [];
     this.mediaError = null;
+    this.searchError = null;
+    this.#searchResultsKey = null;
+    this.#editedWindowQuery = null;
     this.searchResults = [];
     this.isSearching = false;
     this.searchMode = mode;
@@ -428,6 +486,26 @@ export class NotepadSearchStore {
     this.matchWholeWord = enabled;
     await this.#refreshSearchAfterOptionChange();
   };
+
+  handleResultTypeChange = async (type: SearchResultType) => {
+    if (type === this.resultType) return;
+    this.resultType = type;
+    await this.#refreshSearchAfterOptionChange();
+  };
+
+  handleEditedWindowChange = async (window: SearchEditedWindow) => {
+    if (window === this.editedWindow) return;
+    this.editedWindow = window;
+    this.#modifiedSinceMillis = this.#cutoffForEditedWindow();
+    await this.#refreshSearchAfterOptionChange();
+  };
+
+  #cutoffForEditedWindow() {
+    // Retry retains this query's cutoff. A new query or cleared search takes a
+    // fresh relative window even if the mounted workspace has been open days.
+    return this.editedWindow === 'any' ? null
+      : Math.max(0, Date.now() - (this.editedWindow === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000);
+  }
 
   #loadRecentFocus = async () => {
     const notesRequestId = ++this.#activeRecentNotesRequest;

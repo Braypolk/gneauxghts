@@ -1,7 +1,7 @@
 <script lang="ts">
-  import * as floatingUi from '@floating-ui/dom';
   import type { VirtualElement } from '@floating-ui/dom';
   import type { EditorView } from '@codemirror/view';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '#lib/ui/floatingPanel.js';
   import { blockTypeIcons } from '#lib/features/notepad/editor/blockTypes.js';
   import {
     inlineFormatActions,
@@ -28,10 +28,11 @@
 
   let bodyEl = $state<HTMLDivElement | null>(null);
   let panelEl = $state<HTMLDivElement | null>(null);
-  let panelStyle = $state('position: fixed; left: 0; top: 0; visibility: hidden;');
+  let panelStyle = $state(hiddenFloatingPanelStyle);
 
   function buildSelectionReference(view: EditorView, from: number, to: number): VirtualElement {
     return {
+      contextElement: view.contentDOM,
       getBoundingClientRect() {
         const start =
           view.coordsAtPos(from) ??
@@ -64,66 +65,12 @@
     };
   }
 
-  async function updatePosition() {
-    if (!menu.open || !panelEl) {
-      panelStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
-      return;
-    }
-
-    const view = menu.view;
-    const panel = panelEl;
-    const reference = menu.nativeAnchor ?? buildSelectionReference(view, menu.selectionFrom, menu.selectionTo);
-    const boundary = boundsElement ?? undefined;
-
-    const { x, y } = await floatingUi.computePosition(reference, panel, {
-      strategy: 'fixed',
-      placement: 'top',
-      middleware: [
-        floatingUi.offset(10),
-        floatingUi.flip({
-          fallbackPlacements: ['bottom', 'top-start', 'bottom-start', 'top-end', 'bottom-end'],
-          padding: 16,
-          ...(boundary ? { boundary } : {})
-        }),
-        floatingUi.shift({
-          padding: 16,
-          ...(boundary ? { boundary } : {})
-        }),
-        floatingUi.size({
-          padding: 16,
-          ...(boundary ? { boundary } : {}),
-          apply({ availableHeight, availableWidth, elements }) {
-            const floating = elements.floating;
-            floating.style.maxWidth = `${Math.max(0, Math.floor(availableWidth))}px`;
-            const body = floating.querySelector<HTMLElement>('.selection-menu-body');
-            const toolbar = floating.querySelector<HTMLElement>('.selection-toolbar');
-            const tabs = floating.querySelector<HTMLElement>('.selection-tabs');
-            // Constrain the scroll viewport itself so its last row cannot be
-            // clipped by a shorter, non-scrollable parent. Include both headers
-            // and the panel borders in the available-height budget.
-            const chrome = (toolbar?.offsetHeight ?? 0) + (tabs?.offsetHeight ?? 0) + 4;
-            if (body) {
-              floating.style.maxHeight = '';
-              body.style.maxHeight = `${Math.max(0, Math.min(320, Math.floor(availableHeight - chrome)))}px`;
-            } else {
-              floating.style.maxHeight = `${Math.max(0, Math.floor(availableHeight))}px`;
-            }
-          }
-        })
-      ]
-    });
-
-    if (!menu.open || panelEl !== panel) return;
-    panelStyle = `position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible; max-width: ${panel.style.maxWidth}; max-height: ${panel.style.maxHeight || 'none'};`;
-  }
-
   $effect(() => {
-    const isOpen = menu.open;
     const currentPanel = panelEl;
     const currentMenu = menu;
 
-    if (!isOpen || !currentPanel || currentMenu.open === false) {
-      panelStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
+    if (!currentPanel || !currentMenu.open) {
+      panelStyle = hiddenFloatingPanelStyle;
       return;
     }
 
@@ -134,10 +81,23 @@
       currentMenu.selectionTo
     );
 
-    void updatePosition();
-
-    return floatingUi.autoUpdate(reference, currentPanel, () => {
-      void updatePosition();
+    return positionFloatingPanel(reference, currentPanel, (style) => { panelStyle = style; }, {
+      boundsElement,
+      placement: 'top',
+      fallbackPlacements: ['bottom', 'top-start', 'bottom-start', 'top-end', 'bottom-end'],
+      resize(availableHeight) {
+        const body = currentPanel.querySelector<HTMLElement>('.selection-menu-body');
+        const toolbar = currentPanel.querySelector<HTMLElement>('.selection-toolbar');
+        const tabs = currentPanel.querySelector<HTMLElement>('.selection-tabs');
+        // Keep the last row reachable after reserving both headers and borders.
+        const chrome = (toolbar?.offsetHeight ?? 0) + (tabs?.offsetHeight ?? 0) + 4;
+        if (body) {
+          currentPanel.style.maxHeight = '';
+          body.style.maxHeight = `${Math.max(0, Math.min(320, availableHeight - chrome))}px`;
+        } else {
+          currentPanel.style.maxHeight = `${availableHeight}px`;
+        }
+      }
     });
   });
 

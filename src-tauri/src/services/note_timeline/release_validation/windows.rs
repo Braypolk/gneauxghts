@@ -332,7 +332,7 @@ fn release_window_fixture() {
 }
 
 #[test]
-#[ignore = "small authentic schema-14 fixture and allocation evidence"]
+#[ignore = "small authentic schema-15 fixture and allocation evidence"]
 fn release_compact_publication_fixture() {
     let _guard = crate::test_support::lock_test_env();
     let export = PathBuf::from(std::env::var("GNEAUXGHTS_COMPACT_FIXTURE_EXPORT").unwrap());
@@ -416,7 +416,7 @@ fn release_compact_publication_fixture() {
     drop(db);
     copy_tree(notes.path(), &export.join("vault"));
     copy_tree(data.path(), &export.join("data"));
-    fs::write(export.join("compact-fixture.json"), serde_json::to_vec_pretty(&serde_json::json!({"kind":"gneauxghts-compact-publication-smoke-v1","schema":14,"identities":identities})).unwrap()).unwrap();
+    fs::write(export.join("compact-fixture.json"), serde_json::to_vec_pretty(&serde_json::json!({"kind":"gneauxghts-compact-publication-smoke-v1","schema":15,"identities":identities})).unwrap()).unwrap();
     println!("COMPACT_FIXTURE {}", export.display());
     crate::state::set_notes_root_override(None).unwrap();
 }

@@ -406,6 +406,10 @@
   bottom: calc(100% + 0.35rem);
   left: 0;
 }
+.chat-write-folders {
+  width: min(24rem, calc(100vw - 2rem));
+  --floating-panel-max-height: 28rem;
+}
 
 .chat-menu-item {
   display: flex;

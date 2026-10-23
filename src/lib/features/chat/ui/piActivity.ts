@@ -75,7 +75,7 @@ export function activityTranscript(entries: readonly EntryRecord[], live: LiveSt
 }
 
 function toolOutcome(tool: ToolActivity): string | undefined {
-  if (tool.publication) return tool.name === 'create_note' ? 'Created' : 'Applied';
+  if (tool.publication) return tool.name === 'create_note' ? 'Created' : tool.name === 'rename_note' ? 'Renamed' : 'Applied';
   const diagnostics = tool.result ? tool.diagnostics : tool.live?.diagnostics;
   // Harness outcomes and native domain codes have separate meanings. In
   // particular, an interrupted publication may have run and remains a failure.
@@ -87,7 +87,7 @@ function toolOutcome(tool: ToolActivity): string | undefined {
   const diagnostic = diagnostics?.find(item => Object.hasOwn(harnessOutcomes, item.code ?? ''));
   if (diagnostic) return harnessOutcomes[diagnostic.code!];
   const details = record(tool.result ? tool.result.details : tool.live?.details);
-  const noteEdit = ['edit_note', 'create_note'].includes(tool.name) && ['noteEdit', 'noteCreate'].includes(String(details?.kind)) && ['blocked', 'failed'].includes(String(details?.status));
+  const noteEdit = ['edit_note', 'create_note', 'rename_note'].includes(tool.name) && ['noteEdit', 'noteCreate', 'noteRename'].includes(String(details?.kind)) && ['blocked', 'failed'].includes(String(details?.status));
   const noteRead = ['read_note', 'search_notes'].includes(tool.name) && details?.kind === 'noteToolError';
   if ((!noteEdit && !noteRead) || typeof details?.code !== 'string') return;
   const outcomes: Record<string, string> = {
@@ -123,7 +123,7 @@ export function toolStatus(tool: ToolActivity): string {
 export function toolCommitWarning(tool: ToolActivity): string | undefined {
   if (tool.publication?.commitWarning) return tool.publication.commitWarning.message;
   const details = record(tool.result?.details);
-  if (!['edit_note', 'create_note'].includes(tool.name) || !['noteEdit', 'noteCreate'].includes(String(details?.kind)) || details?.status !== 'committed') return;
+  if (!['edit_note', 'create_note', 'rename_note'].includes(tool.name) || !['noteEdit', 'noteCreate', 'noteRename'].includes(String(details?.kind)) || details?.status !== 'committed') return;
   const message = record(details.commitWarning)?.message;
   return typeof message === 'string' ? message : undefined;
 }
@@ -131,6 +131,11 @@ export function toolLabel(tool: ToolActivity): string {
   const active = toolStatus(tool) === 'Running' || toolStatus(tool) === 'Pending';
   if (tool.name === 'search_notes') return active ? 'Searching notes' : 'Searched notes';
   if (tool.name === 'read_note') return active ? 'Reading note' : 'Read note';
+  if (tool.name === 'rename_note') {
+    if (active) return 'Renaming note';
+    const details = record(tool.result?.details ?? tool.live?.details);
+    return tool.publication || details?.kind === 'noteRename' && details.status === 'committed' ? 'Renamed note' : 'Rename note';
+  }
   return tool.name.replace(/[_-]+/g, ' ').replace(/^./, letter => letter.toUpperCase());
 }
 function record(value: unknown): Record<string, unknown> | undefined {

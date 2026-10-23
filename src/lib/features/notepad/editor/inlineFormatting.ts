@@ -5,6 +5,7 @@ import { isolateHistory } from '@codemirror/commands';
 import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
 import {
   defaultWrapById,
+  markerNodeBySyntaxNode,
   syntaxNodesById,
   wrapSpecsById,
   type WrapFormatId
@@ -56,7 +57,8 @@ function applySpec(
     changes,
     selection: { anchor: selection.anchor, head: selection.head ?? selection.anchor },
     scrollIntoView: options.scrollIntoView ?? true,
-    ...(options.isolateHistory ? { annotations: isolateHistory.of('full') } : {})
+    // One explicit formatting action must not absorb preceding typing or paste.
+    ...(options.isolateHistory !== false ? { annotations: isolateHistory.of('full') } : {})
   };
   if (options.focus !== false) return dispatchEditorChange(view, spec);
   view.dispatch(spec);
@@ -64,6 +66,7 @@ function applySpec(
 }
 
 function detectWrap(text: string, specs: readonly WrapSpec[]): DetectedWrap | null {
+  if (specs[0]?.before === '`') return detectCodeWrap(text);
   const sorted = [...specs].sort(
     (left, right) =>
       right.before.length + right.after.length - (left.before.length + left.after.length)
@@ -94,6 +97,33 @@ function detectWrap(text: string, specs: readonly WrapSpec[]): DetectedWrap | nu
   }
 
   return null;
+}
+
+function detectCodeWrap(text: string): DetectedWrap | null {
+  const marker = /^`+/.exec(text)?.[0];
+  if (!marker || text.length < marker.length * 2 || /`+$/.exec(text)?.[0] !== marker) {
+    return null;
+  }
+  let unwrapped = text.slice(marker.length, -marker.length);
+  for (const [run] of unwrapped.matchAll(/`+/g)) {
+    if (run.length === marker.length) return null;
+  }
+  // Markdown removes one padding space at both ends of a nonblank code span.
+  // Include that padding in the wrapper so toggling retains the visible text.
+  const padded = unwrapped.startsWith(' ') && unwrapped.endsWith(' ') && /[^ ]/.test(unwrapped);
+  if (padded) unwrapped = unwrapped.slice(1, -1);
+  const padding = padded ? ' ' : '';
+  return { before: marker + padding, after: padding + marker, unwrapped };
+}
+
+function codeWrap(text: string): WrapSpec {
+  let longestRun = 0;
+  for (const [run] of text.matchAll(/`+/g)) longestRun = Math.max(longestRun, run.length);
+  const marker = '`'.repeat(longestRun + 1);
+  const padded = text.startsWith('`') || text.endsWith('`') ||
+    (text.startsWith(' ') && text.endsWith(' ') && /[^ ]/.test(text));
+  const padding = padded ? ' ' : '';
+  return { before: marker + padding, after: padding + marker };
 }
 
 function selectionWithinWrappedContent(
@@ -153,6 +183,35 @@ function mapSelectionAfterUnwrap(
   return { anchor, head };
 }
 
+function findEmptyWrapAtCaret(
+  state: EditorState,
+  position: number,
+  specs: readonly WrapSpec[]
+): { from: number; to: number } | null {
+  // Empty pairs have no format syntax node. Do not mistake the middle of an
+  // existing opening/closing marker (such as **bold**) for an empty italic pair.
+  const node = syntaxTree(state).resolveInner(position, -1);
+  if (node.parent && markerNodeBySyntaxNode[node.parent.name] === node.name) {
+    return null;
+  }
+
+  for (const spec of specs) {
+    const from = position - spec.before.length;
+    const to = position + spec.after.length;
+    if (from < 0 || to > state.doc.length ||
+      state.sliceDoc(from, to) !== spec.before + spec.after) continue;
+
+    // A shorter delimiter cannot consume part of a longer marker run.
+    if (state.sliceDoc(Math.max(0, from - 1), from) === spec.before[0] ||
+      state.sliceDoc(to, Math.min(state.doc.length, to + 1)) === spec.after.at(-1)) continue;
+
+    let slashFrom = from;
+    while (slashFrom > 0 && state.sliceDoc(slashFrom - 1, slashFrom) === '\\') slashFrom--;
+    if ((from - slashFrom) % 2 === 0) return { from, to };
+  }
+  return null;
+}
+
 function toggleWrap(
   view: EditorView,
   specs: readonly WrapSpec[],
@@ -161,12 +220,8 @@ function toggleWrap(
   options: InlineFormattingOptions
 ) {
   const selection = view.state.selection.main;
-  if (selection.empty) {
-    return false;
-  }
-
-  const { from, to } = selection;
-  const text = view.state.sliceDoc(from, to);
+  let { from, to } = selection;
+  let text = view.state.sliceDoc(from, to);
   const directWrap = detectWrap(text, specs);
 
   if (directWrap) {
@@ -190,17 +245,49 @@ function toggleWrap(
     );
   }
 
-  const wrapFallback =
-    fallback.before === '*' &&
-    findEnclosingFormatNode(view.state, from, to, syntaxNodesById.bold, wrapSpecsById.bold)
-      ? { before: '_', after: '_' }
-      : fallback;
+  if (selection.empty) {
+    const emptyWrap = findEmptyWrapAtCaret(view.state, from, specs);
+    if (emptyWrap) {
+      return applySpec(view, { ...emptyWrap, insert: '' }, { anchor: emptyWrap.from }, options);
+    }
+  }
 
-  const wrapped = `${wrapFallback.before}${text}${wrapFallback.after}`;
+  // Keep nested bold and italic on different marker characters, including
+  // before either pair has content (which Markdown cannot parse as emphasis).
+  const outerFormatId = fallback.before === '*' ? 'bold' : fallback.before === '**' ? 'italic' : null;
+  const outer = outerFormatId
+    ? findEnclosingFormatNode(view.state, from, to, syntaxNodesById[outerFormatId], wrapSpecsById[outerFormatId])
+    : null;
+  const emptyOuter = !outer && outerFormatId && selection.empty
+    ? findEmptyWrapAtCaret(view.state, from, wrapSpecsById[outerFormatId])
+    : null;
+  const outerMarker = outer?.wrap.before ?? (emptyOuter ? view.state.sliceDoc(emptyOuter.from, from) : null);
+  const wrapFallback = outerMarker
+    ? specs.find((spec) => spec.before[0] !== outerMarker[0]) ?? fallback
+    : fallback;
+
+  if (selection.empty) {
+    const word = view.state.wordAt(from);
+    // At word edges the user can start formatted text without changing the
+    // preceding/following word. Inside a word the command formats that word.
+    if (word && word.from < from && from < word.to) {
+      // Underscores are native word characters. Do not absorb an enclosing
+      // italic/bold pair into the word being formatted inside it.
+      from = outer ? Math.max(word.from, outer.nodeFrom + outer.wrap.before.length) : word.from;
+      to = outer ? Math.min(word.to, outer.nodeTo - outer.wrap.after.length) : word.to;
+      if (emptyOuter) from = to = selection.head;
+      text = view.state.sliceDoc(from, to);
+    }
+  }
+
+  const wrap = fallback.before === '`' ? codeWrap(text) : wrapFallback;
+  const wrapped = `${wrap.before}${text}${wrap.after}`;
   return applySpec(
     view,
     { from, to, insert: wrapped },
-    { anchor: from + wrapFallback.before.length, head: to + wrapFallback.before.length },
+    selection.empty
+      ? { anchor: selection.head + wrap.before.length }
+      : { anchor: from + wrap.before.length, head: to + wrap.before.length },
     options
   );
 }
@@ -415,6 +502,8 @@ export function getActiveInlineFormats(
 }
 
 export function applyInlineFormat(view: EditorView, id: InlineFormatId, options: InlineFormattingOptions = {}) {
+  if (view.state.readOnly || view.compositionStarted || view.composing) return false;
+
   if (id === 'link') {
     return applyLink(view, options);
   }

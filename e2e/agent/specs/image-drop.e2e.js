@@ -51,6 +51,11 @@ describe('image file drops', () => {
     await dropImages(2);
     await expect($('.gn-image-upload-placeholder').$('button=Retry')).toBeDisplayed();
     expect(await markdown()).toBe('Before\n\nAfter');
+    await expect($('[aria-label="Text formatting"]')).not.toExist();
+    expect(await browser.execute(() => {
+      const selection = window.__GNEAUXGHTS_NATIVE_E2E__.readEditorState().editor.selection;
+      return selection.anchor === selection.head;
+    })).toBe(true);
     await $('.gn-image-upload-placeholder').$('button=Retry').click();
     await browser.waitUntil(async () => (await $$('.gn-image-embed img')).length === 2);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__.invocations.filter(call => call.command === 'store_pasted_image').length)).toBe(3);

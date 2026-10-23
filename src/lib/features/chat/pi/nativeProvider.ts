@@ -65,6 +65,9 @@ const nativeFailures: Record<string, string> = {
   provider_transient: 'network error: the model server is temporarily unavailable',
   provider_rate_limit: 'rate limit: the model server asked to retry',
   provider_limit: 'insufficient_quota: the model account cannot accept this request',
+  provider_model_memory: 'The model server could not load the selected model into memory. Unload other models, reduce its context size, or choose a smaller model, then retry.',
+  provider_model_load: 'The model server could not load the selected model. Load it in the server app or choose another model in Settings, then retry.',
+  provider_http: 'The model server rejected this request. Check the selected model and its server settings, then retry.',
   connection: 'network error: native provider connection failed',
   connection_timeout: 'network error: The model request timed out. Check the server and try again.',
   connection_dns: 'network error: The model server hostname could not be resolved. Check the server address and network connection.',
@@ -100,7 +103,10 @@ function safeFailure(error: unknown, original?: AssistantMessage): string {
   if (value.includes('subscription_sharing_usage_limit_exceeded')) return 'insufficient_quota: ChatGPT usage limit reached. Check your ChatGPT plan usage.';
   if (value.includes('subscription_sharing_user_not_eligible')) return 'This ChatGPT account cannot use its subscription here. Check Settings.';
   if (value.includes('insufficient_quota')) return nativeFailures.provider_limit;
-  if (/"code"\s*:\s*"credential"/.test(value)) return nativeFailures.credential;
+  // Native HTTP failures pass through Pi's provider parser as a status-prefixed
+  // JSON error. Recover only our allowlisted category, never the server message.
+  const nativeCode = /"code"\s*:\s*"([a-z_]+)"/.exec(value)?.[1];
+  if (nativeCode && Object.hasOwn(nativeFailures, nativeCode)) return nativeFailures[nativeCode];
   if (original && isContextOverflow(original)) return nativeFailures.provider_context_overflow;
   if (original && isRetryableAssistantError(original)) return nativeFailures.provider_transient;
   return safeFailures.has(value) ? value : 'The model request could not complete. Start a new attempt.';

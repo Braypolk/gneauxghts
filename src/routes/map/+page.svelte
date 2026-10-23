@@ -8,13 +8,11 @@
   import type { AtlasNode } from '#lib/types/atlas.js';
   import type { NoteSession } from '#lib/features/notepad/model/types.js';
   import AtlasMap from '#lib/features/atlas/AtlasMap.svelte';
-  import SearchBar from '#lib/ui/search/SearchBar.svelte';
-  import SearchDock from '#lib/ui/search/SearchDock.svelte';
-  import { Focus } from '@lucide/svelte';
+  import AtlasSearch from '#lib/features/atlas/AtlasSearch.svelte';
 
   const atlas = atlasStore;
-  const matchingIds = $derived(new Set((atlas.response?.nodes ?? []).filter((node) => atlas.nodeHasSearchHit(node)).sort((a, b) => (atlas.searchMatchForNode(b)?.score ?? 0) - (atlas.searchMatchForNode(a)?.score ?? 0)).map((node) => node.id)));
-  const searchReady = $derived(atlas.searchResponse?.query === atlas.searchQuery.trim() && atlas.searchResponse.status === 'ready' && !atlas.isSearching);
+  const matchingIds = $derived(atlas.matchingNodeIds);
+  const searchReady = $derived(atlas.searchResponse?.query === atlas.searchQuery.trim() && ['ready', 'empty'].includes(atlas.searchResponse.status) && !atlas.isSearching);
   async function readSource(node: AtlasNode): Promise<string> {
     return (await invoke<NoteSession>('read_note', { noteId: node.noteId, path: node.notePath })).markdown;
   }
@@ -41,15 +39,7 @@
       renameCloud={(id, name) => atlas.renameCloud(id, name)}
     >
       {#snippet search(fitMap)}
-        <SearchDock pageInset class="atlas-search-dock">
-            <SearchBar class="atlas-search-bar" value={atlas.searchQuery} placeholder="" ariaLabel="Search map notes"
-              shortcut={{enabled:true}}
-              onValueChange={(value) => atlas.setSearchQuery(value)}>
-              <div class="atlas-map-tools flex shrink-0 items-center gap-0.5 rounded-full border border-border/80 bg-card/88 p-1 text-muted-foreground shadow-lg backdrop-blur-md sm:contents" data-search-focus-independent>
-                <button type="button" class="shared-search-control mobile-dense-touch-target" onclick={fitMap} aria-label="Fit map to view" title="Fit view"><Focus class="h-4 w-4" /></button>
-            </div>
-          </SearchBar>
-        </SearchDock>
+        <AtlasSearch {atlas} {fitMap} />
       {/snippet}
     </AtlasMap>
   {:else}
@@ -78,7 +68,7 @@
     <span class="search-status" role="status">
       {atlas.searchError || atlas.searchResponse?.status === 'unavailable'
         ? 'Search unavailable'
-        : !searchReady ? 'Searching…' : `${matchingIds.size} matching notes`}{#if atlas.searchError}
+        : !searchReady ? 'Searching…' : `${matchingIds.size} matching node${matchingIds.size === 1 ? '' : 's'}`}{#if atlas.searchError || atlas.searchResponse?.status === 'unavailable'}
         <button onclick={() => void atlas.runSearch()}>Retry</button>
       {/if}
     </span>
@@ -123,11 +113,6 @@
   @media (max-width:639px) {
     :global(.atlas-surface .atlas-search-bar[data-search-expanded="false"]) {
       max-width: calc(100vw - 8.75rem);
-    }
-    .atlas-map-tools {
-      position: absolute;
-      right: 0;
-      bottom: calc(100% + .5rem);
     }
   }
 

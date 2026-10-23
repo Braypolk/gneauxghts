@@ -35,6 +35,25 @@ async function metadata(id: ConversationId, title: string, retired = false) {
   await chat!.harness.commit(async tx => { const doc = await tx.doc(ChatDoc, id); doc.title = title; doc.retired = retired; }, PI_CONTEXT);
 }
 
+it('keeps retired application title records out of initial and live conversation lists', async () => {
+  await setup(2);
+  const titles = await chat!.harness.createConversation({ ownership: { kind: 'ownerless' },
+    init: async (tx, id) => { const doc = await tx.doc(ChatDoc, id); doc.title = 'Internal title jobs'; doc.purpose = 'noteTitles'; }
+  }, PI_CONTEXT);
+  expect((await chat!.listConversations()).items.map(row => row.id)).not.toContain(titles.id);
+  await binding!.initialize();
+  await chat!.harness.commit(async tx => { (await tx.doc(ChatDoc, titles.id)).title = 'Later title job'; }, PI_CONTEXT);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(binding!.getSnapshot().conversations.map(row => row.id)).not.toContain(titles.id);
+  const live = await chat!.harness.createConversation({ ownership: { kind: 'ownerless' },
+    init: async (tx, id) => { (await tx.doc(ChatDoc, id)).purpose = 'noteTitles'; }
+  }, PI_CONTEXT);
+  const human = await create('Human conversation');
+  await vi.waitFor(() => expect(binding!.getSnapshot().conversations.some(row => row.id === human.id)).toBe(true));
+  expect(binding!.getSnapshot().conversations.map(row => row.id)).not.toContain(live.id);
+  await expect(chat!.bindConversation(live)).rejects.toThrow('Application title jobs are not chat conversations.');
+});
+
 it('measures matched sixty-row initial hydration and one-row title update without inference', async () => {
   const { storage, faux } = await setup();
   const scans = vi.spyOn(storage, 'scanConversations');

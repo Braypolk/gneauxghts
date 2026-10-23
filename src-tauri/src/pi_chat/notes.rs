@@ -4,10 +4,7 @@ use super::authority::{
 };
 use crate::{
     index::AppState,
-    services::note_timeline::{
-        AllowedScope, CanonicalNoteRead, CurrentContentIdentity, CurrentContentItem, NoteIdentity,
-        RevisionCitation,
-    },
+    services::note_timeline::{AllowedScope, CanonicalNoteRead, NoteIdentity, RevisionCitation},
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -17,6 +14,7 @@ use tauri::Manager;
 #[cfg(test)]
 thread_local! {
     static AFTER_CANONICAL_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
+    static AFTER_SEARCH_RANKING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = Default::default();
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -150,6 +148,14 @@ pub(crate) fn scope(
     connection: &Connection,
     snapshot: &AuthoritySnapshot,
 ) -> DomainResult<AllowedScope> {
+    let (attached, excluded) = search_policy(connection, snapshot)?;
+    Ok(AllowedScope::policy(attached.as_ref(), &excluded))
+}
+
+fn search_policy(
+    connection: &Connection,
+    snapshot: &AuthoritySnapshot,
+) -> DomainResult<(Option<HashSet<String>>, HashSet<String>)> {
     let mut statement = connection
         .prepare("SELECT note_id FROM chat_note_policies WHERE disposition='excluded'")?;
     let excluded = statement
@@ -157,7 +163,7 @@ pub(crate) fn scope(
         .collect::<Result<HashSet<_>, _>>()?;
     let attached = (snapshot.read.mode == ReadMode::AttachedNotesOnly)
         .then(|| snapshot.read.attached_note_ids.iter().cloned().collect());
-    Ok(AllowedScope::policy(attached.as_ref(), &excluded))
+    Ok((attached, excluded))
 }
 
 /// Caller holds AuthorityStore::with_authority. No current-file hash check: an
@@ -271,7 +277,7 @@ pub(crate) fn mutation_base(
             ));
         }
         Ok(NoteRead {
-            markdown: canonical.markdown,
+            markdown: crate::note::authored_markdown(&canonical.markdown),
             citation: receipt.source.citation(),
             source: receipt.source,
         })
@@ -398,14 +404,6 @@ pub(crate) struct SearchItem {
     #[serde(skip)]
     path: PathBuf,
 }
-impl CurrentContentItem for SearchItem {
-    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
-        CurrentContentIdentity::Note {
-            note_id: Some(&self.note_id),
-            note_path: self.path.to_str(),
-        }
-    }
-}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchPage {
@@ -435,94 +433,67 @@ pub(crate) fn search_notes(
         ));
     }
     let lease = store.lease(authority_id)?;
-    // Cursor is an offset bound to this exact query, policy revision and authority.
-    // It grants no note access and is checked against the current result page.
+    // Cursor binds this exact query/policy and the complete bounded ranking.
+    // Re-ranking must never silently shift an offset after notes or model results
+    // change. This contains no saved content and grants no note access.
     let fingerprint =
         blake3::hash(format!("{}:{}:{query}", authority_id, lease.snapshot.revision).as_bytes())
             .to_hex()
             .to_string();
-    let offset = match cursor {
-        None => 0,
+    let (offset, previous_results) = match cursor {
+        None | Some("") => (0, None),
         Some(value) => {
-            let (token, offset) = value.split_once(':').ok_or_else(|| {
-                DomainError::new("invalid_cursor", "Repeat search without a cursor.")
-            })?;
+            let invalid = || DomainError::new("invalid_cursor", "Repeat search without a cursor.");
+            if value.len() > 160 {
+                return Err(invalid());
+            }
+            let mut parts = value.split(':');
+            let token = parts.next().ok_or_else(invalid)?;
+            let results = parts.next().ok_or_else(invalid)?;
+            let offset = parts.next().ok_or_else(invalid)?;
+            if parts.next().is_some() || results.len() != 64 {
+                return Err(invalid());
+            }
             if token != fingerprint {
                 return Err(DomainError::new(
                     "invalid_cursor",
                     "Search access or query changed. Repeat search without a cursor.",
                 ));
             }
-            offset
-                .parse::<usize>()
-                .map_err(|_| DomainError::new("invalid_cursor", "Invalid search cursor."))?
+            let offset = offset.parse::<usize>().map_err(|_| invalid())?;
+            (offset, Some(results))
         }
     };
-    let allowed = store.with_authority(
+    let (allowed, excluded) = store.with_authority(
         authority_id,
         Some(lease.snapshot.revision),
-        |connection, snapshot| scope(connection, snapshot),
+        |connection, snapshot| search_policy(connection, snapshot),
     )?;
-    let normalized = crate::index::normalize_search_text(query.trim());
-    let terms = normalized.split_whitespace().collect::<Vec<_>>();
-    let timeline = state.note_timeline();
-    let access = timeline.current_content(allowed);
-    let mut items = access
-        .read_refreshable(|| {
-            // Release the catalog before entering its canonical read owner.
-            let candidates = {
-                let index = state
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Notes index is unavailable".to_string())?;
-                index
-                    .entries
-                    .iter()
-                    .filter(|(path, note)| {
-                        note.document_kind == crate::note::DocumentKind::Note
-                            && !crate::search::search_note(Some(path), note, &normalized, &terms)
-                                .is_empty()
-                    })
-                    .map(|(path, note)| (path.clone(), note.note_id.clone()))
-                    .collect::<Vec<_>>()
-            };
-            let mut matches = Vec::new();
-            for (path, note_id) in candidates {
-                let canonical = match access.read_note(&NoteIdentity::new(&note_id)) {
-                    Ok(read) => read,
-                    Err(crate::services::note_timeline::HistoryError::Ineligible(_)) => continue,
-                    Err(error) => return Err(error.into()),
-                };
-                if canonical.path != path {
-                    continue;
-                }
-                // The index discovers candidates; preview text comes from their
-                // canonical saved bytes, never a stale cached paragraph or editor.
-                let current = crate::index::build_indexed_note(&path, &canonical.markdown, 0);
-                let Some(best) =
-                    crate::search::search_note(Some(&path), &current, &normalized, &terms)
-                        .into_iter()
-                        .max_by_key(|hit| hit.score)
-                else {
-                    continue;
-                };
-                matches.push((
-                    best.score,
-                    SearchItem {
-                        note_id,
-                        title: canonical.title,
-                        preview: best.result.excerpt,
-                        path,
-                    },
-                ));
-            }
-            matches.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.note_id.cmp(&b.1.note_id)));
-            Ok(matches
-                .into_iter()
-                .map(|(_, item)| item)
-                .collect::<Vec<_>>())
-        })
-        .map_err(timeline_error)?;
+    // Chat retains its 4096-byte query and 50-item page contract. The shared
+    // ranker has one bounded candidate budget; the dock keeps its smaller bounds.
+    let mut items: Vec<_> = crate::services::retrieval::retrieve_scoped_notes(
+        state,
+        query,
+        4096,
+        allowed.as_ref(),
+        &excluded,
+        Default::default(),
+    )
+    .map_err(timeline_error)?
+    .into_iter()
+    .map(|item| SearchItem {
+        note_id: item.note_id,
+        title: item.title,
+        preview: item.excerpt,
+        path: item.note_path,
+    })
+    .collect();
+    #[cfg(test)]
+    AFTER_SEARCH_RANKING.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
     store.with_authority(
         authority_id,
         Some(lease.snapshot.revision),
@@ -540,11 +511,31 @@ pub(crate) fn search_notes(
             Ok(())
         },
     )?;
+    let mut results = blake3::Hasher::new();
+    for item in &items {
+        for bytes in [
+            item.note_id.as_bytes(),
+            item.title.as_bytes(),
+            item.preview.as_bytes(),
+            item.path.as_os_str().as_encoded_bytes(),
+        ] {
+            results.update(&(bytes.len() as u64).to_le_bytes());
+            results.update(bytes);
+        }
+    }
+    let results = results.finalize().to_hex().to_string();
+    if previous_results.is_some_and(|previous| previous != results) || offset > items.len() {
+        return Err(DomainError::new(
+            "invalid_cursor",
+            "Search results changed. Repeat search without a cursor.",
+        ));
+    }
     let has_more = offset.saturating_add(limit) < items.len();
     let items = items.into_iter().skip(offset).take(limit).collect();
     Ok(SearchPage {
         items,
-        next_cursor: has_more.then(|| format!("{fingerprint}:{}", offset.saturating_add(limit))),
+        next_cursor: has_more
+            .then(|| format!("{fingerprint}:{results}:{}", offset.saturating_add(limit))),
     })
 }
 
@@ -837,6 +828,223 @@ mod tests {
     }
 
     #[test]
+    fn scoped_hybrid_search_retains_chat_bounds_and_stable_pagination() {
+        let vault = TestVault::with_notes("pi-scoped-ranked-pages", |root| {
+            for index in 0..55 {
+                std::fs::write(
+                    root.join(format!("Search {index:02}.md")),
+                    format!(
+                        "---\ngneauxghts:\n  id: search-{index:02}\n  kind: note\n---\n\nneedle paragraph {index:02}"
+                    ),
+                )
+                .unwrap();
+            }
+        });
+        vault
+            .state
+            .ensure_interactive_index(vault.notes.path(), "pi-search-test")
+            .unwrap();
+        let (store, authority) = authority(&vault, ReadMode::FullVault, vec![], 1);
+        let query = format!("needle{}", " ".repeat(4090));
+        let first = search_notes(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            &query,
+            Some(50),
+            Some(""),
+        )
+        .unwrap();
+        assert_eq!(first.items.len(), 50);
+        let cursor = first.next_cursor.as_deref().unwrap();
+        let next = search_notes(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            &query,
+            Some(50),
+            Some(cursor),
+        )
+        .unwrap();
+        assert_eq!(next.items.len(), 5);
+        assert!(next.next_cursor.is_none());
+        let ids: HashSet<_> = first
+            .items
+            .iter()
+            .chain(&next.items)
+            .map(|item| &item.note_id)
+            .collect();
+        assert_eq!(ids.len(), 55, "pages must not overlap or lose tied results");
+        let repeated = search_notes(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            &query,
+            Some(50),
+            Some(cursor),
+        )
+        .unwrap();
+        assert_eq!(
+            repeated
+                .items
+                .iter()
+                .map(|item| &item.note_id)
+                .collect::<Vec<_>>(),
+            next.items
+                .iter()
+                .map(|item| &item.note_id)
+                .collect::<Vec<_>>(),
+        );
+        for invalid in ["".to_string(), " ".to_string(), format!("{query}x")] {
+            assert_eq!(
+                search_notes(
+                    &vault.state,
+                    &store,
+                    &authority.authority_id,
+                    &invalid,
+                    None,
+                    None
+                )
+                .err()
+                .unwrap()
+                .code,
+                "invalid_query"
+            );
+        }
+        for invalid in [0, 51] {
+            assert_eq!(
+                search_notes(
+                    &vault.state,
+                    &store,
+                    &authority.authority_id,
+                    "needle",
+                    Some(invalid),
+                    None
+                )
+                .err()
+                .unwrap()
+                .code,
+                "invalid_limit"
+            );
+        }
+        // A foreign authority and changed exact query cannot reuse this cursor.
+        let (_, foreign) = self::authority(&vault, ReadMode::FullVault, vec![], 2);
+        for (id, query) in [
+            (&foreign.authority_id, query.as_str()),
+            (&authority.authority_id, "needle"),
+        ] {
+            assert_eq!(
+                search_notes(&vault.state, &store, id, query, Some(50), Some(cursor))
+                    .err()
+                    .unwrap()
+                    .code,
+                "invalid_cursor"
+            );
+        }
+        // The watcher has not observed this edit. Stale lexical candidates must
+        // not supply a preview, and a shifted page requires a fresh search.
+        let first_path = first.items[0].path.clone();
+        let raw = std::fs::read_to_string(&first_path).unwrap();
+        std::fs::write(&first_path, raw.replace("needle", "absent")).unwrap();
+        assert_eq!(
+            search_notes(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                &query,
+                Some(50),
+                Some(cursor)
+            )
+            .err()
+            .unwrap()
+            .code,
+            "invalid_cursor"
+        );
+        let refreshed = search_notes(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "needle",
+            Some(50),
+            None,
+        )
+        .unwrap();
+        assert!(refreshed.items.iter().all(|item| item.path != first_path));
+        let connection =
+            Connection::open(crate::state::vault_data_dir().unwrap().join("ai.sqlite3")).unwrap();
+        let receipts: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='pi_chat_read_sources')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !receipts,
+            "ranked previews must not issue read or citation evidence"
+        );
+    }
+
+    #[test]
+    fn search_rechecks_authority_after_ranking_and_preserves_exact_title_matches() {
+        let vault = TestVault::new("pi-ranked-search-admission");
+        let exact = saved(&vault, "Inexpensive greenhouse", "A plan for seedlings");
+        let other = saved(&vault, "Unrelated", "A separate idea");
+        let exact_id = exact.note_id.as_ref().unwrap();
+        let (store, authority) = authority(
+            &vault,
+            ReadMode::AttachedNotesOnly,
+            vec![exact_id.clone()],
+            1,
+        );
+        let found = search_notes(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "Inexpensive greenhouse",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(found.items.len(), 1);
+        assert_eq!(&found.items[0].note_id, exact_id);
+        assert!(search_notes(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "separate",
+            None,
+            None
+        )
+        .unwrap()
+        .items
+        .is_empty());
+        assert_ne!(exact_id, other.note_id.as_ref().unwrap());
+
+        let retiring = store.clone();
+        let excluded = exact_id.clone();
+        AFTER_SEARCH_RANKING.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                retiring.set_exclusion(&excluded, true).unwrap();
+            }));
+        });
+        assert_eq!(
+            search_notes(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                "greenhouse",
+                None,
+                None
+            )
+            .err()
+            .unwrap()
+            .code,
+            "retired_authority"
+        );
+    }
+
+    #[test]
     fn retirement_between_canonical_read_and_receipt_delivery_denies_output() {
         let vault = TestVault::new("pi-read-retirement-race");
         let note = saved(&vault, "Race", "private text");
@@ -882,7 +1090,8 @@ mod tests {
             &read.source.source_id,
         )
         .unwrap();
-        assert_eq!(base.markdown, read.markdown);
+        assert_eq!(base.markdown, "Alpha");
+        assert!(!base.markdown.contains("gneauxghts:"));
         assert_eq!(base.source.source_id, read.source.source_id);
         assert_eq!(
             mutation_base(
@@ -997,7 +1206,7 @@ mod tests {
             )
             .unwrap()
             .markdown,
-            changed
+            crate::note::authored_markdown(&changed)
         );
         let hash = |source: &ReadSource| match &source.read_state {
             ReadState::Revision { content_hash, .. } | ReadState::Observed { content_hash, .. } => {

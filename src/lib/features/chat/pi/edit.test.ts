@@ -45,7 +45,7 @@ async function fixture({ review = true, original = 'Alpha\n', dirty = false, cre
       const mutation = args.mutation as { markdown: string };
       if (prepared) expect(mutation.markdown).toBe(prepared.markdown);
       prepared = mutation;
-      return { intentId: 'intent', payloadHash: 'hash', reviewRequired: review, target, ...(create ? { creation: { destination: 'Note.md', markdown: mutation.markdown } } : {}) };
+      return { operation: create ? 'create' : 'update', intentId: 'intent', payloadHash: 'hash', reviewRequired: review, target, ...(create ? { creation: { destination: 'Note.md', markdown: mutation.markdown } } : {}) };
     }
     if (command === 'pi_chat_approve_mutation') expect(args).toEqual({ authorityId: 'authority', intentId: 'intent', payloadHash: 'hash' });
     if (command === 'pi_chat_reconcile_mutation') return result ?? { status: 'unpublished' };
@@ -60,7 +60,9 @@ async function fixture({ review = true, original = 'Alpha\n', dirty = false, cre
   const owner = await bindPublicationDocumentOwner({
     async withAgentPublication(_target, effect) {
       if (dirty) throw new DocumentPublicationBlocked('Save or discard the open note before applying this edit.');
-      return effect({ retainUntilSettled() {}, async captureCanonical() {}, async adopt(value) { adoption(value); return 'adopted'; } });
+      return effect({ assertMutationReady() {}, retainUntilSettled() {}, async captureCanonical() {}, async adopt(value) { adoption(value); return 'adopted'; } });
+    }, async withAgentPublicationReconciliation(_target, effect) {
+      return effect({ assertMutationReady() { if (dirty) throw new DocumentPublicationBlocked('Save or discard the open note before applying this edit.'); }, retainUntilSettled() {}, async captureCanonical() {}, async adopt(value) { adoption(value); return 'adopted'; } });
     }, releaseSettledAgentPublication() {}
   });
   closers.push(owner.close);
@@ -224,6 +226,20 @@ async function expectNeutralEditActivity(f: Awaited<ReturnType<typeof fixture>>,
 }
 
 describe('Pi model note editing', () => {
+  it('reviews removal of the final authored frontmatter property before publishing', async () => {
+    const original = '---\nproject: before\n---\n\nAlpha\n';
+    const f = await fixture({ original });
+    const submission = await f.submit([{ oldText: '---\nproject: before\n---\n\n', newText: '' }]);
+    const review = await f.pending();
+    if (review.kind !== 'edit') throw new Error('Expected an edit review.');
+    expect(review.patch).toContain('-project: before');
+    expect(f.canonical()).toBe(original);
+    await decideEditReview(f.harness, f.conversation.id, review.taskId, 'approved');
+    expect((await submission.wait(context)).status).toBe('done');
+    expect(f.canonical()).toBe('Alpha\n');
+    expect(f.adoption).toHaveBeenCalledOnce();
+    expect(native.invoke.mock.calls.find(([command]) => command === 'pi_chat_prepare_mutation')?.[1]).toMatchObject({ mutation: { operation: 'update', markdown: 'Alpha\n' } });
+  });
   it('stages the public edit diff, waits for exact approval, and publishes one native receipt', async () => {
     const f = await fixture(); const submission = await f.submit(); const review = await f.pending();
     if (review.kind !== 'edit') throw new Error('Expected an edit review.');

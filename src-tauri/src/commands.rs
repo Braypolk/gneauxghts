@@ -1,5 +1,6 @@
 pub(crate) mod asset_commands;
 pub(crate) mod atlas_commands;
+pub(crate) mod draft_commands;
 pub(crate) mod forgotten_note_commands;
 pub(crate) mod history_commands;
 mod index_bridge;
@@ -13,11 +14,13 @@ pub(crate) mod wikilink_commands;
 
 pub(crate) use note_session::{
     load_note_session_from_notes_dir_with_state, open_note_from_notes_dir_with_state,
-    read_note_session_from_path, resolve_note_path_input_with_state,
+    read_note_session_from_notes_dir_with_state,
 };
 
 #[cfg(test)]
-pub(crate) use note_session::{load_note_session_from_notes_dir, open_note_from_notes_dir};
+pub(crate) use note_session::{
+    load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
+};
 
 use crate::{
     index::AppState,
@@ -33,7 +36,6 @@ use crate::{
     },
     time::current_time_millis,
 };
-use note_persistence::{persist_note_session_with_outcome, persist_task_note_session_with_outcome};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -304,9 +306,7 @@ pub(crate) fn read_note(
     let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir_with_state(false, &state)?;
 
-    let note_path = resolve_note_path_input_with_state(&notes_dir, note_id, path, Some(&state))?;
-
-    read_note_session_from_path(&note_path)
+    read_note_session_from_notes_dir_with_state(&notes_dir, note_id, path, Some(&state))
 }
 
 #[tauri::command]
@@ -531,20 +531,18 @@ pub(crate) async fn save_note<R: tauri::Runtime>(
     markdown: String,
     current_path: Option<String>,
     tag_edit: Option<crate::tags::TagEdit>,
+    expected_note_id: Option<String>,
 ) -> Result<NoteSession, String> {
     on_app_worker(app, move |state| {
-        let outcome = if let Some(edit) = tag_edit {
-            note_persistence::persist_note_session_with_tags(
-                state,
-                title,
-                markdown,
-                current_path,
-                crate::services::note_timeline::MutationSource::Editor,
-                &edit,
-            )?
-        } else {
-            persist_note_session_with_outcome(state, title, markdown, current_path)?
-        };
+        let outcome = note_persistence::persist_note_session_with_expected_identity(
+            state,
+            title,
+            markdown,
+            current_path,
+            expected_note_id,
+            crate::services::note_timeline::MutationSource::Editor,
+            tag_edit.as_ref(),
+        )?;
         outcome.ok_or_else(|| "Saved note session is missing".to_string())
     })
     .await?
@@ -557,20 +555,18 @@ pub(crate) async fn save_task_note<R: tauri::Runtime>(
     markdown: String,
     current_path: Option<String>,
     tag_edit: Option<crate::tags::TagEdit>,
+    expected_note_id: Option<String>,
 ) -> Result<NoteSession, String> {
     on_app_worker(app, move |state| {
-        let outcome = if let Some(edit) = tag_edit {
-            note_persistence::persist_note_session_with_tags(
-                state,
-                title,
-                markdown,
-                current_path,
-                crate::services::note_timeline::MutationSource::TaskAction,
-                &edit,
-            )?
-        } else {
-            persist_task_note_session_with_outcome(state, title, markdown, current_path)?
-        };
+        let outcome = note_persistence::persist_note_session_with_expected_identity(
+            state,
+            title,
+            markdown,
+            current_path,
+            expected_note_id,
+            crate::services::note_timeline::MutationSource::TaskAction,
+            tag_edit.as_ref(),
+        )?;
         outcome.ok_or_else(|| "Saved note session is missing".to_string())
     })
     .await?
@@ -853,11 +849,11 @@ pub(crate) async fn bootstrap_app<R: tauri::Runtime>(
 /// Bundled settings payload returned by `get_settings_view`. Replaces the
 /// settings store's parallel fan-out of three semantic invokes plus
 /// `get_vault_info` with a single call.
+/// Exhaustive history diagnostics are requested separately by History Settings.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsViewPayload {
     vault: VaultInfo,
-    history_health: crate::services::note_timeline::HistoryHealthReport,
     semantic_status: SemanticStatus,
     semantic_settings: SemanticSettings,
     semantic_debug: SemanticDebugSnapshot,
@@ -869,13 +865,11 @@ pub(crate) async fn get_settings_view<R: tauri::Runtime>(
 ) -> Result<SettingsViewPayload, String> {
     on_app_worker(app, move |state| {
         let vault = current_vault_info(state.running_vault())?;
-        let history_health = state.note_timeline().history_health()?;
         let semantic_status = state.semantic.get_status()?;
         let semantic_settings = state.semantic.get_settings()?;
         let semantic_debug = state.semantic.debug_snapshot()?;
         Ok(SettingsViewPayload {
             vault,
-            history_health,
             semantic_status,
             semantic_settings,
             semantic_debug,
@@ -899,6 +893,44 @@ mod tests {
     };
     use serde_json::json;
     use std::{fs, path::PathBuf};
+    use tauri::Manager;
+
+    #[test]
+    fn settings_view_does_not_scan_history_until_explicitly_requested() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("settings-view-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = TestDir::new("settings-view-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = crate::index::AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let before = crate::services::note_timeline::history_scan_counts_for_test();
+
+        let settings =
+            tauri::async_runtime::block_on(super::get_settings_view(app.handle().clone()))
+                .expect("general Settings should load without history diagnostics");
+        assert_eq!(settings.vault.note_count, 0);
+        assert_eq!(
+            crate::services::note_timeline::history_scan_counts_for_test(),
+            before,
+            "opening general Settings must not launch exhaustive history diagnostics"
+        );
+
+        app.state::<crate::index::AppState>()
+            .note_timeline()
+            .history_health()
+            .expect("History Settings retains the explicit diagnostic path");
+        assert!(crate::services::note_timeline::history_scan_counts_for_test().1 > before.1);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
 
     #[test]
     fn manual_reopen_rejects_restart_before_accessing_lifecycle_owners() {

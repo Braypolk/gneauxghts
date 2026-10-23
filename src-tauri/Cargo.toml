@@ -69,10 +69,14 @@ thiserror = "2"
 url = "2"
 percent-encoding = "2"
 regex = "1"
+unicode-normalization = "0.1"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
 serde_yaml = { version = "0.10", package = "serde_yaml_ng" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWindow"] }

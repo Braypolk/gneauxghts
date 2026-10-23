@@ -59,7 +59,7 @@ describe('tag conflict save coordination', () => {
     h.editing.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('local body'));
     h.observe(['external']);
     await expect(h.conflicts.keepMyEdits(h.note)).resolves.toBe(true);
-    expect(h.save).toHaveBeenCalledWith('Note', 'local body', '/vault/Note.md', { previous: ['external'], tags: ['local'] });
+    expect(h.save).toHaveBeenCalledWith('Note', 'local body', '/vault/Note.md', { previous: ['external'], tags: ['local'] }, 'note');
     expect(h.getDisk().tags).toEqual(['local']);
     expect(h.persistence.hasCleanBuffer(h.note)).toBe(true);
     expect(h.note.externalSync.kind).toBe('noConflict');
@@ -82,7 +82,7 @@ describe('tag conflict save coordination', () => {
     h.editing.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('local body'));
     h.observe(['external']);
     await h.conflicts.keepMyEdits(h.note);
-    expect(h.save).toHaveBeenCalledWith('Note', 'local body', '/vault/Note.md');
+    expect(h.save).toHaveBeenCalledWith('Note', 'local body', '/vault/Note.md', undefined, 'note');
     expect(h.note.working.tags).toEqual(['external']);
     expect(h.getDisk().tags).toEqual(['external']);
   });
@@ -116,7 +116,7 @@ describe('tag conflict save coordination', () => {
     h.observe([]);
     dispatchDocumentExternalSync(h.note, { type: 'externalCaptured', external: { kind: 'deletion', source: 'watcher', path: '/vault/Note.md' } });
     await expect(h.conflicts.keepMyEdits(h.note)).resolves.toBe(true);
-    expect(h.save).toHaveBeenCalledWith('Note', 'body', '/vault/Note.md', { previous: [], tags: ['local'] });
+    expect(h.save).toHaveBeenCalledWith('Note', 'body', '/vault/Note.md', { previous: [], tags: ['local'] }, 'note');
   });
 });
 

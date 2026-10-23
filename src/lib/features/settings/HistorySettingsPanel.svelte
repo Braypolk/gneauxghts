@@ -4,18 +4,22 @@
 
   let {
     historyHealth,
+    isLoading = false,
     isRunningAction,
     actionError,
     retryHistory,
     resetCorruptHistory,
-    clearVaultHistory
+    clearVaultHistory,
+    loadHistoryHealth
   }: {
     historyHealth: HistoryHealthReport | null;
+    isLoading?: boolean;
     isRunningAction: boolean;
     actionError: string | null;
     retryHistory: () => void | Promise<void>;
     resetCorruptHistory: () => void | Promise<void>;
     clearVaultHistory: () => void | Promise<void>;
+    loadHistoryHealth: () => void | Promise<void>;
   } = $props();
 
   let confirmingReset = $state(false);
@@ -173,11 +177,20 @@
         </p>
       </SettingsCard>
     {/if}
-
-    {#if actionError}
-      <p class="text-xs text-destructive" role="alert">{actionError}</p>
-    {/if}
   </div>
+{:else if isLoading || isRunningAction}
+  <p class="text-sm text-muted-foreground" role="status">Loading history health…</p>
 {:else}
-  <p class="text-sm text-muted-foreground">Loading history health…</p>
+  <div class="space-y-3">
+    <p class="text-sm text-muted-foreground">History health is unavailable.</p>
+    <button
+      type="button"
+      class="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium"
+      onclick={() => void loadHistoryHealth()}
+    >Retry history check</button>
+  </div>
+{/if}
+
+{#if actionError}
+  <p class="mt-4 text-xs text-destructive" role="alert">{actionError}</p>
 {/if}

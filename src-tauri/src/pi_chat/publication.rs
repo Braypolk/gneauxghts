@@ -17,10 +17,11 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Mutex, OnceLock,
     },
 };
 use tauri::{Emitter, Manager};
+use unicode_normalization::UnicodeNormalization;
 
 #[cfg(test)]
 thread_local! { static BEFORE_PROOF:std::cell::RefCell<Option<Box<dyn FnOnce()>>>=Default::default(); static FAULT:std::cell::Cell<Option<&'static str>>=const { std::cell::Cell::new(None) }; }
@@ -44,6 +45,13 @@ pub(crate) enum Mutation {
         title: String,
         markdown: String,
     },
+    Rename {
+        #[serde(rename = "noteId")]
+        note_id: String,
+        #[serde(rename = "expectedReadSourceId")]
+        expected_read_source_id: String,
+        title: String,
+    },
     Update {
         #[serde(rename = "noteId")]
         note_id: String,
@@ -57,6 +65,8 @@ pub(crate) enum Mutation {
 pub(crate) struct PublicationTarget {
     pub note_id: Option<String>,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_path: Option<String>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,13 +75,26 @@ pub(crate) struct PreparedMutation {
     pub payload_hash: String,
     pub review_required: bool,
     pub target: PublicationTarget,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub creation: Option<CreationPreview>,
+    #[serde(flatten)]
+    pub operation: PreparedOperation,
+}
+#[derive(Debug, Serialize)]
+#[serde(tag = "operation", rename_all = "camelCase")]
+pub(crate) enum PreparedOperation {
+    Update,
+    Create { creation: CreationPreview },
+    Rename { rename: RenamePreview },
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct CreationPreview {
     pub destination: String,
     pub markdown: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RenamePreview {
+    pub source_path: String,
+    pub destination_path: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
@@ -193,6 +216,7 @@ fn authorize(snapshot: &AuthoritySnapshot, payload: &Payload, root: &Path) -> Do
     let operation = match payload.mutation {
         Mutation::Update { .. } => WriteOperation::Update,
         Mutation::Create { .. } => WriteOperation::Create,
+        Mutation::Rename { .. } => WriteOperation::Update,
     };
     if !operations.contains(&operation) {
         return Err(DomainError::new(
@@ -201,8 +225,10 @@ fn authorize(snapshot: &AuthoritySnapshot, payload: &Payload, root: &Path) -> Do
         ));
     }
     let path = Path::new(&payload.target.path);
-    let note_allowed = matches!(payload.mutation, Mutation::Update { .. })
-        && scope.note_ids.contains(&payload.identity);
+    let note_allowed = matches!(
+        payload.mutation,
+        Mutation::Update { .. } | Mutation::Rename { .. }
+    ) && scope.note_ids.contains(&payload.identity);
     let folder_allowed = scope
         .folders
         .iter()
@@ -215,21 +241,214 @@ fn authorize(snapshot: &AuthoritySnapshot, payload: &Payload, root: &Path) -> Do
     }
     Ok(())
 }
-fn creation_preview(payload: &Payload, root: &Path) -> Option<CreationPreview> {
-    let canonical = payload.creation_markdown.as_ref()?;
-    let parsed = crate::note::parse_note(canonical);
-    let markdown = match parsed.frontmatter.raw_other {
-        Some(other) => format!("---\n{other}---\n\n{}", parsed.body),
-        None => parsed.body,
-    };
-    Some(CreationPreview {
-        destination: Path::new(&payload.target.path)
+fn prepared_operation(payload: &Payload, root: &Path) -> DomainResult<PreparedOperation> {
+    let relative = |path: &str| -> DomainResult<String> {
+        Ok(Path::new(path)
             .strip_prefix(root)
-            .ok()?
+            .map_err(|_| invalid("Prepared target is outside the vault."))?
             .to_string_lossy()
-            .into(),
-        markdown,
+            .into())
+    };
+    Ok(match &payload.mutation {
+        Mutation::Update { .. } => PreparedOperation::Update,
+        Mutation::Create { .. } => PreparedOperation::Create {
+            creation: CreationPreview {
+                destination: relative(&payload.target.path)?,
+                markdown: crate::note::authored_markdown(
+                    payload
+                        .creation_markdown
+                        .as_ref()
+                        .ok_or_else(|| invalid("Missing prepared creation content."))?,
+                ),
+            },
+        },
+        Mutation::Rename { .. } => PreparedOperation::Rename {
+            rename: RenamePreview {
+                source_path: relative(&payload.target.path)?,
+                destination_path: relative(
+                    payload
+                        .target
+                        .destination_path
+                        .as_deref()
+                        .ok_or_else(|| invalid("Missing exact rename destination."))?,
+                )?,
+            },
+        },
     })
+}
+fn equivalent_filename(name: &str) -> String {
+    // Whole-string casing includes contextual sigma and expansions such as ß.
+    // The lower/upper combination is intentionally conservative for portable
+    // filenames; it never changes the title or chooses a destination alias.
+    name.nfc()
+        .collect::<String>()
+        .to_lowercase()
+        .to_uppercase()
+        .nfc()
+        .collect()
+}
+fn has_visible_filename_title(title: &str) -> bool {
+    static MEANINGFUL: OnceLock<regex::Regex> = OnceLock::new();
+    static BIDI_CONTROL: OnceLock<regex::Regex> = OnceLock::new();
+    // Unicode properties come from the existing regex crate's generated tables.
+    // Joiners and variation selectors remain valid inside visible emoji/scripts;
+    // only an entirely invisible stem or explicit directional control is refused.
+    MEANINGFUL
+        .get_or_init(|| {
+            regex::Regex::new(r"[^\p{White_Space}\p{Default_Ignorable_Code_Point}]")
+                .expect("constant Unicode filename property")
+        })
+        .is_match(title)
+        && !BIDI_CONTROL
+            .get_or_init(|| {
+                regex::Regex::new(r"\p{Bidi_Control}").expect("constant Unicode bidi property")
+            })
+            .is_match(title)
+}
+/// A title denotes one exact visible stem. Never sanitize, suffix or silently
+/// normalize names: the review must describe the filename that will be moved.
+fn rename_destination(root: &Path, source: &Path, title: &str) -> DomainResult<PathBuf> {
+    let bad_name = || {
+        DomainError::new("unsupported_name", "Choose a visible filename without a .md extension, separators, reserved characters or leading/trailing whitespace.")
+    };
+    if !has_visible_filename_title(title)
+        || title.len() > 220
+        || title != title.trim()
+        || title.starts_with('.')
+        || title.ends_with('.')
+        || title
+            .chars()
+            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        || title.to_lowercase().ends_with(".md")
+    {
+        return Err(bad_name());
+    }
+    let device = title
+        .split('.')
+        .next()
+        .unwrap_or(title)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    if matches!(
+        device.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || device.strip_prefix("COM").is_some_and(|n| {
+        matches!(
+            n,
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
+    }) || device.strip_prefix("LPT").is_some_and(|n| {
+        matches!(
+            n,
+            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
+    }) {
+        return Err(bad_name());
+    }
+    let parent = source.parent().ok_or_else(bad_name)?;
+    let relative = parent.strip_prefix(root).map_err(|_| bad_name())?;
+    if relative
+        .components()
+        .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return Err(bad_name());
+    }
+    let source_metadata = std::fs::symlink_metadata(source)
+        .map_err(|_| DomainError::new("changed_base", "The source note is unavailable."))?;
+    if !source_metadata.is_file() || source_metadata.file_type().is_symlink() {
+        return Err(bad_name());
+    }
+    let filename = format!("{title}.md");
+    let equivalent = equivalent_filename(&filename);
+    if source
+        .file_name()
+        .is_some_and(|name| equivalent_filename(&name.to_string_lossy()) == equivalent)
+    {
+        return Err(DomainError::new("unsupported_name", "Choose a different name. Case-only or Unicode-normalization-only renames are not supported."));
+    }
+    // Reject canonical-equivalent names even on case-sensitive filesystems, so a
+    // vault remains portable without two distinct notes becoming one filename.
+    for entry in std::fs::read_dir(parent).map_err(|_| bad_name())? {
+        let entry = entry.map_err(|_| bad_name())?;
+        if equivalent_filename(&entry.file_name().to_string_lossy()) == equivalent {
+            return Err(DomainError::new(
+                "target_exists",
+                "A file already occupies this destination. Choose another title.",
+            ));
+        }
+    }
+    let destination = canonical_target(root, &parent.join(filename))?;
+    require_absent(&destination)?;
+    Ok(destination)
+}
+fn validate_pending_target(
+    state: &AppState,
+    connection: &Connection,
+    snapshot: &AuthoritySnapshot,
+    payload: &Payload,
+    root: &Path,
+) -> DomainResult<PathBuf> {
+    let path = canonical_target(root, Path::new(&payload.target.path))?;
+    if path.to_string_lossy() != payload.target.path {
+        return Err(DomainError::new(
+            "changed_base",
+            "The canonical target changed.",
+        ));
+    }
+    match &payload.mutation {
+        Mutation::Update {
+            note_id,
+            expected_read_source_id,
+            ..
+        }
+        | Mutation::Rename {
+            note_id,
+            expected_read_source_id,
+            ..
+        } => {
+            let source = notes::receipt_in(connection, snapshot, expected_read_source_id)?;
+            if source.source.note_id != *note_id
+                || source.canonical_path != path
+                || source.raw_base_hash != payload.raw_base_hash
+            {
+                return Err(DomainError::new(
+                    "changed_base",
+                    "The read source no longer matches this target.",
+                ));
+            }
+            let current = notes::source_navigation_content(state, snapshot, connection, note_id)?;
+            if current.path != path {
+                return Err(DomainError::new(
+                    "changed_base",
+                    "The note location changed.",
+                ));
+            }
+            if let Mutation::Rename { title, .. } = &payload.mutation {
+                if crate::semantic::db::content_hash(&current.markdown) != payload.raw_base_hash {
+                    return Err(DomainError::new(
+                        "changed_base",
+                        "The note changed after the read. Read and prepare again.",
+                    ));
+                }
+                let destination = rename_destination(root, &path, title)?;
+                if payload.target.destination_path.as_deref()
+                    != Some(destination.to_string_lossy().as_ref())
+                {
+                    return Err(DomainError::new(
+                        "changed_base",
+                        "The exact rename destination changed. Prepare again.",
+                    ));
+                }
+            }
+        }
+        Mutation::Create { folder, .. } => {
+            if path.parent() != Some(folder_path(root, folder)?.as_path()) {
+                return Err(invalid("The destination folder changed. Prepare again."));
+            }
+            require_absent(&path)?;
+        }
+    }
+    Ok(path)
 }
 fn require_absent(path: &Path) -> DomainResult<()> {
     match std::fs::symlink_metadata(path) {
@@ -259,11 +478,15 @@ pub(crate) fn prepare(
             if let Some(id)=previous {
                 let intent=load(connection,&id)?;
                 if encode(&intent.payload.mutation)? != encode(&mutation)? {return Err(DomainError::new("request_mismatch","The mutation request identity already binds a different payload."));}
-                let creation=creation_preview(&intent.payload,&root);
-                return Ok(PreparedMutation{intent_id:id,payload_hash:intent.hash,review_required:intent.review_required,target:intent.payload.target,creation});
+                let operation=prepared_operation(&intent.payload,&root)?;
+                if matches!(intent.payload.mutation,Mutation::Rename{..}) && intent.result.is_none() && intent.proof.is_none() {
+                    if intent.revision != snapshot.revision { return Err(DomainError::new("stale_authority","Chat access changed. Prepare this rename again.")); }
+                    authorize(snapshot,&intent.payload,&root)?;
+                    validate_pending_target(state,connection,snapshot,&intent.payload,&root)?;
+                }
+                return Ok(PreparedMutation{intent_id:id,payload_hash:intent.hash,review_required:intent.review_required,target:intent.payload.target,operation});
             }
-            let markdown=match &mutation { Mutation::Update{markdown,..}|Mutation::Create{markdown,..}=>markdown };
-            if markdown.len()>8*1024*1024{return Err(invalid("Mutation content is too large."));}
+            if matches!(&mutation,Mutation::Update{markdown,..}|Mutation::Create{markdown,..} if markdown.len()>8*1024*1024) {return Err(invalid("Mutation content is too large."));}
 
             let (target,identity,raw_base_hash,creation_markdown)=match &mutation{
                 Mutation::Create{folder,title,markdown}=>{
@@ -276,51 +499,75 @@ pub(crate) fn prepare(
                     require_absent(&path)?;
                     let identity=crate::note::generate_note_id();
                     // New metadata and identity belong to native creation, never model-provided frontmatter.
-                    let parsed=crate::note::parse_note(&crate::note::normalize_wikilink_markdown(markdown));
-                    let authored=match parsed.frontmatter.raw_other {Some(other)=>format!("---\n{other}---\n\n{}",parsed.body),None=>parsed.body};
+                    let authored=crate::note::authored_markdown(&crate::note::normalize_wikilink_markdown(markdown));
                     let canonical=crate::note::prepare_note_markdown(&authored,None,Some(None)).map_err(|_|invalid("Invalid note content."))?.0;
                     let canonical=crate::note::repair_managed_note_identity(&canonical,&identity).map_err(|_|invalid("Invalid note identity."))?;
-                    (PublicationTarget{note_id:Some(identity.clone()),path:path.to_string_lossy().into()},identity,String::new(),Some(canonical))
+                    (PublicationTarget{note_id:Some(identity.clone()),path:path.to_string_lossy().into(),destination_path:None},identity,String::new(),Some(canonical))
                 }
-                Mutation::Update{note_id,expected_read_source_id,..}=>{
+                Mutation::Rename{note_id,expected_read_source_id,title}=>{
+                    let source=notes::receipt_in(connection,snapshot,expected_read_source_id)?;
+                    if source.source.note_id != *note_id {return Err(invalid("The read source belongs to a different note."));}
+                    let current=notes::source_navigation_content(state,snapshot,connection,note_id)?;
+                    if current.path != source.canonical_path || crate::semantic::db::content_hash(&current.markdown) != source.raw_base_hash {return Err(DomainError::new("changed_base","The note changed after the read. Read and prepare again."));}
+                    let path=canonical_target(&root,&current.path)?;
+                    let destination=rename_destination(&root,&path,title)?;
+                    (PublicationTarget{note_id:Some(note_id.clone()),path:path.to_string_lossy().into(),destination_path:Some(destination.to_string_lossy().into())},note_id.clone(),source.raw_base_hash,None)
+                }
+                Mutation::Update{note_id,expected_read_source_id,markdown}=>{
+                    if crate::note::parse_note(markdown).frontmatter.managed.is_some() {return Err(invalid("Edit only authored content. Note identity and lifecycle metadata are managed by the app."));}
                     let source=notes::receipt_in(connection,snapshot,expected_read_source_id)?;
                     if source.source.note_id != *note_id{return Err(invalid("The read source belongs to a different note."));}
                     let path=notes::source_navigation_note(state,snapshot,connection,note_id)?;
                     if path != source.canonical_path{return Err(DomainError::new("changed_base","The note location changed after the read."));}
                     let path=canonical_target(&root,&path)?;
-                    (PublicationTarget{note_id:Some(note_id.clone()),path:path.to_string_lossy().into()},note_id.clone(),source.raw_base_hash,None)
+                    (PublicationTarget{note_id:Some(note_id.clone()),path:path.to_string_lossy().into(),destination_path:None},note_id.clone(),source.raw_base_hash,None)
                 }
             };
+            let review_required=snapshot.write.review_before_applying;
             let payload=Payload{mutation,target:target.clone(),identity,raw_base_hash,creation_markdown};
             authorize(snapshot,&payload,&root)?;
             let json=encode(&payload)?;
             let hash=crate::semantic::db::content_hash(&format!("pi-chat-mutation-v1\0{json}"));
             let id=opaque_id()?;
-            connection.execute("INSERT INTO pi_chat_mutations(intent_id,authority_id,authority_revision,request_id,payload_json,payload_hash,review_required) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id,authority_id,snapshot.revision,request_id,json,hash,snapshot.write.review_before_applying])?;
-            let creation=creation_preview(&payload,&root);
-            Ok(PreparedMutation{intent_id:id,payload_hash:hash,review_required:snapshot.write.review_before_applying,target,creation})
+            connection.execute("INSERT INTO pi_chat_mutations(intent_id,authority_id,authority_revision,request_id,payload_json,payload_hash,review_required) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id,authority_id,snapshot.revision,request_id,json,hash,review_required])?;
+            let operation=prepared_operation(&payload,&root)?;
+            Ok(PreparedMutation{intent_id:id,payload_hash:hash,review_required,target,operation})
         })
     })
 }
 pub(crate) fn approve(
+    state: &AppState,
     store: &AuthorityStore,
     authority_id: &str,
     intent_id: &str,
     hash: &str,
 ) -> DomainResult<()> {
-    store.with_authority(authority_id, None, |connection, _| {
-        let intent = load(connection, intent_id)?;
-        if intent.authority_id != authority_id || intent.hash != hash || intent.rejected {
-            return Err(DomainError::new(
-                "approval_mismatch",
-                "Approval does not match this exact pending mutation.",
-            ));
-        }
-        connection.execute(
-            "UPDATE pi_chat_mutations SET approved=1 WHERE intent_id=?1",
-            [intent_id],
-        )?;
-        Ok(())
+    store.with_effect(|| {
+        let root = running_root(state, store)?;
+        store.with_authority_locked(authority_id, None, |connection, snapshot| {
+            let intent = load(connection, intent_id)?;
+            if intent.authority_id != authority_id || intent.hash != hash || intent.rejected {
+                return Err(DomainError::new(
+                    "approval_mismatch",
+                    "Approval does not match this exact pending mutation.",
+                ));
+            }
+            if matches!(intent.payload.mutation, Mutation::Rename { .. }) {
+                if snapshot.revision != intent.revision {
+                    return Err(DomainError::new(
+                        "stale_authority",
+                        "Chat access changed. Prepare this rename again.",
+                    ));
+                }
+                authorize(snapshot, &intent.payload, &root)?;
+                validate_pending_target(state, connection, snapshot, &intent.payload, &root)?;
+            }
+            connection.execute(
+                "UPDATE pi_chat_mutations SET approved=1 WHERE intent_id=?1",
+                [intent_id],
+            )?;
+            Ok(())
+        })
     })
 }
 pub(crate) fn reject(
@@ -412,6 +659,14 @@ struct Admission {
     owner: String,
     id: String,
     target: PublicationTarget,
+}
+fn targets_overlap(a: &PublicationTarget, b: &PublicationTarget) -> bool {
+    a.note_id
+        .as_ref()
+        .is_some_and(|id| b.note_id.as_ref() == Some(id))
+        || std::iter::once(a.path.as_str())
+            .chain(a.destination_path.as_deref())
+            .any(|path| path == b.path || b.destination_path.as_deref() == Some(path))
 }
 /// Ephemeral owner-controlled leases; never claims to infer unsaved WebView state.
 #[derive(Default)]
@@ -528,6 +783,16 @@ impl EditorAdmissions {
                 "Editor admission target does not match the native intent.",
             ));
         }
+        if editors
+            .admissions
+            .values()
+            .any(|admission| targets_overlap(&admission.target, &target))
+        {
+            return Err(DomainError::new(
+                "editor_conflict",
+                "Another publication already leases this identity or location.",
+            ));
+        }
         let id = opaque_id()?;
         editors.admissions.insert(
             intent_id.into(),
@@ -587,21 +852,7 @@ pub(crate) fn publish(
         let admission_result=store.with_authority_locked(authority_id,Some(intent.revision),|connection,snapshot|{
             authorize(snapshot,&intent.payload,&root)?;
             if (intent.review_required || snapshot.write.review_before_applying) && !intent.approved{return Err(DomainError::new("review_required","Approve this exact mutation before applying it."));}
-            let path=canonical_target(&root,Path::new(&intent.payload.target.path))?;
-            if path.to_string_lossy()!=intent.payload.target.path{return Err(DomainError::new("changed_base","The canonical target changed."));}
-            match &intent.payload.mutation {
-                Mutation::Update{note_id,expected_read_source_id,..}=>{
-                    let source=notes::receipt_in(connection,snapshot,expected_read_source_id)?;
-                    if source.source.note_id!=*note_id || source.canonical_path!=path || source.raw_base_hash!=intent.payload.raw_base_hash{return Err(DomainError::new("changed_base","The read source no longer matches this target."));}
-                    let current=notes::source_navigation_note(state,snapshot,connection,note_id)?;
-                    if current!=path{return Err(DomainError::new("changed_base","The note location changed."));}
-                }
-                Mutation::Create{folder,..}=>{
-                    if path.parent()!=Some(folder_path(&root,folder)?.as_path()) {return Err(invalid("The destination folder changed. Prepare again."));}
-                    require_absent(&path)?;
-                }
-            }
-            Ok(path)
+            validate_pending_target(state,connection,snapshot,&intent.payload,&root)
         });
         let path=match admission_result {Ok(path)=>path,Err(error)=>return Ok(PublicationResult::Blocked{code:error.code,message:error.message})};
         let record=|proof:&PublicationProof|->Result<(),HistoryError>{
@@ -617,6 +868,7 @@ pub(crate) fn publish(
         };
         let identity=NoteIdentity::new(&intent.payload.identity);
         let outcome=match &intent.payload.mutation {
+            Mutation::Rename{..}=>state.note_timeline().rename_note_with_proof(&path,Path::new(intent.payload.target.destination_path.as_deref().ok_or_else(||invalid("Missing exact rename destination."))?),&identity,&intent.payload.raw_base_hash,&record),
             Mutation::Update{markdown,..}=>state.note_timeline().update_note_with_proof(&path,&identity,&intent.payload.raw_base_hash,markdown,&record),
             Mutation::Create{..}=>state.note_timeline().create_note_with_proof(&path,&identity,intent.payload.creation_markdown.as_deref().ok_or_else(||invalid("Missing prepared creation content."))?,&record),
         };
@@ -703,7 +955,7 @@ pub(crate) fn pi_chat_approve_mutation(
     payload_hash: String,
 ) -> DomainResult<()> {
     store.require_running_vault(state.running_vault())?;
-    approve(&store, &authority_id, &intent_id, &payload_hash)
+    approve(&state, &store, &authority_id, &intent_id, &payload_hash)
 }
 #[tauri::command]
 pub(crate) fn pi_chat_reject_mutation(
@@ -913,6 +1165,841 @@ mod tests {
     fn creation(title: &str) -> Mutation {
         serde_json::from_value(serde_json::json!({"operation":"create","folder":".","title":title,"markdown":"Created body\n"})).unwrap()
     }
+    fn rename_authority(
+        store: &AuthorityStore,
+        snapshot: &AuthoritySnapshot,
+        grant_scope: NoteScope,
+    ) -> AuthoritySnapshot {
+        store
+            .set_write(
+                &snapshot.authority_id,
+                snapshot.revision,
+                WritePolicy {
+                    grant: WriteGrant::Temporary {
+                        conversation_id: 1,
+                        operations: vec![WriteOperation::Update],
+                        scope: grant_scope,
+                    },
+                    review_before_applying: true,
+                },
+            )
+            .unwrap()
+    }
+    fn rename_mutation(
+        vault: &TestVault,
+        store: &AuthorityStore,
+        authority_id: &str,
+        source_title: &str,
+        title: &str,
+    ) -> Mutation {
+        let note = save_and_finalize(
+            &vault.state,
+            source_title.into(),
+            "---\nproject: retained\n---\n\nOriginal body\n".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let note_id = note.note_id.unwrap();
+        let source = notes::read_note(&vault.state, store, authority_id, &note_id).unwrap();
+        Mutation::Rename {
+            note_id,
+            expected_read_source_id: source.source.source_id,
+            title: title.into(),
+        }
+    }
+    fn approve_rename(
+        vault: &TestVault,
+        store: &AuthorityStore,
+        authority: &AuthoritySnapshot,
+        intent: &PreparedMutation,
+    ) {
+        approve(
+            &vault.state,
+            store,
+            &authority.authority_id,
+            &intent.intent_id,
+            &intent.payload_hash,
+        )
+        .unwrap();
+    }
+    #[test]
+    fn rename_shares_update_permission_note_scope_and_review_policy() {
+        let vault = TestVault::new("pi-rename-unified-grants");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let mutation = rename_mutation(
+            &vault,
+            &store,
+            &snapshot.authority_id,
+            "Unified source",
+            "Unified destination",
+        );
+        assert_eq!(
+            prepare(
+                &vault.state,
+                &store,
+                &snapshot.authority_id,
+                "off",
+                mutation.clone()
+            )
+            .unwrap_err()
+            .code,
+            "write_off"
+        );
+        let note_id = match &mutation {
+            Mutation::Rename { note_id, .. } => note_id.clone(),
+            _ => unreachable!(),
+        };
+        let authority = store
+            .set_write(
+                &snapshot.authority_id,
+                snapshot.revision,
+                WritePolicy {
+                    grant: WriteGrant::Temporary {
+                        conversation_id: 1,
+                        operations: vec![WriteOperation::Update],
+                        scope: NoteScope {
+                            note_ids: vec![note_id],
+                            folders: vec![],
+                        },
+                    },
+                    review_before_applying: false,
+                },
+            )
+            .unwrap();
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "note-scoped-direct-rename",
+            mutation,
+        )
+        .unwrap();
+        assert!(!intent.review_required);
+        let serialized = serde_json::to_value(&intent).unwrap();
+        assert_eq!(serialized["operation"], "rename");
+        assert!(serialized.get("creation").is_none());
+        assert_eq!(
+            serialized["rename"]["destinationPath"],
+            "Unified destination.md"
+        );
+        let PreparedOperation::Rename { rename } = &intent.operation else {
+            panic!("Expected rename preview")
+        };
+        assert_eq!(rename.source_path, "Unified source.md");
+        assert_eq!(rename.destination_path, "Unified destination.md");
+        admit(&editors, &store, &owner, &intent);
+        assert!(matches!(
+            publish(
+                &vault.state,
+                &store,
+                &editors,
+                &authority.authority_id,
+                &intent.intent_id
+            )
+            .unwrap(),
+            PublicationResult::Committed { .. }
+        ));
+        assert!(!Path::new(&intent.target.path).exists());
+        assert!(Path::new(intent.target.destination_path.as_ref().unwrap()).exists());
+    }
+    #[test]
+    fn rename_shares_subfolder_scope_and_rechecks_review_and_authority() {
+        let vault = TestVault::new("pi-rename-unified-folder-grants");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let mutation = rename_mutation(
+            &vault,
+            &store,
+            &snapshot.authority_id,
+            "Nested source",
+            "Nested destination",
+        );
+        let authority = rename_authority(&store, &snapshot, scope());
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "subfolder-rename",
+            mutation,
+        )
+        .unwrap();
+        // Scope calculation treats descendant renames and updates alike. The
+        // native E2E case exercises canonical publication in a nested folder.
+        let mut scoped = authority.clone();
+        scoped.write.grant = WriteGrant::Temporary {
+            conversation_id: 1,
+            operations: vec![WriteOperation::Update],
+            scope: NoteScope {
+                note_ids: vec![],
+                folders: vec!["Projects".into()],
+            },
+        };
+        let mut payload = load(&store.connection().unwrap(), &intent.intent_id)
+            .unwrap()
+            .payload;
+        let root = vault.state.running_vault().root();
+        std::fs::create_dir_all(root.join("Projects/Ideas")).unwrap();
+        payload.target.path = root
+            .join("Projects/Ideas/Source.md")
+            .to_string_lossy()
+            .into();
+        payload.target.destination_path = Some(
+            root.join("Projects/Ideas/Destination.md")
+                .to_string_lossy()
+                .into(),
+        );
+        authorize(&scoped, &payload, root).unwrap();
+        payload.target.path = root
+            .join("ProjectsElsewhere/Source.md")
+            .to_string_lossy()
+            .into();
+        assert_eq!(
+            authorize(&scoped, &payload, root).unwrap_err().code,
+            "scope_denied"
+        );
+        assert!(intent.review_required);
+        admit(&editors, &store, &owner, &intent);
+        assert!(
+            matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="review_required")
+        );
+        assert_eq!(
+            approve(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                &intent.intent_id,
+                "foreign-hash"
+            )
+            .unwrap_err()
+            .code,
+            "approval_mismatch"
+        );
+        let changed = rename_authority(&store, &authority, scope());
+        assert_eq!(
+            approve(
+                &vault.state,
+                &store,
+                &changed.authority_id,
+                &intent.intent_id,
+                &intent.payload_hash
+            )
+            .unwrap_err()
+            .code,
+            "stale_authority"
+        );
+    }
+    #[test]
+    fn rename_preserves_exact_bytes_identity_history_and_reconciles_lost_acknowledgement() {
+        let vault = TestVault::new("pi-rename-lost-ack");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = rename_authority(&store, &snapshot, scope());
+        let mutation = rename_mutation(
+            &vault,
+            &store,
+            &authority.authority_id,
+            "Before name",
+            "Après café 🚀",
+        );
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "rename",
+            mutation.clone(),
+        )
+        .unwrap();
+        let original = std::fs::read(&intent.target.path).unwrap();
+        let identity = intent.target.note_id.clone().unwrap();
+        let revisions = revision_count(&identity);
+        approve_rename(&vault, &store, &authority, &intent);
+        let lease = admit(&editors, &store, &owner, &intent);
+        FAULT.with(|fault| fault.set(Some("lostAck")));
+        assert_eq!(
+            publish(
+                &vault.state,
+                &store,
+                &editors,
+                &authority.authority_id,
+                &intent.intent_id
+            )
+            .unwrap_err()
+            .code,
+            "interrupted"
+        );
+        assert!(!Path::new(&intent.target.path).exists());
+        assert_eq!(
+            std::fs::read(intent.target.destination_path.as_ref().unwrap()).unwrap(),
+            original
+        );
+        assert_eq!(revision_count(&identity), revisions);
+        editors.release(&owner, &lease).unwrap();
+        editors.close(&owner).unwrap();
+        let reopened = AuthorityStore::new(vault.state.running_vault().data_dir()).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("rename reopened"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let result = reconcile(&state, &reopened, &intent.intent_id).unwrap();
+        assert_eq!(committed_id(&result), identity);
+        assert!(
+            matches!(&result, PublicationResult::Committed{path,..} if Some(path)==intent.target.destination_path.as_ref())
+        );
+        let receipt = encode(&result).unwrap();
+        assert_eq!(
+            encode(&reconcile(&state, &reopened, &intent.intent_id).unwrap()).unwrap(),
+            receipt
+        );
+        assert_eq!(
+            encode(
+                &publish(
+                    &state,
+                    &reopened,
+                    &editors,
+                    &authority.authority_id,
+                    &intent.intent_id
+                )
+                .unwrap()
+            )
+            .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            notes::source_navigation_note(
+                &state,
+                &authority,
+                &reopened.connection().unwrap(),
+                &identity
+            )
+            .unwrap(),
+            PathBuf::from(intent.target.destination_path.as_ref().unwrap())
+        );
+        let Mutation::Rename {
+            expected_read_source_id,
+            ..
+        } = &mutation
+        else {
+            unreachable!()
+        };
+        assert!(matches!(
+            super::super::citations::open_source(&state, &reopened, &authority.authority_id, expected_read_source_id).unwrap(),
+            super::super::citations::SourceDestination::Note { note_id, path, limitation: None, .. }
+                if note_id == identity && Some(&path) == intent.target.destination_path.as_ref()
+        ));
+        assert_eq!(revision_count(&identity), revisions);
+    }
+    #[test]
+    fn rename_collision_before_review_after_review_and_after_durable_proof_preserves_both_files() {
+        for stage in ["prepare", "approve", "publish", "proof"] {
+            let vault = TestVault::new(&format!("pi-rename-collision-{stage}"));
+            let (store, snapshot, editors, owner) = setup(&vault);
+            let authority = rename_authority(&store, &snapshot, scope());
+            let mutation = rename_mutation(
+                &vault,
+                &store,
+                &authority.authority_id,
+                "Source",
+                "Destination",
+            );
+            let source = vault.state.running_vault().root().join("Source.md");
+            let destination = vault.state.running_vault().root().join("Destination.md");
+            let original = std::fs::read(&source).unwrap();
+            if stage == "prepare" {
+                std::fs::write(&destination, "Human destination").unwrap();
+                assert_eq!(
+                    prepare(
+                        &vault.state,
+                        &store,
+                        &authority.authority_id,
+                        "rename",
+                        mutation
+                    )
+                    .unwrap_err()
+                    .code,
+                    "target_exists"
+                );
+            } else {
+                let intent = prepare(
+                    &vault.state,
+                    &store,
+                    &authority.authority_id,
+                    "rename",
+                    mutation,
+                )
+                .unwrap();
+                if stage == "approve" {
+                    std::fs::write(&destination, "Human destination").unwrap();
+                    assert_eq!(
+                        approve(
+                            &vault.state,
+                            &store,
+                            &authority.authority_id,
+                            &intent.intent_id,
+                            &intent.payload_hash
+                        )
+                        .unwrap_err()
+                        .code,
+                        "target_exists"
+                    );
+                } else {
+                    approve_rename(&vault, &store, &authority, &intent);
+                    admit(&editors, &store, &owner, &intent);
+                    if stage == "publish" {
+                        std::fs::write(&destination, "Human destination").unwrap();
+                    } else {
+                        let destination = destination.clone();
+                        BEFORE_PROOF.with(|hook| {
+                            *hook.borrow_mut() = Some(Box::new(move || {
+                                std::fs::write(destination, "Human destination").unwrap()
+                            }))
+                        });
+                    }
+                    let result = publish(
+                        &vault.state,
+                        &store,
+                        &editors,
+                        &authority.authority_id,
+                        &intent.intent_id,
+                    );
+                    assert!(!matches!(result, Ok(PublicationResult::Committed { .. })));
+                }
+            }
+            assert_eq!(std::fs::read(&source).unwrap(), original);
+            assert_eq!(
+                std::fs::read_to_string(&destination).unwrap(),
+                "Human destination"
+            );
+        }
+    }
+    #[test]
+    fn rename_rechecks_managed_only_raw_changes_at_approval_and_publication() {
+        for stage in ["approve", "publish"] {
+            let vault = TestVault::new(&format!("pi-rename-managed-change-{stage}"));
+            let (store, snapshot, editors, owner) = setup(&vault);
+            let authority = rename_authority(&store, &snapshot, scope());
+            let mutation = rename_mutation(
+                &vault,
+                &store,
+                &authority.authority_id,
+                "Original name",
+                "New name",
+            );
+            let intent = prepare(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                "rename",
+                mutation,
+            )
+            .unwrap();
+            if stage == "publish" {
+                approve_rename(&vault, &store, &authority, &intent);
+                admit(&editors, &store, &owner, &intent);
+            }
+            let raw = std::fs::read_to_string(&intent.target.path).unwrap();
+            let managed = crate::note::parse_note(&raw).frontmatter.managed.unwrap();
+            let changed = raw.replace(
+                &format!("  updated_at: {}", managed.updated_at),
+                "  updated_at: 2000-01-01T00:00:00Z",
+            );
+            assert_ne!(raw, changed);
+            std::fs::write(&intent.target.path, &changed).unwrap();
+            if stage == "approve" {
+                assert_eq!(
+                    approve(
+                        &vault.state,
+                        &store,
+                        &authority.authority_id,
+                        &intent.intent_id,
+                        &intent.payload_hash
+                    )
+                    .unwrap_err()
+                    .code,
+                    "changed_base"
+                );
+            } else {
+                assert!(
+                    matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="changed_base")
+                );
+            }
+            assert_eq!(
+                std::fs::read_to_string(&intent.target.path).unwrap(),
+                changed
+            );
+            assert!(!Path::new(intent.target.destination_path.as_ref().unwrap()).exists());
+        }
+    }
+    #[test]
+    fn rename_admission_binds_both_locations_and_excludes_overlapping_leases() {
+        let vault = TestVault::new("pi-rename-editor-both-paths");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = rename_authority(&store, &snapshot, scope());
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "rename",
+            rename_mutation(
+                &vault,
+                &store,
+                &authority.authority_id,
+                "Original name",
+                "New name",
+            ),
+        )
+        .unwrap();
+        let mut forged = intent.target.clone();
+        forged.destination_path = Some(
+            vault
+                .state
+                .running_vault()
+                .root()
+                .join("Other.md")
+                .to_string_lossy()
+                .into(),
+        );
+        assert_eq!(
+            editors
+                .admit(&store, &owner, &intent.intent_id, forged)
+                .unwrap_err()
+                .code,
+            "editor_conflict"
+        );
+        let second = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "second",
+            rename_mutation(
+                &vault,
+                &store,
+                &authority.authority_id,
+                "Another source",
+                "New name",
+            ),
+        )
+        .unwrap();
+        let lease = admit(&editors, &store, &owner, &intent);
+        assert_eq!(
+            editors
+                .admit(&store, &owner, &second.intent_id, second.target.clone())
+                .unwrap_err()
+                .code,
+            "editor_conflict"
+        );
+        editors.release(&owner, &lease).unwrap();
+        admit(&editors, &store, &owner, &second);
+    }
+    #[test]
+    fn rename_title_policy_preserves_unicode_but_rejects_ambiguous_and_unsafe_names() {
+        let vault = TestVault::new("pi-rename-name-policy");
+        let root = std::fs::canonicalize(vault.state.running_vault().root()).unwrap();
+        let source = root.join("Café.md");
+        std::fs::write(&source, "Source").unwrap();
+        for title in [
+            "",
+            ".",
+            "..",
+            ".hidden",
+            " leading",
+            "trailing ",
+            "trailing.",
+            "relative/child",
+            "relative\\child",
+            "/absolute",
+            "CON",
+            "nul.txt",
+            "COM1",
+            "LPT9",
+            "bad:name",
+            "bad?name",
+            "Foo.md",
+            "line\nname",
+            "café",
+            "Cafe\u{301}",
+        ] {
+            assert_eq!(
+                rename_destination(&root, &source, title).unwrap_err().code,
+                "unsupported_name",
+                "{title:?}"
+            );
+        }
+        for title in [
+            "\u{200b}",
+            "\u{200d}\u{fe0f}",
+            "\u{200b} \u{2060}",
+            "Safe\u{202e}name",
+            "\u{2066}Name\u{2069}",
+            "اسم\u{061c}",
+        ] {
+            assert_eq!(
+                rename_destination(&root, &source, title).unwrap_err().code,
+                "unsupported_name",
+                "{title:?}"
+            );
+        }
+        for title in ["👩\u{200d}💻", "旅程\u{fe0f}", "اسم", "שֵׁם"] {
+            assert_eq!(
+                rename_destination(&root, &source, title).unwrap(),
+                root.join(format!("{title}.md"))
+            );
+        }
+        let case_source = root.join("straße.md");
+        std::fs::write(&case_source, "Case source").unwrap();
+        assert_eq!(
+            rename_destination(&root, &case_source, "STRASSE")
+                .unwrap_err()
+                .code,
+            "unsupported_name"
+        );
+        let greek_source = root.join("ΟΣ.md");
+        std::fs::write(&greek_source, "Greek source").unwrap();
+        assert_eq!(
+            rename_destination(&root, &greek_source, "ος")
+                .unwrap_err()
+                .code,
+            "unsupported_name"
+        );
+        std::fs::write(root.join("Résumé.md"), "Other").unwrap();
+        assert_eq!(
+            rename_destination(&root, &source, "Re\u{301}sume\u{301}")
+                .unwrap_err()
+                .code,
+            "target_exists"
+        );
+        assert_eq!(
+            rename_destination(&root, &source, "旅行 🚀").unwrap(),
+            root.join("旅行 🚀.md")
+        );
+        #[cfg(unix)]
+        {
+            let symlink = root.join("Linked.md");
+            std::os::unix::fs::symlink(&source, &symlink).unwrap();
+            assert_eq!(
+                rename_destination(&root, &symlink, "Changed")
+                    .unwrap_err()
+                    .code,
+                "unsupported_name"
+            );
+            std::os::unix::fs::symlink(&source, root.join("Target.md")).unwrap();
+            assert_eq!(
+                rename_destination(&root, &source, "Target")
+                    .unwrap_err()
+                    .code,
+                "target_exists"
+            );
+        }
+    }
+    #[test]
+    fn authored_properties_can_be_replaced_and_removed_without_changing_managed_metadata() {
+        let vault = TestVault::new("pi-publication-authored-properties");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = temporary(&store, &snapshot, true);
+        let note = save_and_finalize(
+            &vault.state,
+            "Authored properties".into(),
+            "---\nproject: before\ntags: [draft]\n---\n\nOriginal body\n".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let note_id = note.note_id.unwrap();
+        let path = note.path.unwrap();
+        let before = crate::note::parse_note(&std::fs::read_to_string(&path).unwrap())
+            .frontmatter
+            .managed
+            .unwrap();
+        for (request, markdown, properties) in [
+            (
+                "replace-properties",
+                "---\nproject: after\nstatus: ready\n---\n\nUpdated body\n",
+                Some("project: after\nstatus: ready"),
+            ),
+            ("remove-last-properties", "Only the body remains\n", None),
+        ] {
+            let source =
+                notes::read_note(&vault.state, &store, &authority.authority_id, &note_id).unwrap();
+            let base = notes::mutation_base(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                &note_id,
+                &source.source.source_id,
+            )
+            .unwrap();
+            assert!(!base.markdown.contains("gneauxghts:"));
+            if request == "replace-properties" {
+                assert_eq!(
+                    base.markdown
+                        .replace(
+                            "project: before\ntags: [draft]",
+                            "project: after\nstatus: ready"
+                        )
+                        .replace("Original body", "Updated body"),
+                    markdown
+                );
+            }
+            let prepared = prepare(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                request,
+                Mutation::Update {
+                    note_id: note_id.clone(),
+                    expected_read_source_id: source.source.source_id,
+                    markdown: markdown.into(),
+                },
+            )
+            .unwrap();
+            let serialized = serde_json::to_value(&prepared).unwrap();
+            assert_eq!(serialized["operation"], "update");
+            assert!(serialized.get("creation").is_none());
+            assert!(serialized.get("rename").is_none());
+            approve(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                &prepared.intent_id,
+                &prepared.payload_hash,
+            )
+            .unwrap();
+            let admission = admit(&editors, &store, &owner, &prepared);
+            let result = publish(
+                &vault.state,
+                &store,
+                &editors,
+                &authority.authority_id,
+                &prepared.intent_id,
+            )
+            .unwrap();
+            assert_eq!(committed_id(&result), note_id);
+            editors.release(&owner, &admission).unwrap();
+            let parsed = crate::note::parse_note(&std::fs::read_to_string(&path).unwrap());
+            assert_eq!(parsed.frontmatter.raw_other.as_deref(), properties);
+            assert!(markdown.ends_with(&parsed.body));
+            let managed = parsed.frontmatter.managed.unwrap();
+            assert_eq!(managed.id, before.id);
+            assert_eq!(managed.created_at, before.created_at);
+            assert_eq!(managed.trashed_at, before.trashed_at);
+        }
+    }
+
+    #[test]
+    fn property_only_update_preserves_escaped_wikilinks_and_exact_authored_candidate() {
+        let vault = TestVault::new("pi-property-edit-escaped-wikilink");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = temporary(&store, &snapshot, true);
+        let note = save_and_finalize(
+            &vault.state,
+            "Literal link".into(),
+            "---\nproject: before\n---\n\nKeep [[literal]] as escaped text.\n".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let note_id = note.note_id.unwrap();
+        let path = note.path.unwrap();
+        // An external editor may intentionally retain a literal escaped link.
+        // A later property edit must not rewrite that unrelated authored text.
+        let raw = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("[[literal]]", "\\[\\[literal\\]\\]");
+        std::fs::write(&path, &raw).unwrap();
+        let before = crate::note::parse_note(&raw).frontmatter.managed.unwrap();
+        let source =
+            notes::read_note(&vault.state, &store, &authority.authority_id, &note_id).unwrap();
+        let base = notes::mutation_base(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            &note_id,
+            &source.source.source_id,
+        )
+        .unwrap();
+        // The UI stages and reviews this exact replacement on the issued base.
+        let reviewed_candidate = base.markdown.replace("project: before", "project: after");
+        let prepared = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "property-only",
+            Mutation::Update {
+                note_id: note_id.clone(),
+                expected_read_source_id: source.source.source_id,
+                markdown: reviewed_candidate.clone(),
+            },
+        )
+        .unwrap();
+        approve(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            &prepared.intent_id,
+            &prepared.payload_hash,
+        )
+        .unwrap();
+        let admission = admit(&editors, &store, &owner, &prepared);
+        let result = publish(
+            &vault.state,
+            &store,
+            &editors,
+            &authority.authority_id,
+            &prepared.intent_id,
+        )
+        .unwrap();
+        assert_eq!(committed_id(&result), note_id);
+        editors.release(&owner, &admission).unwrap();
+        let published = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            crate::note::authored_markdown(&published),
+            reviewed_candidate
+        );
+        let parsed = crate::note::parse_note(&published);
+        assert_eq!(parsed.body, "Keep \\[\\[literal\\]\\] as escaped text.\n");
+        let after = parsed.frontmatter.managed.unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.created_at, before.created_at);
+        assert_eq!(after.trashed_at, before.trashed_at);
+    }
+
+    #[test]
+    fn update_rejects_model_supplied_managed_metadata_before_review() {
+        let vault = TestVault::new("pi-publication-managed-properties");
+        let (store, snapshot, _, _) = setup(&vault);
+        let authority = temporary(&store, &snapshot, true);
+        let mut mutation = update(
+            &vault,
+            &store,
+            &authority.authority_id,
+            "Managed properties",
+        );
+        let Mutation::Update {
+            note_id, markdown, ..
+        } = &mut mutation
+        else {
+            unreachable!()
+        };
+        let path =
+            crate::state::resolve_note_path_by_id(vault.state.running_vault().root(), note_id)
+                .unwrap()
+                .unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+        *markdown = format!("---\ngneauxghts:\n  id: {note_id}\n  created_at: 1900-01-01T00:00:00Z\n  trashed_at: yesterday\n---\n\nChanged\n");
+        let error = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "forge-managed",
+            mutation,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "invalid_mutation");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let count: u64 = store.connection().unwrap().query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pi_chat_mutations'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(count, 0);
+    }
     fn creation_authority(
         store: &AuthorityStore,
         snapshot: &AuthoritySnapshot,
@@ -934,6 +2021,60 @@ mod tests {
                 },
             )
             .unwrap()
+    }
+    #[test]
+    fn create_retains_authored_properties_as_frontmatter() {
+        let vault = TestVault::new("pi-create-authored-properties");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = creation_authority(&store, &snapshot, false);
+        let mutation = Mutation::Create {
+            folder: ".".into(),
+            title: "Created properties".into(),
+            markdown: "---\nproject: before\ntags: [draft]\n---\n\nCreated body\n".into(),
+        };
+        let prepared = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "properties",
+            mutation,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(&prepared).unwrap();
+        assert_eq!(serialized["operation"], "create");
+        assert!(serialized.get("rename").is_none());
+        assert_eq!(
+            serialized["creation"]["destination"],
+            "Created properties.md"
+        );
+        let PreparedOperation::Create { creation: preview } = &prepared.operation else {
+            panic!("Expected creation preview")
+        };
+        assert_eq!(
+            crate::note::parse_note(&preview.markdown)
+                .frontmatter
+                .raw_other
+                .as_deref(),
+            Some("project: before\ntags: [draft]")
+        );
+        admit(&editors, &store, &owner, &prepared);
+        let result = publish(
+            &vault.state,
+            &store,
+            &editors,
+            &authority.authority_id,
+            &prepared.intent_id,
+        )
+        .unwrap();
+        committed_id(&result);
+        let parsed =
+            crate::note::parse_note(&std::fs::read_to_string(&prepared.target.path).unwrap());
+        assert_eq!(
+            parsed.frontmatter.raw_other.as_deref(),
+            Some("project: before\ntags: [draft]")
+        );
+        assert_eq!(parsed.body, "Created body\n");
+        assert!(parsed.frontmatter.managed.is_some());
     }
     #[test]
     fn create_requires_explicit_operation_exact_review_and_never_replaces_a_collision() {
@@ -967,6 +2108,7 @@ mod tests {
             matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(), PublicationResult::Blocked { code,.. } if code=="review_required")
         );
         assert!(approve(
+            &vault.state,
             &store,
             &authority.authority_id,
             &intent.intent_id,
@@ -974,6 +2116,7 @@ mod tests {
         )
         .is_err());
         approve(
+            &vault.state,
             &store,
             &authority.authority_id,
             &intent.intent_id,
@@ -1222,13 +2365,16 @@ mod tests {
         let intent=prepare(&vault.state,&store,&authority.authority_id,"scoped",Mutation::Create{
             folder:"Projects".into(),title:"Plan".into(),markdown:"---\nproject: atlas\ngneauxghts:\n  id: model-forged\n  created_at: 1900-01-01T00:00:00Z\n  trashed_at: yesterday\n---\n\n# Plan\n".into()
         }).unwrap();
-        let preview = intent.creation.as_ref().unwrap();
+        let PreparedOperation::Create { creation: preview } = &intent.operation else {
+            panic!("Expected creation preview")
+        };
         assert_eq!(preview.destination, "Projects/Plan.md");
         assert!(preview.markdown.contains("project: atlas"));
         assert!(!preview.markdown.contains("model-forged"));
         assert_ne!(intent.target.note_id.as_deref(), Some("model-forged"));
         admit(&editors, &store, &owner, &intent);
         approve(
+            &vault.state,
             &store,
             &authority.authority_id,
             &intent.intent_id,
@@ -1320,6 +2466,7 @@ mod tests {
         assert!(intent.review_required);
         assert_eq!(
             approve(
+                &vault.state,
                 &store,
                 &authority.authority_id,
                 &intent.intent_id,
@@ -1359,6 +2506,7 @@ mod tests {
         );
         original(&intent.target);
         approve(
+            &vault.state,
             &store,
             &authority.authority_id,
             &intent.intent_id,
@@ -1412,6 +2560,7 @@ mod tests {
         .unwrap();
         reject(&store, &authority.authority_id, &rejected.intent_id).unwrap();
         assert!(approve(
+            &vault.state,
             &store,
             &authority.authority_id,
             &rejected.intent_id,
@@ -1564,7 +2713,7 @@ mod tests {
             mutation.clone(),
         )
         .unwrap();
-        admit(&editors, &store, &owner, &intent);
+        let initial_admission = admit(&editors, &store, &owner, &intent);
         let result = publish(
             &vault.state,
             &store,
@@ -1575,6 +2724,7 @@ mod tests {
         .unwrap();
         assert_eq!(committed_id(&result), id);
         assert_eq!(revision_count(&id), 2);
+        editors.release(&owner, &initial_admission).unwrap();
         let old = prepare(
             &vault.state,
             &store,
@@ -1583,12 +2733,13 @@ mod tests {
             mutation,
         )
         .unwrap();
-        admit(&editors, &store, &owner, &old);
+        let old_admission = admit(&editors, &store, &owner, &old);
         let current = std::fs::read_to_string(&path).unwrap();
         assert!(
             matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&old.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="changed_base")
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), current);
+        editors.release(&owner, &old_admission).unwrap();
         let fresh = notes::read_note(&vault.state, &store, &authority.authority_id, &id).unwrap();
         let new = Mutation::Update {
             note_id: id.clone(),
@@ -2154,6 +3305,7 @@ mod tests {
             matches!(publish(&vault.state,&store,&editors,&always.authority_id,&fresh.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="review_required")
         );
         approve(
+            &vault.state,
             &store,
             &always.authority_id,
             &fresh.intent_id,
