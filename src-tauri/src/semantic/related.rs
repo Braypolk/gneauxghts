@@ -626,7 +626,7 @@ mod tests {
             &hash,
             "Title",
             "Title",
-            "Body text here."
+            "# Title\n\nBody text here.\n"
         ));
         assert!(!indexed_source_matches_draft(
             disk,

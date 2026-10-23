@@ -7,8 +7,55 @@ import {
 import { captureExternalSnapshotForTest } from '#lib/features/notepad/document/documentExternalSyncTestSupport.js';
 import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 import { createWorkspacePersistenceService } from './workspacePersistenceService';
+import { createNotepadComposition, deferred } from '../orchestration/notepadCompositionTestSupport';
 
 describe('workspacePersistenceService', () => {
+  it('leaves a backgrounded capture blank and names it at the application navigation barrier', async () => {
+    const f = createNotepadComposition({ ...createEmptySessionSnapshot(), bodyMarkdown: 'Keep a small garden journal while we travel next summer' });
+    f.save.mockImplementation(async (title, markdown) => ({ title, markdown, noteId: 'capture',
+      path: `/vault/${title || 'Untitled Note capture'}.md` }));
+    const service = createWorkspacePersistenceService({ getDocuments: () => [f.initialDocument],
+      flushAllPaneCursorSaves: vi.fn(), cancelPendingAutosave: f.persistence.cancelPendingAutosave,
+      enqueueSave: f.persistence.enqueueSave, prepareDocumentForDeparture: f.editing.finalizeTitleOnDeparture });
+    try {
+      await service.flushAllForBackground();
+      expect(f.initialDocument.working.title).toBe('');
+      await service.flushAllForNavigation();
+      expect(f.initialDocument.working.title).toBe('Keep a small garden journal while we travel');
+      expect(f.initialDocument.identity).toMatchObject({ noteId: 'capture', path: '/vault/Keep a small garden journal while we travel.md' });
+      expect(f.save).toHaveBeenCalledTimes(2);
+    } finally { await f.dispose(); }
+  });
+
+  it.each([
+    { edits: ['Temporary title', ''], expected: 'First-line fallback' },
+    { edits: ['   '], expected: 'First-line fallback' },
+    { edits: ['', 'My chosen title'], expected: 'My chosen title' }
+  ])('settles the latest title edits $edits during application navigation', async ({ edits, expected }) => {
+    const body = 'First-line fallback';
+    const f = createNotepadComposition({ ...createEmptySessionSnapshot(), bodyMarkdown: body });
+    const entered = deferred<void>();
+    const held = deferred<void>();
+    f.save.mockImplementation(async (title, markdown) => {
+      if (f.save.mock.calls.length === 1) { entered.resolve(); await held.promise; }
+      return { noteId: 'capture', path: `/vault/${title || 'Untitled Note capture'}.md`, title, markdown };
+    });
+    const service = createWorkspacePersistenceService({ getDocuments: () => [f.initialDocument],
+      flushAllPaneCursorSaves: vi.fn(), cancelPendingAutosave: f.persistence.cancelPendingAutosave,
+      enqueueSave: f.persistence.enqueueSave, prepareDocumentForDeparture: f.editing.finalizeTitleOnDeparture });
+    try {
+      const departure = service.flushAllForNavigation();
+      await entered.promise;
+      for (const title of edits) f.editing.updateTitle(f.initialDocument, title);
+      held.resolve();
+      await departure;
+      expect(f.initialDocument.working.title).toBe(expected);
+      expect(f.initialDocument.savedBaseline?.content.title).toBe(expected);
+      expect(f.initialDocument.savedBaseline?.content.body.toMarkdown()).toBe(body);
+      expect(f.initialDocument.identity).toMatchObject({ noteId: 'capture', path: `/vault/${expected}.md` });
+    } finally { held.resolve(); await f.dispose(); }
+  });
+
   it.each(['flushAllForNavigation', 'flushAllForBackground'] as const)('settles recovery work before completing %s without changing canonical outcome', async operation => {
     let release!: () => void;
     const recovery = new Promise<void>(resolve => { release = resolve; });

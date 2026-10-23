@@ -38,6 +38,7 @@ export async function piViewFixture(options: { registry?: Registry; tokensPerSec
       return { items, next: page.next };
     },
     async retireConversation(id) { const authority = authorities.get(id)!; authority.retired = true; await (await runtime.harness.conversation(id, PI_CONTEXT))!.abort(PI_CONTEXT, { background: true }); },
+    async generateNoteTitle() { throw new Error('Title generation is outside the chat view fixture.'); },
     async close() { diagnostics.beginClose(); try { await runtime.harness.close(PI_CONTEXT); } finally { diagnostics.dispose(); } }
   };
   const binding = createPiConversationView({ open: async () => runtime as unknown as PiChat, settings: async () => fixtureSettings, observeAuthority: async () => () => {},

@@ -1,3 +1,4 @@
+import { noteFileLabel } from '#lib/noteLabels.js';
 import { invoke } from '@tauri-apps/api/core';
 
 export const MAX_LOCATION_MRU = 20;
@@ -59,7 +60,8 @@ export function locationDisplayLabel(location: NavLocation): string {
     return 'Thought partner';
   }
   if (location.notePath) {
-    return location.notePath.split('/').pop()?.replace(/\.md$/i, '') || 'Untitled note';
+    const name = location.notePath.split('/').pop() ?? '';
+    return noteFileLabel(name, location.noteId).replace(/\.md$/i, '') || 'Untitled note';
   }
   return 'Untitled note';
 }

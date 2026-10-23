@@ -3,9 +3,8 @@
 Accepted implementation contract for the authorized follow-up to the
 [quality work](../app-quality-followup-2026-10-22/README.md). The
 [outcome](README.md) records implementation, acceptance and limits. This archived
-contract is outside the executable backlog. Automatic capture titles continue to
-use the ordinary editor title/save owner; saved-note filename editing uses the
-separate publication contract below.
+contract is outside the executable backlog. Saved-note filename editing uses the
+publication contract below.
 
 ## Scope and owner contract
 

@@ -8,18 +8,22 @@
     },
     {
       "sectionLabel": "Paragraph 1",
-      "text": "This note tracks the roadmap for semantic retrieval in local markdown tools."
+      "text": "# Project Atlas"
     },
     {
       "sectionLabel": "Paragraph 2",
-      "text": "## Tasks - [ ] Draft roadmap - [x] Audit parser - [ ] Write regression tests"
+      "text": "This note tracks the roadmap for semantic retrieval in local markdown tools."
     },
     {
       "sectionLabel": "Paragraph 3",
-      "text": "## Research Semantic search finds related ideas even when the wording changes."
+      "text": "## Tasks - [ ] Draft roadmap - [x] Audit parser - [ ] Write regression tests"
     },
     {
       "sectionLabel": "Paragraph 4",
+      "text": "## Research Semantic search finds related ideas even when the wording changes."
+    },
+    {
+      "sectionLabel": "Paragraph 5",
       "text": "Longer reflections on hybrid ranking and semantic recall for note discovery."
     }
   ],
@@ -30,7 +34,7 @@
       "completed": false,
       "depth": 0,
       "lineNumber": 6,
-      "editorLineNumber": 4
+      "editorLineNumber": 6
     },
     {
       "sectionLabel": "Tasks",
@@ -38,7 +42,7 @@
       "completed": true,
       "depth": 1,
       "lineNumber": 7,
-      "editorLineNumber": 5
+      "editorLineNumber": 7
     },
     {
       "sectionLabel": "Tasks",
@@ -46,7 +50,7 @@
       "completed": false,
       "depth": 2,
       "lineNumber": 8,
-      "editorLineNumber": 6
+      "editorLineNumber": 8
     }
   ]
 }

@@ -1,9 +1,10 @@
-import { Harness, MemoryStorage, createRegistry, type ConversationId } from '@earendil-works/pi-durable';
+import { Harness, MemoryStorage, ProviderDoc, createRegistry, type ConversationId } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { ChatDoc, PI_CONTEXT, initializeChatDocuments, type PiChat } from '#lib/features/chat/pi/runtime.js';
 import type { AuthoritySnapshot, ReadPolicy, WritePolicy, WriteGrant, VaultWritePolicy } from '#lib/features/chat/pi/authority.js';
 import { createPiDiagnostics } from '#lib/features/chat/pi/diagnostics.js';
+import { createNoteTitleJobs } from '#lib/features/chat/pi/noteTitles.js';
 
 let current: Promise<PiChat> | undefined;
 const authorities = new Map<string, AuthoritySnapshot>();
@@ -12,6 +13,8 @@ let vaultGrant: WriteGrant = { duration: 'off' };
 let reviewBeforeApplying = true;
 let holdNextResponse = false;
 export function holdNextBrowserPiResponse() { holdNextResponse = true; }
+let releaseHeldResponse: ((text: string) => void) | undefined;
+export function releaseHeldBrowserPiResponse(text: string) { releaseHeldResponse?.(text); }
 let nextResponseText: string | undefined;
 let nextResponseReasoning: string | undefined;
 export function setNextBrowserPiResponse(text: string, reasoning?: string) { nextResponseText = text; nextResponseReasoning = reasoning; }
@@ -26,8 +29,19 @@ async function compose(): Promise<PiChat> {
   const response = async (_request: unknown, options?: { signal?: AbortSignal }) => {
     if (holdNextResponse) {
       holdNextResponse = false;
-      if (!options?.signal?.aborted) await new Promise<void>(resolve => options?.signal?.addEventListener('abort', () => resolve(), { once: true }));
-      return fauxAssistantMessage('Stopped fixture response.', { stopReason: 'aborted' });
+      const text = await new Promise<string | undefined>(resolve => {
+        const abort = () => { releaseHeldResponse = undefined; resolve(undefined); };
+        releaseHeldResponse = text => {
+          releaseHeldResponse = undefined;
+          options?.signal?.removeEventListener('abort', abort);
+          resolve(text);
+        };
+        if (options?.signal?.aborted) abort();
+        else options?.signal?.addEventListener('abort', abort, { once: true });
+      });
+      return text === undefined
+        ? fauxAssistantMessage('Stopped fixture response.', { stopReason: 'aborted' })
+        : fauxAssistantMessage(text);
     }
     const text = nextResponseText ?? 'Fixture ordinary answer.';
     const thinking = nextResponseReasoning ?? 'Fixture reasoning.';
@@ -40,7 +54,10 @@ async function compose(): Promise<PiChat> {
   models.setProvider(faux.provider);
   const storage = new MemoryStorage();
   const diagnostics = createPiDiagnostics();
-  const harness = await Harness.open(storage, { registry: createRegistry(), models, onReport: diagnostics.report,
+  const noteTitles = createNoteTitleJobs();
+  const registry = createRegistry();
+  registry.install(noteTitles.extension);
+  const harness = await Harness.open(storage, { registry, models, onReport: diagnostics.report,
     conversationCreated: initializeChatDocuments,
     settings: { retry: { enabled: false }, compaction: { enabled: false }, progress: { partialIntervalMs: 0, outputIntervalMs: 0 } }
   }, PI_CONTEXT);
@@ -61,12 +78,19 @@ async function compose(): Promise<PiChat> {
     async listConversations(limit = 50, cursor?: Parameters<PiChat['listConversations']>[1]) {
       const page = await storage.scanConversations({ order: 'descending' }, limit, cursor, PI_CONTEXT);
       const items = [];
-      for (const record of page.items) { const doc = await harness.snapshot(ChatDoc, record.id, PI_CONTEXT); if (doc && !doc.forgotten) items.push({ id: record.id, ...doc }); }
+      for (const record of page.items) { const doc = await harness.snapshot(ChatDoc, record.id, PI_CONTEXT); if (doc && !doc.forgotten && doc.purpose !== 'noteTitles') items.push({ id: record.id, ...doc }); }
       return { items, next: page.next };
     },
     async retireConversation(id: ConversationId) {
       const authority = authorities.get(`browser-authority-${id}`); if (authority) authority.retired = true;
       await (await harness.conversation(id, PI_CONTEXT))?.abort(PI_CONTEXT, { background: true });
+    },
+    async generateNoteTitle(markdown: string, _noteId: string | null, signal: AbortSignal) {
+      const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' },
+        init: async (tx, id) => { (await tx.doc(ChatDoc, id)).purpose = 'noteTitles'; }
+      }, PI_CONTEXT);
+      const provider = await harness.snapshot(ProviderDoc, conversation.id, PI_CONTEXT);
+      return noteTitles.run(harness, conversation.id, provider!.sessionId, { provider: 'local', modelId: 'fixture-local' }, markdown, signal);
     },
     async close() { diagnostics.beginClose(); try { await harness.close(PI_CONTEXT); } finally { diagnostics.dispose(); current = undefined; authorities.clear(); temporaryGrants.clear(); vaultGrant = { duration: 'off' }; reviewBeforeApplying = true; } }
   };

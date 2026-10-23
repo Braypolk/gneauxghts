@@ -447,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn build_recent_result_prefers_first_body_paragraph() {
+    fn build_recent_result_includes_the_first_authored_heading() {
         let markdown = load_fixture("project-atlas.md");
         let note_path = fixture_path("project-atlas.md");
         let note = build_indexed_note(&note_path, &markdown, 42);
@@ -455,10 +455,7 @@ mod tests {
         let recent = build_recent_result(Some(note_path.as_path()), &note);
 
         assert_eq!(recent.section_label, "Paragraph 1");
-        assert_eq!(
-            recent.excerpt,
-            "This note tracks the roadmap for semantic retrieval in local markdown tools."
-        );
+        assert_eq!(recent.excerpt, "# Project Atlas");
         assert_eq!(recent.file_name, "project-atlas");
     }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { noteFileLabel } from '#lib/noteLabels.js';
   import { ArrowLeft, Clock3, LoaderCircle, Pencil, RotateCcw } from '@lucide/svelte';
   import type {
     HistoryDiffComparison,
@@ -53,7 +54,8 @@
 
   function fileName(path: string | null) {
     if (!path) return null;
-    return path.split(/[\\/]/u).at(-1) ?? path;
+    const name = path.split(/[\\/]/u).at(-1) ?? path;
+    return noteFileLabel(name, historyState.phase === 'exiting' ? null : historyState.target.noteId);
   }
 
   function formatByteCount(bytes: number) {

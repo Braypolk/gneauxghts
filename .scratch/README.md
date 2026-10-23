@@ -11,7 +11,9 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 - [Unified existing-note write permission](archive/pi-write-permission-2026-10-22/README.md): editing and renaming now share permission, folder scope and review; separate tools and native effects remain. Includes the shared tool-policy and typed publication cleanup, retained explicit targets/read receipts, native/browser acceptance and the primary-source review.
 
-- [Automatic AI titles retired](archive/retire-ai-titles-2026-10-22.md): removed at the user's request; ordinary first-line naming is restored, with explicit Pi renaming retained. [Atlas relevance](archive/atlas-title-workflow-2026-10-22.md) remains implemented; its title-flow evidence is historical.
+- [Manual note titles](archive/manual-note-titles-2026-10-22.md): explicit generation beside a blank title, with edit guards and ordinary saving.
+- [Untitled capture naming](archive/untitled-capture-naming-2026-10-22.md): stable internal filenames keep autosaved titles blank; leaving supplies a short first-line title unless one was chosen.
+- [Atlas relevance](archive/atlas-relevance-2026-10-22.md): calibrated admission while filtering existing map nodes.
 
 - [Upgraded-package capability outcome](archive/package-capabilities-2026-10-21.md): all ready items assigned to this chat are implemented or have a completed bounded no-change experiment. Combined verification passed, including 65 browser specs and 12 native specs; explicit measurement/restart skips and inspector limits are recorded in the outcome. Historical execution tickets are archived; the [plan](package-capabilities/spec.md) retains scope/dispositions. [Image delivery](package-capabilities/issues/05-native-image-delivery.md) belongs to the separate image chat, and [watcher health](package-capabilities/issues/09-watcher-diagnostics.md) and the newly observed [inspector activation limits](package-capabilities/issues/12-inspector-native-activation.md) remain `needs-triage`.
 
@@ -53,7 +55,7 @@ and reproducible fixtures belong in Git.
 
 - [Pi filename editing, 2026-10-22](archive/pi-note-rename-2026-10-22/README.md): separate Rename permission, exact same-folder review, atomic no-replace movement, two-path durable proof/recovery and both-pane adoption. Includes native/browser acceptance, schema and platform limits, and a [manual guide](archive/pi-note-rename-2026-10-22/manual-testing.md) covering this tool and the earlier quality features.
 
-- [App quality follow-up, 2026-10-22](archive/app-quality-followup-2026-10-22/README.md): recoverable capture, opt-in untouched AI titles, retrieval cues, Atlas ranked opening, scoped chat ranking, predictable formatting and measured retrieval/task cleanup. Includes validation limits; its separately planned filename tool is now implemented by the rename slice above.
+- [App quality follow-up, 2026-10-22](archive/app-quality-followup-2026-10-22/README.md): recoverable capture, retrieval cues, Atlas ranked opening, scoped chat ranking, predictable formatting and measured retrieval/task cleanup. Includes validation limits; its separately planned filename tool is now implemented by the rename slice above.
 
 - [Whole-app quality pass, 2026-10-22](archive/app-quality-pass-2026-10-22.md): connected architecture assessment, shared popup/motion/SQL helpers, dependable caret formatting and block moves, retryable search, deferred History diagnostics, and guarded credential requests. Includes bounded verification and the [note-taking friction research](../docs/research/note-taking-friction-2026-10-22.md).
 

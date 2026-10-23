@@ -48,10 +48,9 @@ targets reachable. Errors remain visible even when there are no dormant copies.
 - Cleaned maintained regression `e2e/agent/specs/draft-recovery.e2e.js` fresh-replayed
   with all four scenarios passing: backup error/Retry followed by reload and
   separate-copy resume with source unchanged; focused title before blur; reachable
-  disclosure and title controls at 390 pixels; automatic title preference initially
-  disabled and persisted only after explicit opt in. No model inference was run.
+  disclosure at 390 pixels. No model inference was run.
 - Closed the owned interactive browser/server. The fresh replay stopped its own
-  server. Fixture backup and preference handlers persist only their explicit
+  server. Fixture backup handlers persist only their explicit
   fixture storage; no real user vault was used.
 
 ## Limits

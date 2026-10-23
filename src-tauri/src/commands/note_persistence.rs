@@ -118,7 +118,43 @@ mod tests {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     #[test]
-    fn ordinary_capture_uses_first_line_and_explicit_title_without_inference() {
+    fn naming_a_capture_preserves_a_matching_authored_heading_through_save_and_reopen() {
+        let vault = crate::test_support::TestVault::new("capture-heading");
+        let body = "# Garden plan\n\nKeep this.\n";
+        let capture =
+            persist_note_session_with_outcome(&vault.state, String::new(), body.into(), None)
+                .unwrap()
+                .unwrap();
+        assert_eq!(capture.markdown, body);
+        let named = persist_note_session_with_outcome(
+            &vault.state,
+            "Garden plan".into(),
+            capture.markdown,
+            capture.path,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(named.note_id, capture.note_id);
+        assert_eq!(named.markdown, body);
+        let edited_body = format!("{body}\nAnother paragraph.");
+        let saved = persist_note_session_with_outcome(
+            &vault.state,
+            named.title,
+            edited_body.clone(),
+            named.path,
+        )
+        .unwrap()
+        .unwrap();
+        let canonical = std::fs::read_to_string(saved.path.unwrap()).unwrap();
+        assert_eq!(note::parse_note(&canonical).body, edited_body);
+        let (title, reopened_body) =
+            note::extract_file_name_title_and_body(&canonical, "Garden plan");
+        assert_eq!(title, "Garden plan");
+        assert_eq!(reopened_body, edited_body);
+    }
+
+    #[test]
+    fn blank_capture_saves_and_reopens_without_adopting_a_title() {
         let vault = crate::test_support::TestVault::new("ordinary-note-naming");
         let saved = persist_note_session_with_outcome(
             &vault.state,
@@ -128,17 +164,35 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(saved.title, "Garden watering plan");
+        assert_eq!(saved.title, "");
+        let identity = saved.note_id.as_deref().unwrap();
         assert!(saved
             .path
             .as_ref()
             .unwrap()
-            .ends_with("Garden watering plan.md"));
+            .ends_with(&format!("Untitled Note {identity}.md")));
         assert!(saved.markdown.contains("Collect rainwater"));
+        let canonical = std::fs::read_to_string(saved.path.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            note::extract_file_name_title_and_body(&canonical, &note::untitled_file_stem(identity))
+                .0,
+            ""
+        );
+        let autosaved = persist_note_session_with_outcome(
+            &vault.state,
+            String::new(),
+            "Updated first line\n\nStill writing.".into(),
+            saved.path.clone(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(autosaved.title, "");
+        assert_eq!(autosaved.path, saved.path);
+        assert_eq!(autosaved.note_id, saved.note_id);
         let renamed = persist_note_session_with_outcome(
             &vault.state,
             "Summer garden".into(),
-            saved.markdown,
+            autosaved.markdown,
             saved.path.clone(),
         )
         .unwrap()
@@ -150,24 +204,24 @@ mod tests {
     }
 
     #[test]
-    fn retired_blank_title_capture_is_readable_and_uses_ordinary_naming_on_save() {
-        let vault = crate::test_support::TestVault::new("retired-blank-title");
-        let path = vault.notes.path().join("Untitled Note retired-capture.md");
-        let raw = "---\ngneauxghts:\n  id: retired-capture\n  created_at: 2026-10-22T00:00:00Z\n  updated_at: 2026-10-22T00:00:00Z\n  untitled: true\n---\n\nKeep this recovered idea";
+    fn explicit_title_replaces_capture_filename_and_preserves_identity_and_body() {
+        let vault = crate::test_support::TestVault::new("blank-title");
+        let path = vault.notes.path().join("Untitled Note blank-capture.md");
+        let raw = "---\ngneauxghts:\n  id: blank-capture\n  created_at: 2026-10-22T00:00:00Z\n  updated_at: 2026-10-22T00:00:00Z\n  untitled: true\n---\n\nKeep this recovered idea";
         std::fs::write(&path, raw).unwrap();
         let (title, markdown) =
-            note::extract_file_name_title_and_body(raw, "Untitled Note retired-capture");
+            note::extract_file_name_title_and_body(raw, "Untitled Note blank-capture");
         assert_eq!(title, "");
         let saved = persist_note_session_with_outcome(
             &vault.state,
-            title,
+            "Keep this recovered idea".into(),
             markdown,
             Some(path.to_string_lossy().into_owned()),
         )
         .unwrap()
         .unwrap();
         assert_eq!(saved.title, "Keep this recovered idea");
-        assert_eq!(saved.note_id.as_deref(), Some("retired-capture"));
+        assert_eq!(saved.note_id.as_deref(), Some("blank-capture"));
         assert!(!path.exists());
         let canonical = std::fs::read_to_string(saved.path.unwrap()).unwrap();
         assert!(
@@ -176,6 +230,40 @@ mod tests {
                 .managed
                 .unwrap()
                 .untitled
+        );
+    }
+
+    #[test]
+    fn capture_filename_collision_preserves_both_existing_files() {
+        let vault = crate::test_support::TestVault::new("capture-collision");
+        let saved = persist_note_session_with_outcome(
+            &vault.state,
+            "Chosen title".into(),
+            "Keep the source".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let path = saved.path.as_ref().unwrap();
+        let before = std::fs::read_to_string(path).unwrap();
+        let occupied = vault.notes.path().join(format!(
+            "{}.md",
+            note::untitled_file_stem(saved.note_id.as_deref().unwrap())
+        ));
+        std::fs::write(&occupied, "Independent note").unwrap();
+        let result = persist_note_session_with_outcome(
+            &vault.state,
+            String::new(),
+            saved.markdown,
+            saved.path.clone(),
+        );
+        assert!(result
+            .unwrap_err()
+            .contains("capture filename is already occupied"));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), before);
+        assert_eq!(
+            std::fs::read_to_string(occupied).unwrap(),
+            "Independent note"
         );
     }
 

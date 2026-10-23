@@ -1311,13 +1311,33 @@ publication/conflict/proof requirements continue independently of that UI.
 
 ## Note naming
 
-Automatic AI titles are retired. Creating, saving or opening a note cannot start
-background title inference. The editor offers no automatic-title preference,
-suggestion controls or application timer. Ordinary saves use the explicit title,
-or derive a filename from the first nonempty body line when the title is blank.
-Existing titles are not rewritten by background work. Retired blank-title captures
-remain readable and join ordinary naming on their next save. Explicit Pi renaming
-retains its separate grant, exact review and Note Timeline publication boundary.
+A blank editable title exposes a manual Generate title button, disabled until its
+body has content. A click sends bounded current editor content
+to the configured model through a tool-free Pi task; excluded saved notes remain
+blocked by native attachment authority. Progress and retryable failure are visible.
+Body edits, title input, navigation, teardown or editor blocking withdraw the
+captured intent. Only a still-current result enters the ordinary title/save action;
+typing a title always wins. Each input updates the shared document before any
+pending save resumes; departure saves newer input before replacing the pane.
+Departure retries recheck blank titles after pending saves; nonblank typed titles
+remain authoritative. Ordinary save completion does not cancel a still-current
+generation request.
+Task source text remains in memory, and internal title
+scopes never appear in human chat navigation. A blank title remains blank across
+autosave, backgrounding and reopening. Native saving uses a unique filename bound
+to Note Identity plus a managed marker; that filename never becomes a title or
+visible note label. An explicit filesystem rename supplies an ordinary title.
+Leaving the last editor of an untitled note, or navigating away from the workspace,
+derives its title from the first eight words of the first nonempty body line,
+capped at 80 Unicode characters. Empty, never-saved drafts create no file; saved
+notes without body text use “Untitled note”. Typed/generated titles take precedence.
+The ordinary save must settle before navigation; failure retains the note and
+requested title for retry. Reopening the same note or an uncompleted picker does
+not finalize its title. Background saving does not finalize titles. Naming never
+removes an authored heading, even when it matches the filename; task/search line
+locations include that heading in the editor body.
+Explicit Pi renaming retains its separate grant, exact review and Note Timeline
+publication boundary.
 
 ## Image interactions
 

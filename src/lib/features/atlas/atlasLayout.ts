@@ -1,3 +1,4 @@
+import { noteFileLabel } from '#lib/noteLabels.js';
 import type { AtlasNode, VaultAtlasResponse } from '#lib/types/atlas.js';
 import { polygonProximity, preparePolygonContainment, type Point } from './atlasGeometry';
 export type { Point } from './atlasGeometry';
@@ -9,7 +10,7 @@ export function nodeWorldRadius(node: Pick<AtlasNode, 'centrality'>) {
   return 3.25 + 3.25 * nodeConnectedness(node);
 }
 export function noteTitle(node: AtlasNode) {
-  const name = (node.fileName || node.title).replace(/\.md$/i, '');
+  const name = noteFileLabel(node.fileName || node.title, node.noteId).replace(/\.md$/i, '');
   const letters = [...name];
   return letters.length > 60 ? `${letters.slice(0, 59).join('').trimEnd()}…` : name;
 }

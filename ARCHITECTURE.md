@@ -100,7 +100,10 @@ body identity and metadata and requests Markdown only on retrieval.
 
 `recovery/draftRecoveryController.svelte.ts` retains immutable dirty captures and
 serializes coalesced Recovery Drafts and their saved bases at the IPC boundary. Focused title input is
-included before its ordinary blur commit. Native `state/draft_recovery.rs` stores
+included with its raw display text. Title input synchronously updates the shared
+document through `TitleInteractionController` and the document editing owner;
+the pane retains only its raw display draft, and blur flushes ordinary autosave.
+Native `state/draft_recovery.rs` stores
 them in the existing vault-private app-state database, outside Note Timeline and
 canonical Markdown. Increasing versions and content-free tombstones reject late
 writes/removals. Canonical save adoption acknowledges only a clean current buffer;
@@ -890,14 +893,33 @@ application override. `modelLimits.ts` only translates observed positive model
 limits; unknown capacity remains unknown. Summaries are fallible
 memory, never fresh note evidence or authority. Current-state claims require another
 authorized read. No custom summary engine or background research inference runs.
-Automatic AI note titles are retired at the user's request on 2026-10-22
-([ADR 0013](docs/adr/0013-run-automatic-note-titles-as-scoped-pi-jobs.md)).
-Ordinary editor saves use an explicit title or derive the filename from the first
-nonempty body line. Previously created blank-title captures remain readable; their
-retired managed marker is cleared on the next ordinary save. Old internal title-job
-conversations remain hidden from chat navigation, but no title jobs, native title
-commands or semantic title fallback are installed. Explicit Pi filename edits
-continue under the shared existing-note write authority and distinct rename publication proof.
+Ordinary editor saves use an explicit title or retain a blank title with an
+identity-bound `Untitled Note <Note Identity>.md` filename and managed `untitled`
+marker. The filename is internal storage; note labels show “Untitled note”.
+`DocumentEditingService.finalizeTitleOnDeparture` names a remaining blank title
+from the first eight words of the first nonempty body line, capped at 80 Unicode
+characters. The workspace departure and application navigation barriers invoke
+it before ordinary saving; background saves retain the blank title. Another
+editor displaying the same note postpones pane-departure naming. The editor
+publishes typed titles to the shared buffer synchronously; pending departure
+saves retry newer input before leaving, rechecking blank-title naming on each
+attempt while preserving nonblank typed titles. Naming and session reads preserve
+authored headings, including a first heading matching the filename. Derived task and search
+locations count those body lines.
+The editor
+offers explicit title generation beside a blank title. Each click runs `pi/noteTitles.ts` as an
+abandon-on-restart Pi task in a hidden scope, using the configured native model
+and an exact-note attachment for exclusion/revocation checks. At most 12,000
+Unicode characters of the current editor body stay in an in-memory source map;
+task records retain opaque references and a bounded result, without note excerpts
+or a chat transcript. There are no tool runs or inference-driven file writes.
+Pi owns scheduling, cancellation and shutdown; the native binding is retired on
+settlement. The pane discards results after body/title edits, navigation or editor
+blocking, and applies a current result through the ordinary title/save action.
+Ordinary save completion leaves a still-current request running; teardown cancels
+it through the component lifetime rather than view-model replacement.
+Explicit Pi filename edits continue under the shared existing-note write authority
+and distinct rename publication proof.
 
 ### Native transport, storage and authority
 

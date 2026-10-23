@@ -32,6 +32,14 @@ export function formatNoteTitle(title: string) {
   return title.trim();
 }
 
+/** A departure names an untitled capture without changing its authored body. */
+export function titleFromFirstLine(markdown: string) {
+  const firstLine = stripFrontmatter(markdown.replace(/\r\n/g, '\n'))
+    .split('\n').find(line => line.trim() !== '')?.trim() ?? '';
+  const words = firstLine.replace(/^#+\s*/, '').split(/\s+/).slice(0, 8).join(' ');
+  return [...words].slice(0, 80).join('').trim() || 'Untitled note';
+}
+
 export function composeMarkdown(noteTitle: string, noteBody: string) {
   const normalizedBody = noteBody.replace(/\r\n/g, '\n');
   const trimmedTitle = noteTitle.trim();

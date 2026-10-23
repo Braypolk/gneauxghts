@@ -29,15 +29,15 @@ fn resolve_note_link_target_prefers_paragraph_numbers_and_falls_back_to_title() 
         10,
     );
 
-    let paragraph_target = resolve_note_link_target(&note_path, &note, Some("Paragraph 2"));
+    let paragraph_target = resolve_note_link_target(&note_path, &note, Some("Paragraph 3"));
     let heading_target = resolve_note_link_target(&note_path, &note, Some("Ideas"));
     let fallback_target = resolve_note_link_target(&note_path, &note, Some("Missing"));
 
     assert_eq!(paragraph_target.note_path, "/tmp/project-atlas.md");
-    assert_eq!(paragraph_target.section_label, "Paragraph 2");
+    assert_eq!(paragraph_target.section_label, "Paragraph 3");
     assert_eq!(paragraph_target.match_text, "## Ideas");
 
-    assert_eq!(heading_target.section_label, "Paragraph 2");
+    assert_eq!(heading_target.section_label, "Paragraph 3");
     assert_eq!(heading_target.match_text, "## Ideas");
 
     assert_eq!(fallback_target.section_label, "Title");

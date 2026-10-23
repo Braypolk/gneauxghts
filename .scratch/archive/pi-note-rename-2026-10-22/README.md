@@ -65,7 +65,7 @@ still intentionally follow their filename.
 ## Testing and limits
 
 The [manual guide](manual-testing.md) explains the rename flow and the earlier
-recoverable capture, opt-in automatic titles, retrieval cues/passages, formatting,
+recoverable capture, retrieval cues/passages, formatting,
 dock/image Retry and measured cleanup. The [contract](spec.md) records the accepted
 scope. [ADR 0015](../../../docs/adr/0015-prove-agent-renames-across-both-locations.md)
 and the architecture documents describe current ownership.

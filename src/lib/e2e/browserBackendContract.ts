@@ -28,6 +28,7 @@ declare global {
       seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean; toolCalls?: number }): Promise<string>;
       readPiChat(): Promise<Array<{ id: string; title: string; messages: Array<{ role: string; content: string }> }>>;
       holdNextPiResponse(): Promise<void>;
+      releaseHeldPiResponse(text: string): Promise<void>;
       setNextPiResponse(text: string, reasoning?: string): Promise<void>;
       emit(event: string, payload: unknown): void;
       holdHistoryRestore(): void;

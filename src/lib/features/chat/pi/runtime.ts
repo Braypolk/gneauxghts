@@ -11,10 +11,11 @@ import { admitProviderMessage } from './citations';
 import { EditReviewDoc, publicationExtension } from './publication';
 import { editExtension } from './edit';
 import { renameExtension } from './rename';
+import { createNoteTitleJobs } from './noteTitles';
 import { createPiDiagnostics, type PiDiagnostics } from './diagnostics';
 
 export const PI_CONTEXT = BACKGROUND_CONTEXT;
-// Keep the retired purpose discriminator so old application jobs never appear as chats.
+// Internal title scopes never appear as human chats.
 export const ChatDoc = defineDoc({ kind: 'gneauxghts.chat', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ title: '', authorityId: '', createdAtMillis: Date.now(), retired: false as boolean, forgotten: false as boolean, purpose: 'chat' as 'chat' | 'noteTitles' }) });
 export const initializeChatDocuments: NonNullable<HarnessOptions['conversationCreated']> = async (tx, conversation) => {
@@ -39,6 +40,7 @@ export type PiChat = {
   authorityForConversation(id: ConversationId): Promise<AuthoritySnapshot | undefined>;
   listConversations(limit?: number, cursor?: Cursor, context?: Context): Promise<{ items: PiConversationSummary[]; next?: Cursor }>;
   retireConversation(id: ConversationId): Promise<void>;
+  generateNoteTitle(markdown: string, noteId: string | null, signal: AbortSignal): Promise<string>;
   close(): Promise<void>;
 };
 let current: Promise<PiChat> | undefined;
@@ -57,6 +59,8 @@ async function compose(): Promise<PiChat> {
   const models = createNativeModels(bindings, admitProviderMessage);
   const registry = createRegistry();
   const diagnostics = createPiDiagnostics();
+  const noteTitles = createNoteTitleJobs();
+  registry.install(noteTitles.extension);
   registry.install(publicationExtension());
   registry.install(editExtension(async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? ''));
   registry.install(renameExtension(async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? ''));
@@ -134,6 +138,33 @@ async function compose(): Promise<PiChat> {
       if (conversation) await conversation.abort(PI_CONTEXT, { background: true });
       await harness.commit(async tx => { (await tx.doc(ChatDoc, id)).retired = true; }, PI_CONTEXT);
     },
+    async generateNoteTitle(markdown, noteId, signal) {
+      signal.throwIfAborted();
+      if (!markdown.trim()) throw new Error('Add note content before generating a title.');
+      const settings = await readPiChatSettings();
+      const provider = settings.provider;
+      const model = provider === 'local' ? settings.localModel : settings.openaiModel;
+      if (!model.trim()) throw new Error('Choose a model in Settings before generating a title.');
+      await models.registerModel(provider, model);
+      signal.throwIfAborted();
+      // This scope has no transcript or tool runs. The attachment enforces native
+      // exclusions/revocation; it never reads the saved note in place of the draft.
+      const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' },
+        init: async (tx, id) => { (await tx.doc(ChatDoc, id)).purpose = 'noteTitles'; }
+      }, PI_CONTEXT);
+      const providerDoc = await harness.snapshot(ProviderDoc, conversation.id, PI_CONTEXT);
+      if (!providerDoc) throw new Error('Title generation is unavailable.');
+      try {
+        const binding = { conversationId: conversation.id, providerSessionId: providerDoc.sessionId };
+        const authority = await bindAuthority(binding, { mode: 'attachedNotesOnly', attachedNoteIds: noteId ? [noteId] : [] });
+        await harness.commit(async tx => { (await tx.doc(ChatDoc, conversation.id)).authorityId = authority.authorityId; }, PI_CONTEXT);
+        await installBinding({ ...binding, authorityId: authority.authorityId });
+        return await noteTitles.run(harness, conversation.id, providerDoc.sessionId, { provider, modelId: model }, markdown, signal);
+      } finally {
+        try { await chat.retireConversation(conversation.id); }
+        finally { bindings.delete(providerDoc.sessionId); }
+      }
+    },
     close() {
       return closing ??= (async () => {
         diagnostics.beginClose();
@@ -152,7 +183,7 @@ async function compose(): Promise<PiChat> {
       for (const record of page.items) {
         const conversation = await harness.conversation(record.id, PI_CONTEXT);
         const doc = await harness.snapshot(ChatDoc, record.id, PI_CONTEXT);
-        // Retired application-job conversations remain hidden and cannot resume.
+        // Internal title scopes do not bind as human chat sessions.
         if (doc?.purpose === 'noteTitles') continue;
         if (!conversation || !doc?.authorityId) continue;
         const authority = await readAuthority(doc.authorityId).catch(() => undefined);

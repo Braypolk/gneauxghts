@@ -237,7 +237,7 @@ function searchItem(note: NoteFixture) {
     documentKind: 'note',
     noteId: note.noteId,
     notePath: note.path,
-    fileName: `${note.title}.md`,
+    fileName: note.path.split('/').at(-1)!,
     sectionLabel: note.title,
     excerpt: note.markdown.slice(0, 120),
     highlightRanges: [],
@@ -691,6 +691,10 @@ function historicalDiff(
         title: String(args.title ?? target.title),
         markdown: String(args.markdown ?? target.markdown)
       };
+      if (!saved.title.trim()) saved.path = `/e2e/Untitled Note ${saved.noteId}.md`;
+      else if (target.path.endsWith(`/Untitled Note ${saved.noteId}.md`)) {
+        saved.path = `/e2e/${saved.title}.md`;
+      }
       notes.set(saved.noteId, saved);
       if (activeNote?.noteId === saved.noteId || args.currentPath == null) activeNote = saved;
       return session(saved);
@@ -1021,6 +1025,7 @@ function historicalDiff(
     async seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean; toolCalls?: number }) { return (await import('./piBrowserFixture')).seedBrowserPiChat(options); },
     async readPiChat() { return (await import('./piBrowserFixture')).readBrowserPiChat(); },
     async holdNextPiResponse() { (await import('./piBrowserFixture')).holdNextBrowserPiResponse(); },
+    async releaseHeldPiResponse(text: string) { (await import('./piBrowserFixture')).releaseHeldBrowserPiResponse(text); },
     async setNextPiResponse(text: string, reasoning?: string) { (await import('./piBrowserFixture')).setNextBrowserPiResponse(text, reasoning); },
     emit(event: string, payload: unknown) {
       for (const [id, listener] of [...listeners]) {

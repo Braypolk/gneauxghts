@@ -85,3 +85,9 @@ it('derives the pane command label from the current title or filename fallback',
   document.working.title = 'Renamed';
   expect(paneCommandNoteLabel(document)).toBe('Renamed');
 });
+
+it('hides the identity-bound capture filename in pane commands', () => {
+  const document = createDocumentState({ ...createEmptySessionSnapshot(), currentNoteId: 'capture',
+    currentNotePath: '/vault/Untitled Note capture.md' }, 'document:capture');
+  expect(paneCommandNoteLabel(document)).toBe('Untitled note');
+});

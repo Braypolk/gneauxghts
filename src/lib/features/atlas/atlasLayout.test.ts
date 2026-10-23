@@ -48,6 +48,7 @@ describe('Atlas spaced layout', () => {
     expect(layout(remaining).nodes.some(mark => mark.node.id === atlas.nodes[0].id)).toBe(false);
     expect(layout({...atlas, nodes:[], clouds:[]}).nodes).toEqual([]);
     expect(noteTitle({...atlas.nodes[0], fileName:'Actual file.md', title:'Different heading'})).toBe('Actual file');
+    expect(noteTitle({...atlas.nodes[0], noteId:'capture', fileName:'Untitled Note capture.md', title:''})).toBe('Untitled note');
   });
 });
 

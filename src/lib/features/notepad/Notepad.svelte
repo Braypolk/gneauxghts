@@ -763,6 +763,7 @@
     getDocuments: () => Object.values(notepadState.documentsByHandle),
     cancelPendingAutosave,
     enqueueSave,
+    prepareDocumentForDeparture: documentEditing.finalizeTitleOnDeparture,
     flushRecoveryCopies: draftRecovery.flushAll,
   });
 
@@ -1349,9 +1350,9 @@
     onSplit: splitWorkspaceIfAllowed,
     onOpenPaneChoice: openPaneChoiceInCurrent,
     onTitleFocus: titleInteractions.handleFocus,
-    onTitleInput: (paneId) => {
+    onTitleInput: (paneId, rawTitle) => {
+      titleInteractions.handleInput(paneId, rawTitle);
       draftRecovery.track(getPaneDocumentSession(paneId));
-      titleInteractions.handleInput(paneId);
     },
     onTitleBlur: titleInteractions.handleBlur,
     onTitleKeydown: titleInteractions.handleKeydown,
@@ -1433,6 +1434,12 @@
       }),
     registerPendingSaveHandler: () =>
       registerPendingNoteSaveHandler(async () => {
+        // Keyboard route navigation may leave the title input focused. Commit
+        // its draft before departure naming or the persistence barrier captures it.
+        for (const paneId of paneOrder) {
+          const input = getPaneTitleInput(paneId);
+          if (input && input === document.activeElement) input.blur();
+        }
         await historyMode.waitForPendingRestore();
         await workspacePersistence.flushAllForNavigation();
       }),

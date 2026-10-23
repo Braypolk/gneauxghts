@@ -1,11 +1,10 @@
 # App quality follow-up — 2026-10-22
 
 Implemented the user's selected follow-ups to the [initial quality pass](../app-quality-pass-2026-10-22.md).
-The user selected automatic titles for untouched new-note titles with explicit
-opt-in. Chat-to-note remains retired. The [research](../../../docs/research/note-taking-friction-2026-10-22.md)
+Chat-to-note remains retired. The [research](../../../docs/research/note-taking-friction-2026-10-22.md)
 informed the experiments; it does not establish population prevalence.
 
-## Capture and titles
+## Capture and editing
 
 The existing New Idea route remains the capture entry. Dirty body, tags and
 focused uncommitted title input now receive coalesced private Recovery Copies.
@@ -14,15 +13,6 @@ Resume opens a separate draft and backs it up before retiring its source copy.
 Canonical notes still require Note Timeline preparation. There is no new global
 capture window or bypass writer. Coalescing leaves a 400 ms quiet / 2 s continuous
 typing loss window, and storage/OS termination can prevent completion.
-
-Settings → AI & Chat → Automatic note titles defaults off per Running Vault.
-When enabled, only a new capture whose title was untouched may request a title
-after saving. Input intent wins before blur, and newer edits, external changes,
-opt-out, cancellation and workspace disposal reject late results. An admitted
-title uses ordinary document title/save ownership. The shared Pi Harness runs
-the scoped inference task, without chat history/tools or general filesystem
-authority. Native admission reconstructs a bounded saved-note excerpt and
-rechecks source/exclusions/opt-in at dispatch and delivery.
 
 `edit_note` already edits complete authored Markdown. This pass fixes removal of
 the final unmanaged property, managed-metadata protection, authored-only staging
@@ -35,15 +25,14 @@ and editor leases could not prove safe two-path rename/recovery. The subsequent
 no-replace movement, a separate operation grant, exact destination review,
 both-location editor admission and interruption recovery.
 
-Evidence: [recovery](draft-recovery.md), [titles and editing](title-and-rename.md),
-[ADR 0013](../../../docs/adr/0013-run-automatic-note-titles-as-scoped-pi-jobs.md),
+Evidence: [recovery](draft-recovery.md), [authored editing](authored-editing.md),
 [ADR 0014](../../../docs/adr/0014-retain-unfinished-work-as-private-recovery-copies.md).
 
 ## Retrieval and formatting
 
 Existing passage search already previews and opens occurrences, so it is
 preserved. The initial Atlas ranked-row experiment (subsequently rejected by the user
-and replaced with map-node filtering; see [follow-up](../chat-title-atlas-fixes-2026-10-22.md)) used admitted map scores, with
+and replaced with map-node filtering; see [follow-up](../chat-provider-atlas-fixes-2026-10-22.md)) used admitted map scores, with
 keyboard/Enter and pointer opening, previews, reasons and Retry. It reuses the
 shared discovery popup and preserves accepted geography.
 
@@ -115,9 +104,8 @@ Final combined verification:
 
 Browser fixtures prove mounted frontend behavior against simulated IPC. Native
 tests separately prove authority, source admission, metadata and SQLite reopen
-ordering. No real native WebView title journey, paid-provider title quality,
-physical-device IME/termination or representative personal-vault relevance study
-was performed. The existing unsupported fixture publication-owner/mark-opened
+ordering. No physical-device IME/termination or representative personal-vault relevance
+study was performed. The existing unsupported fixture publication-owner/mark-opened
 commands do not establish native publication coverage. ResizeObserver warnings
 were reproduced and corrected; the final whole browser replay records zero such errors.
 

@@ -263,8 +263,15 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     persistence.cancelPendingAutosave(getPaneDocument(paneId));
     await persistence.getNoteSaveQueue(getPaneDocument(paneId).handle);
     let document = getPaneDocument(paneId);
-    if (!documentCanLeaveWithoutCanonicalWrite(document)) {
+    // Typing can continue while a canonical write is pending. Save the latest
+    // shared buffer, rechecking blank titles without replacing authored titles.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (finalize && !hasOtherEditor(paneId, document)) {
+        documentEditing.finalizeTitleOnDeparture(document);
+      }
+      if (documentCanLeaveWithoutCanonicalWrite(document)) break;
       await persistence.enqueueSave(document);
+      document = getPaneDocument(paneId);
     }
     document = getPaneDocument(paneId);
     if (!documentHasCleanBuffer(document)) {
@@ -275,6 +282,9 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       await finalizeNoteEditingWindow(noteId);
     }
     await documents.saveCursorPositionForPane(paneId, document);
+    if (!documentHasCleanBuffer(document)) {
+      throw new Error('The note changed while leaving the editor. Try again to save the latest changes.');
+    }
     return document;
   }
   type RefreshOutcome = 'skipped' | 'stale' | 'unchanged' | 'conflict' | 'refreshed' | 'failed';
@@ -570,7 +580,9 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       options.onNavigationBlocked?.();
       return false;
     }
-    const previous = await prepareDocument(paneId);
+    const sameNote = (open.noteId && open.noteId === getDocumentNoteId(current)) ||
+      (notePath && notePath === getDocumentPath(current));
+    const previous = await prepareDocument(paneId, !sameNote);
     operation.check();
     const location = capturePaneLocation(paneId);
     const target: NavLocation = {

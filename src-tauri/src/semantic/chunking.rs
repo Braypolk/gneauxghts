@@ -319,7 +319,7 @@ mod tests {
             "Astrophotography",
         );
         assert_eq!(chunked.chunks.len(), 3);
-        assert_eq!(chunked.chunks[1].section_label, "Overview");
+        assert_eq!(chunked.chunks[1].section_label, "Astrophotography");
         assert_eq!(
             chunked.chunks[1].text,
             "#code #astrophotography #image-processing #siril #lightroom"

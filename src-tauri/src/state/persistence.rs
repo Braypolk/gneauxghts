@@ -478,8 +478,28 @@ pub(crate) fn prepare_note_save(
             prepared_markdown = note::repair_managed_note_identity(&prepared_markdown, identity)?;
         }
     }
-    prepared_markdown = note::clear_untitled_marker(&prepared_markdown);
-    let target_path = resolve_target_path(notes_dir, title, &prepared_markdown, current_path)?;
+    let untitled = title.trim().is_empty();
+    prepared_markdown = note::set_untitled_marker(&prepared_markdown, untitled);
+    let storage_title = if untitled {
+        let identity = note::parse_note(&prepared_markdown)
+            .frontmatter
+            .managed
+            .ok_or("Missing capture identity")?
+            .id;
+        note::untitled_file_stem(&identity)
+    } else {
+        title.to_string()
+    };
+    let target_path =
+        resolve_target_path(notes_dir, &storage_title, &prepared_markdown, current_path)?;
+    // A suffixed capture path would no longer prove the blank-title marker.
+    if untitled
+        && target_path.file_stem().and_then(|stem| stem.to_str()) != Some(storage_title.as_str())
+    {
+        return Err(
+            "The capture filename is already occupied. Retry after resolving the collision.".into(),
+        );
+    }
     Ok((target_path, prepared_markdown))
 }
 

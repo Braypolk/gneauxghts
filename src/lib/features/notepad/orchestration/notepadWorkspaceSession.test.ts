@@ -125,6 +125,114 @@ describe('workspace destinations and history', () => {
 });
 
 describe('document departure admission', () => {
+  it('does not name an untitled note when reopening that same note', async () => {
+    const saved = { noteId: 'capture', path: '/vault/Untitled Note capture.md', title: '', markdown: 'Still writing' };
+    const f = setup(createSessionSnapshot(saved));
+    vi.mocked(openNoteSession).mockResolvedValueOnce(createSessionSnapshot(saved));
+    await f.commands.openNotePath(saved.path, { noteId: saved.noteId });
+    expect(f.getNavigationDocument().working.title).toBe('');
+    expect(f.save).not.toHaveBeenCalled();
+    expect(finalizeNoteEditingWindow).not.toHaveBeenCalled();
+  });
+
+  it('keeps autosaved capture titles blank, then names from eight first-line words on departure', async () => {
+    const body = 'Collect rainwater for the tomatoes while we travel next summer.\n\nKeep the full body.';
+    const f = setup({ ...createEmptySessionSnapshot(), bodyMarkdown: body });
+    f.save.mockImplementation(async (title, markdown) => ({ noteId: 'capture',
+      path: `/vault/${title || 'Untitled Note capture'}.md`, title, markdown }));
+    await f.persistence.enqueueSave(f.initialDocument);
+    expect(f.initialDocument.working.title).toBe('');
+    expect(f.initialDocument.identity).toMatchObject({ noteId: 'capture', path: '/vault/Untitled Note capture.md' });
+    await f.commands.startNewNoteFlow();
+    expect(f.save).toHaveBeenLastCalledWith('Collect rainwater for the tomatoes while we travel', body,
+      '/vault/Untitled Note capture.md', undefined, 'capture');
+    expect(f.getNavigationDocument().working.title).toBe('');
+  });
+
+  it('keeps a capture untitled while another editor still displays it', async () => {
+    const f = setup(createSessionSnapshot({ noteId: 'capture', path: '/vault/Untitled Note capture.md',
+      title: '', markdown: 'A quiet place to collect new ideas' }));
+    await f.commands.splitWorkspace();
+    const second = f.workspace.activePaneId;
+    await f.commands.resolvePaneCommandChoice(second, 'current');
+    await f.commands.setPaneKind(f.first, 'chat');
+    expect(f.initialDocument.working.title).toBe('');
+    expect(f.save).not.toHaveBeenCalled();
+    f.save.mockImplementation(async (title, markdown) => ({ noteId: 'capture', path: `/vault/${title}.md`, title, markdown }));
+    await f.commands.setPaneKind(second, 'chat');
+    expect(f.initialDocument.working.title).toBe('A quiet place to collect new ideas');
+    expect(f.save).toHaveBeenCalledOnce();
+  });
+
+  it('retains the document and chosen fallback when its departure rename fails', async () => {
+    const f = setup(createSessionSnapshot({ noteId: 'capture', path: '/vault/Untitled Note capture.md',
+      title: '', markdown: 'Keep this idea safe' }));
+    f.save.mockRejectedValueOnce(new Error('rename failed'));
+    await expect(f.commands.startNewNoteFlow()).rejects.toThrow('rename failed');
+    expect(f.getNavigationDocument()).toBe(f.initialDocument);
+    expect(f.initialDocument.identity).toMatchObject({ path: '/vault/Untitled Note capture.md' });
+    expect(f.initialDocument.working.title).toBe('Keep this idea safe');
+    expect(finalizeNoteEditingWindow).not.toHaveBeenCalled();
+  });
+
+  it('saves a newer typed title before departing when the fallback save is already pending', async () => {
+    const body = 'First-line fallback';
+    const f = setup(createSessionSnapshot({ noteId: 'capture', path: '/vault/Untitled Note capture.md', title: '', markdown: body }));
+    const entered = deferred<void>();
+    const held = deferred<void>();
+    f.save.mockImplementation(async (title, markdown) => {
+      if (title === body) { entered.resolve(); await held.promise; }
+      return { noteId: 'capture', path: `/vault/${title}.md`, title, markdown };
+    });
+    const departure = f.commands.startNewNoteFlow();
+    await entered.promise;
+    f.editing.updateTitle(f.initialDocument, 'My chosen title');
+    held.resolve();
+    await departure;
+    expect(f.save).toHaveBeenLastCalledWith('My chosen title', body, `/vault/${body}.md`, undefined, 'capture');
+    expect(f.initialDocument.savedBaseline?.content.title).toBe('My chosen title');
+    expect(f.getNavigationDocument()).not.toBe(f.initialDocument);
+  });
+
+  it.each([
+    { edits: ['Temporary title', ''], expected: 'First-line fallback' },
+    { edits: ['   '], expected: 'First-line fallback' },
+    { edits: ['', 'My chosen title'], expected: 'My chosen title' }
+  ])('settles the latest title edits $edits during a pending departure save', async ({ edits, expected }) => {
+    const body = 'First-line fallback';
+    const f = setup(createSessionSnapshot({ noteId: 'capture', path: '/vault/Untitled Note capture.md', title: '', markdown: body }));
+    const entered = deferred<void>();
+    const held = deferred<void>();
+    f.save.mockImplementation(async (title, markdown) => {
+      if (f.save.mock.calls.length === 1) { entered.resolve(); await held.promise; }
+      return { noteId: 'capture', path: `/vault/${title || 'Untitled Note capture'}.md`, title, markdown };
+    });
+    const departure = f.commands.startNewNoteFlow();
+    await entered.promise;
+    for (const title of edits) f.editing.updateTitle(f.initialDocument, title);
+    held.resolve();
+    await departure;
+    expect(f.initialDocument.working.title).toBe(expected);
+    expect(f.initialDocument.savedBaseline?.content.title).toBe(expected);
+    expect(f.initialDocument.savedBaseline?.content.body.toMarkdown()).toBe(body);
+    expect(f.initialDocument.identity).toMatchObject({ noteId: 'capture', path: `/vault/${expected}.md` });
+    expect(f.getNavigationDocument()).not.toBe(f.initialDocument);
+  });
+
+  it('retains the latest typed title if edits keep outpacing the departure saves', async () => {
+    const f = setup(createSessionSnapshot({ noteId: 'capture', path: '/vault/Untitled Note capture.md', title: '', markdown: 'First-line fallback' }));
+    let edits = 0;
+    f.save.mockImplementation(async (title, markdown) => {
+      f.editing.updateTitle(f.initialDocument, `Newer typed title ${++edits}`);
+      return { noteId: 'capture', path: `/vault/${title}.md`, title, markdown };
+    });
+    await expect(f.commands.startNewNoteFlow()).rejects.toThrow('could not be saved');
+    expect(f.getNavigationDocument()).toBe(f.initialDocument);
+    expect(f.initialDocument.working.title).toBe('Newer typed title 3');
+    expect(f.initialDocument.savedBaseline?.content.title).toBe('Newer typed title 2');
+    expect(finalizeNoteEditingWindow).not.toHaveBeenCalled();
+  });
+
   it('saves assigned identity before finalizing and storing its cursor', async () => {
     const f = setup({ ...createEmptySessionSnapshot(), title: 'Draft', bodyMarkdown: 'body' });
     f.save.mockResolvedValue({ ...persistedSession('saved', 'body'), title: 'Draft' });

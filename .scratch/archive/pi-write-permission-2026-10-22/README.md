@@ -136,7 +136,7 @@ reproduced the missing-row behavior by delaying only that read. The maintained t
 for the edited mode, two rows and input focus before testing row navigation;
 its existing split-focus and opening assertions remain. This changes no app
 navigation behavior. The historical manual guide now points to the accepted
-in-place recovery, retired-title, Atlas-filter and unified-permission records.
+in-place recovery, Atlas-filter and unified-permission records.
 Rust formatting also normalized two existing note-naming test cases.
 
 Fresh verification:

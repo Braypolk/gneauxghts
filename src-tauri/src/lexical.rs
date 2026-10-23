@@ -636,7 +636,7 @@ mod tests {
 
         assert!(!results.is_empty());
         assert_eq!(results[0].result.file_name, "project-atlas");
-        assert_eq!(results[0].result.section_label, "Paragraph 2");
+        assert_eq!(results[0].result.section_label, "Paragraph 3");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # Atlas route and passage assessment, 2026-10-22
 
 Historical experiment: the user subsequently rejected the ranked suggestion popup.
-It has been replaced with map-node filtering; see the [follow-up](../chat-title-atlas-fixes-2026-10-22.md).
+It has been replaced with map-node filtering; see the [follow-up](../chat-provider-atlas-fixes-2026-10-22.md).
 The passage-search assessment below remains applicable.
 
 ## Existing behavior retained

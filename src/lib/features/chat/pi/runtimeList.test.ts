@@ -35,7 +35,7 @@ async function metadata(id: ConversationId, title: string, retired = false) {
   await chat!.harness.commit(async tx => { const doc = await tx.doc(ChatDoc, id); doc.title = title; doc.retired = retired; }, PI_CONTEXT);
 }
 
-it('keeps retired application title records out of initial and live conversation lists', async () => {
+it('keeps internal title scopes out of initial and live conversation lists', async () => {
   await setup(2);
   const titles = await chat!.harness.createConversation({ ownership: { kind: 'ownerless' },
     init: async (tx, id) => { const doc = await tx.doc(ChatDoc, id); doc.title = 'Internal title jobs'; doc.purpose = 'noteTitles'; }

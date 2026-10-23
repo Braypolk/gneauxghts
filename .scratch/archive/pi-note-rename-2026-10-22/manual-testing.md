@@ -1,11 +1,10 @@
 # Historical manual testing guide
 
 This guide records the original implementation checkpoint. Its separate-copy
-recovery, automatic-title, ranked Atlas search and independent rename-permission
+recovery, ranked Atlas search and independent rename-permission
 steps below are superseded. For current behavior see
 [recovery into the original note](../draft-recovery-in-place-2026-10-22/README.md),
-[retired automatic titles](../retire-ai-titles-2026-10-22.md),
-[Atlas node filtering](../atlas-title-workflow-2026-10-22.md), and
+[Atlas node filtering](../atlas-relevance-2026-10-22.md), and
 [unified write permission and rename recovery](../pi-write-permission-2026-10-22/README.md).
 
 Use a disposable vault with a few invented notes. Keep a normal text editor or
@@ -51,29 +50,6 @@ choose **Resume copy**, and compare the new draft with its original. **Discard**
 must remove only that private copy. Do not force-quit valuable work to provoke
 this state: backup coalescing leaves a roughly 400 ms quiet / 2 s continuous
 typing interval before a copy reaches storage.
-
-## Automatic titles
-
-1. In **Settings → AI & Chat**, confirm **Automatic note titles** is initially off
-   in a fresh vault. Turn it on explicitly and return to the editor.
-2. Choose **New Idea**. Leave the title untouched and write several sentences,
-   for example an idea for an observatory open evening. Let the note save and the
-   provider finish. A concise title should replace the initial fallback title.
-3. Make another idea and type your own title before the response arrives. Your
-   title must remain. Repeat by typing a title and clearing it: having expressed
-   title intent still prevents an automatic replacement.
-4. While another title request is pending, change the body, leave the workspace,
-   or switch the setting off. A late result must not overwrite newer work. The
-   old body's response must be rejected; a later valid request for the newly
-   saved body may still title an untouched note. The app should remain usable if
-   the provider fails or returns an unsuitable title.
-5. Restart normally and confirm the preference persists. Existing named notes
-   should not be retitled by enabling it.
-
-This is the useful live-provider acceptance test. Automated checks establish
-opt-in, source guards and editor adoption; they do not establish whether you like
-the model's title quality. Only the bounded saved body excerpt is used for the
-title job; it does not use a chat or general note-editing permission.
 
 ## Search cues and passages
 

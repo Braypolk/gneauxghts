@@ -103,27 +103,24 @@ pub(crate) fn extract_file_name_title_and_body(
     {
         return (String::new(), parsed.body);
     }
-    (
-        fallback_title.to_string(),
-        strip_leading_title_heading(&parsed.body, fallback_title),
-    )
+    // A filename supplies the title, never permission to remove authored text.
+    (fallback_title.to_string(), parsed.body)
 }
 
 pub(crate) fn untitled_file_stem(note_id: &str) -> String {
     format!("Untitled Note {note_id}")
 }
 
-/// Preserve read compatibility for captures made by the retired AI-title flow.
-/// Ordinary editor saves clear this marker before deriving a normal filename.
-pub(crate) fn clear_untitled_marker(markdown: &str) -> String {
+/// Bind the visible blank-title state to the note's private capture filename.
+pub(crate) fn set_untitled_marker(markdown: &str, untitled: bool) -> String {
     let parsed = parse_note(markdown);
     let Some(mut metadata) = parsed.frontmatter.managed else {
         return markdown.to_string();
     };
-    if !metadata.untitled {
+    if metadata.untitled == untitled {
         return markdown.to_string();
     }
-    metadata.untitled = false;
+    metadata.untitled = untitled;
     format!(
         "---\n{}\n---\n\n{}",
         compose_frontmatter(parsed.frontmatter.raw_other.as_deref(), &metadata),
@@ -195,45 +192,6 @@ fn sanitize_file_stem(value: &str, default_name: &str, max_len: usize) -> String
     }
 
     cleaned.chars().take(max_len).collect()
-}
-
-fn strip_leading_title_heading(markdown: &str, title: &str) -> String {
-    let normalized = markdown.replace("\r\n", "\n");
-    let mut lines = normalized.lines().map(str::to_string).collect::<Vec<_>>();
-    let Some(first_content_index) = lines.iter().position(|line| !line.trim().is_empty()) else {
-        return normalized;
-    };
-
-    let Some(heading) = lines[first_content_index]
-        .trim()
-        .strip_prefix("# ")
-        .map(str::trim)
-        .filter(|heading| !heading.is_empty())
-    else {
-        return normalized;
-    };
-
-    if title_match_key(heading) != title_match_key(title) {
-        return normalized;
-    }
-
-    lines.remove(first_content_index);
-    if lines
-        .get(first_content_index)
-        .is_some_and(|line| line.trim().is_empty())
-    {
-        lines.remove(first_content_index);
-    }
-
-    lines.join("\n")
-}
-
-fn title_match_key(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
 }
 
 pub(crate) fn prepare_note_markdown(
@@ -710,14 +668,14 @@ mod tests {
     }
 
     #[test]
-    fn extract_file_name_title_and_body_uses_file_name_and_strips_leading_heading() {
+    fn extract_file_name_title_and_body_preserves_a_matching_authored_heading() {
         let (title, body) = extract_file_name_title_and_body(
             "---\ngneauxghts:\n  id: 01TEST\n---\n\n# Launch Plan\n\nBody",
             "Launch Plan",
         );
 
         assert_eq!(title, "Launch Plan");
-        assert_eq!(body, "Body");
+        assert_eq!(body, "# Launch Plan\n\nBody");
     }
 
     #[test]

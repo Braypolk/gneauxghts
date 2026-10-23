@@ -10,6 +10,7 @@ export interface WorkspacePersistenceServiceDeps {
   getDocuments: () => Iterable<NoteDraftState>;
   cancelPendingAutosave: (document: NoteDraftState) => void;
   enqueueSave: (document: NoteDraftState) => Promise<void>;
+  prepareDocumentForDeparture?: (document: NoteDraftState) => void;
   flushRecoveryCopies?: () => Promise<void>;
 }
 
@@ -46,6 +47,9 @@ export function createWorkspacePersistenceService(
     // A queue can still be publishing while its shared buffer looks clean.
     await awaitAllSaveQueues();
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      // A title may have been cleared while the preceding save was pending.
+      // Departure preparation only names blank titles; typed titles still win.
+      for (const document of documents) deps.prepareDocumentForDeparture?.(document);
       const pending = documents.filter(needsCanonicalSave);
       if (pending.length === 0) return;
       const conflict = pending.find(documentHasUnresolvedConflict);

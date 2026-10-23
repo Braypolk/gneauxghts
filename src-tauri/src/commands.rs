@@ -1356,7 +1356,7 @@ mod tests {
         );
         assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
         assert_eq!(session.title, "Read Me");
-        assert_eq!(session.markdown, "Body");
+        assert_eq!(session.markdown, "# Read Me\n\nBody");
         assert_eq!(
             state.last_opened_note_id,
             Some(existing_note.note_id.clone())

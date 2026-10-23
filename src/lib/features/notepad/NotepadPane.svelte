@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { Columns2, CornerUpLeft, FileText, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags } from '@lucide/svelte';
+  import { onDestroy } from 'svelte';
+  import { Columns2, CornerUpLeft, FileText, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags, Sparkles, LoaderCircle } from '@lucide/svelte';
+  import { openPiChat } from '#lib/features/chat/pi/runtime.js';
+  import { documentHasUnresolvedConflict, getDocumentNoteId } from './document/documentState';
   import {
     formatShortcutBinding,
     getEffectiveKeyboardShortcutBinding
@@ -78,6 +81,53 @@
   const displayedTitle = $derived(
     titleDraftBelongsToCurrentDocument ? titleDraft ?? viewModel.titleValue : viewModel.titleValue
   );
+  let generatingTitle = $state(false);
+  let titleGenerationError = $state('');
+  let titleRequest = $state.raw<{
+    document: PaneViewModel['titleDocument'];
+    body: PaneViewModel['titleDocument']['working']['body'];
+    title: string;
+    abort: AbortController;
+  } | null>(null);
+  const canGenerateTitle = $derived(viewModel.paneKind === 'editor' && !viewModel.titleReadonly && !collapsed &&
+    !displayedTitle.trim() && !documentHasUnresolvedConflict(viewModel.titleDocument) &&
+    (viewModel.titleDocument.operation.kind === 'idle' ||
+      (viewModel.titleDocument.operation.kind === 'saving' && !viewModel.titleDocument.operation.waitReason)));
+  function cancelTitleGeneration() {
+    titleRequest?.abort.abort();
+    titleRequest = null;
+    generatingTitle = false;
+    titleGenerationError = '';
+  }
+  $effect(() => {
+    // Revoke the captured intent on navigation, body edits, typed titles or a
+    // blocked editor. Final delivery checks these again before ordinary saving.
+    const request = titleRequest;
+    if (request && (!canGenerateTitle || request.document !== viewModel.titleDocument || request.body !== viewModel.titleDocument.working.body || request.title !== viewModel.titleDocument.working.title)) cancelTitleGeneration();
+  });
+  onDestroy(cancelTitleGeneration);
+  async function generateTitle() {
+    if (!canGenerateTitle || generatingTitle || !viewModel.titleDocument.working.body.hasContent()) return;
+    const request = { document: viewModel.titleDocument, body: viewModel.titleDocument.working.body, title: viewModel.titleDocument.working.title, abort: new AbortController() };
+    titleRequest = request;
+    generatingTitle = true;
+    titleGenerationError = '';
+    try {
+      const chat = await openPiChat();
+      request.abort.signal.throwIfAborted();
+      const title = await chat.generateNoteTitle(request.body.toMarkdown(), getDocumentNoteId(request.document), request.abort.signal);
+      if (titleRequest !== request || request.abort.signal.aborted || !canGenerateTitle || viewModel.titleDocument !== request.document || viewModel.titleDocument.working.body !== request.body || viewModel.titleDocument.working.title !== request.title) return;
+      actions.onTitleBlur(viewModel.paneId, title);
+      titleDraft = pane.refs.titleInput === document.activeElement ? title : null;
+      titleDraftDocument = request.document;
+    } catch (error) {
+      if (titleRequest === request && !request.abort.signal.aborted) {
+        titleGenerationError = error instanceof Error ? error.message : 'Could not generate a title. Check AI settings and try again.';
+      }
+    } finally {
+      if (titleRequest === request) { titleRequest = null; generatingTitle = false; }
+    }
+  }
   const railTitle = $derived(viewModel.paneKind === 'chat'
     ? $chatBinding?.title || 'Thought partner'
     : displayedTitle.trim() || 'Untitled note');
@@ -176,6 +226,10 @@
   {/if}
 {/snippet}
 
+{#snippet titleGenerationMessage()}
+  <span role="alert" class="block max-w-72 text-center text-xs text-destructive">{titleGenerationError}</span>
+{/snippet}
+
 <div
   bind:this={pane.refs.paneCard}
   class={viewModel.bodyClass}
@@ -220,6 +274,7 @@
             {mobileTitleActive}
             split={viewModel.showCloseButton}
             right={paneButtons}
+            subtitle={titleGenerationError ? titleGenerationMessage : undefined}
           >
             {#snippet secondaryActions()}
               <DropdownMenu.Root bind:open={optionsOpen} onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
@@ -281,11 +336,13 @@
                   actions.onTitleFocus(viewModel.paneId);
                 }}
                 oninput={(event) => {
+                  cancelTitleGeneration();
                   titleDraft = (event.currentTarget as HTMLInputElement).value;
                   titleDraftDocument = viewModel.titleDocument;
-                  actions.onTitleInput(viewModel.paneId);
+                  actions.onTitleInput(viewModel.paneId, titleDraft);
                 }}
-                onblur={() => {
+                onblur={(event) => {
+                  if ((event.relatedTarget as HTMLElement | null)?.closest('[data-generate-note-title]')) return;
                   const shouldCommit = titleDraftDocument === viewModel.titleDocument;
                   const rawTitle = titleDraft ?? viewModel.titleValue;
                   titleDraft = null;
@@ -295,6 +352,20 @@
                 }}
                 onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
               />
+              {#if canGenerateTitle}
+                <button type="button" data-generate-note-title class="generate-note-title mobile-touch-target" aria-label="Generate title" title="Generate a short title from this note using your configured AI model"
+                  disabled={generatingTitle || !viewModel.titleDocument.working.body.hasContent()} aria-busy={generatingTitle}
+                  onblur={() => {
+                    if (!generatingTitle && titleDraft !== null && titleDraftDocument === viewModel.titleDocument) {
+                      const rawTitle = titleDraft;
+                      titleDraft = null;
+                      actions.onTitleBlur(viewModel.paneId, rawTitle);
+                    }
+                  }}
+                  onmousedown={(event) => event.preventDefault()} onclick={() => void generateTitle()}>
+                  {#if generatingTitle}<LoaderCircle class="h-4 w-4 animate-spin motion-reduce:animate-none" />{:else}<Sparkles class="h-4 w-4" />{/if}
+                </button>
+              {/if}
             {/snippet}
           </PaneHeader>
         </div>
@@ -392,6 +463,22 @@
 </div>
 
 <style>
+  .generate-note-title {
+    position: absolute;
+    left: calc(100% + 0.25rem);
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 9999px;
+    color: var(--muted-foreground);
+  }
+  .generate-note-title:hover:not(:disabled) { background: var(--accent); color: var(--accent-foreground); }
+  .generate-note-title:disabled { opacity: 0.4; }
+  .generate-note-title:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
   .compact-pane-divider { width: 1px; height: 1.5rem; margin-inline: 0.25rem; background: var(--border); }
   /* Keep layout measurable while parsing and scroll restoration finish. */
   .editor-loading {

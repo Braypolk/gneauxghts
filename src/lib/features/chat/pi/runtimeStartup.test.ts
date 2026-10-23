@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest';
 import { Harness, MemoryStorage, ProviderDoc, createRegistry, type Conversation } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai';
-import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
+import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { ChatDoc, openPiChat, type PiChat } from './runtime';
 
@@ -101,4 +101,25 @@ it('fails startup model discovery before any scheduling operation', async () => 
   expect(scheduled).toEqual([]);
   expect(native.listen).not.toHaveBeenCalled();
   expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_fetch')).toHaveLength(0);
+});
+
+it('isolates a manual title request from chats and retires its exact-note native binding', async () => {
+  const storage = new MemoryStorage(); storage.close = async () => {}; native.storage = storage;
+  const originalInvoke = native.invoke.getMockImplementation()!;
+  native.invoke.mockImplementation(async (command, args) => {
+    if (command === 'chat_get_settings') return { provider: 'local', localModel: 'fixture' };
+    if (command === 'pi_chat_bind_authority') return { authorityId: 'title-scope', revision: 1 };
+    if (command === 'pi_chat_authority' && args.authorityId === 'title-scope') return { authorityId: 'title-scope', revision: 1, retired: false };
+    if (command === 'pi_chat_retire_authority') return;
+    return originalInvoke(command, args);
+  });
+  chat = await openPiChat();
+  const inference = vi.spyOn(chat.models, 'completeSimple').mockResolvedValue(fauxAssistantMessage('Garden Irrigation Plan'));
+  try {
+    expect(await chat.generateNoteTitle('Water seedlings daily; install drip irrigation.', 'note-garden', new AbortController().signal)).toBe('Garden Irrigation Plan');
+    expect(native.invoke).toHaveBeenCalledWith('pi_chat_bind_authority', expect.objectContaining({ read: { mode: 'attachedNotesOnly', attachedNoteIds: ['note-garden'] } }));
+    expect(native.invoke).toHaveBeenCalledWith('pi_chat_retire_authority', { authorityId: 'title-scope', expectedRevision: 1 });
+    expect((await chat.listConversations()).items).toEqual([]);
+    expect(inference).toHaveBeenCalledOnce();
+  } finally { inference.mockRestore(); }
 });

@@ -29,11 +29,14 @@ export function createTitleInteractionController<
     deps.activatePane(paneId);
   }
 
-  function handleInput(paneId: TPaneId) {
+  function handleInput(paneId: TPaneId, rawTitle: string) {
     deps.activatePane(paneId);
     if (deps.getPaneCommandPaneId() === paneId) {
       deps.resetPaneCommand();
     }
+    // The field keeps its raw display draft, but persistence and other panes
+    // must see authored intent before any pending save/navigation resumes.
+    commit(paneId, rawTitle);
   }
 
   function commit(paneId: TPaneId, rawTitle: string) {

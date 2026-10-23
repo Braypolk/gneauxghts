@@ -767,7 +767,7 @@ pub(crate) struct IndexedTask {
     pub(crate) completed: bool,
     pub(crate) depth: usize,
     pub(crate) line_number: usize,
-    /// 1-based line number in the editor body (`strip_leading_title_heading(strip_frontmatter(file))`).
+    /// 1-based line number in the editor body, excluding file frontmatter.
     pub(crate) editor_line_number: Option<usize>,
 }
 
@@ -1552,8 +1552,7 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
         markdown
     };
     let lines = normalized.lines().collect::<Vec<_>>();
-    let first_content_index = lines.iter().position(|line| !line.trim().is_empty());
-    let editor_line_numbers = build_editor_line_number_map(&lines, first_content_index);
+    let editor_line_numbers = build_editor_line_number_map(&lines);
     let mut section_label = None;
     let mut indent_levels = Vec::new();
     let mut tasks = Vec::new();
@@ -1562,10 +1561,6 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
     for (line_index, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            continue;
-        }
-
-        if Some(line_index) == first_content_index && trimmed.starts_with("# ") {
             continue;
         }
 
@@ -1594,10 +1589,7 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
     tasks
 }
 
-fn build_editor_line_number_map(
-    lines: &[&str],
-    first_content_index: Option<usize>,
-) -> Vec<Option<usize>> {
+fn build_editor_line_number_map(lines: &[&str]) -> Vec<Option<usize>> {
     let mut editor_line_numbers = vec![None; lines.len()];
     let mut body_start_index = 0usize;
 
@@ -1618,29 +1610,8 @@ fn build_editor_line_number_map(
         }
     }
 
-    let first_body_content_index = lines
-        .iter()
-        .enumerate()
-        .skip(body_start_index)
-        .find_map(|(index, line)| (!line.trim().is_empty()).then_some(index));
-    let stripped_heading_index = first_body_content_index
-        .or(first_content_index.filter(|&index| index >= body_start_index))
-        .filter(|&index| lines[index].trim().starts_with("# "));
-    let stripped_heading_blank_index = stripped_heading_index.and_then(|index| {
-        let next_index = index + 1;
-        (next_index < lines.len() && lines[next_index].trim().is_empty()).then_some(next_index)
-    });
-
     let mut editor_line_number = 1usize;
-    for (index, editor_line) in editor_line_numbers
-        .iter_mut()
-        .enumerate()
-        .skip(body_start_index)
-    {
-        if Some(index) == stripped_heading_index || Some(index) == stripped_heading_blank_index {
-            continue;
-        }
-
+    for editor_line in editor_line_numbers.iter_mut().skip(body_start_index) {
         *editor_line = Some(editor_line_number);
         editor_line_number += 1;
     }
@@ -1855,9 +1826,17 @@ gneauxghts:
 
         assert_eq!(tasks.len(), 3);
         assert_eq!(tasks[0].line_number, 8);
-        assert_eq!(tasks[0].editor_line_number, Some(1));
+        assert_eq!(tasks[0].editor_line_number, Some(3));
         assert_eq!(tasks[2].line_number, 10);
-        assert_eq!(tasks[2].editor_line_number, Some(3));
+        assert_eq!(tasks[2].editor_line_number, Some(5));
+        let body = crate::note::parse_note(markdown).body;
+        for task in tasks {
+            assert!(body
+                .lines()
+                .nth(task.editor_line_number.unwrap() - 1)
+                .unwrap()
+                .contains(&task.text));
+        }
     }
 
     #[test]
@@ -1868,9 +1847,9 @@ gneauxghts:
 
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].line_number, 3);
-        assert_eq!(tasks[0].editor_line_number, Some(1));
+        assert_eq!(tasks[0].editor_line_number, Some(3));
         assert_eq!(tasks[1].line_number, 4);
-        assert_eq!(tasks[1].editor_line_number, Some(2));
+        assert_eq!(tasks[1].editor_line_number, Some(4));
     }
 
     #[test]

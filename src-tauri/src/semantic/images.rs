@@ -429,7 +429,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].source_start, 3);
+        assert_eq!(results[0].source_start, 13);
         let allowed = HashSet::new();
         assert!(search(
             &ann,

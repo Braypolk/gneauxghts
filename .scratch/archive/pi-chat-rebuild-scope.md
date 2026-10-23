@@ -76,7 +76,7 @@ state, not merely to reproduce the old architecture. Record what each one earns.
   compaction. Hosted OpenAI is available through the same integration; hosted-only
   features, broader provider expansion and live hosted credentials are not gates.
 - No unsolicited inference except necessary Pi compaction. Initial titles derive
-  from the first message. No background suggestions, AI titles or research.
+  from the first message. No background suggestions or research.
 - Keep the familiar overall appearance without preserving the old ChatController,
   ChatApi, event protocol or persisted chat model as compatibility requirements.
 

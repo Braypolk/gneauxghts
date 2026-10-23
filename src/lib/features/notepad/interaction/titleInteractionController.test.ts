@@ -63,7 +63,7 @@ describe('title interaction controller', () => {
     const harness = setup();
 
     harness.controller.handleFocus(paneId);
-    harness.controller.handleInput(paneId);
+    harness.controller.handleInput(paneId, 'A title');
 
     expect(harness.activatePane).toHaveBeenCalledTimes(2);
     expect(
@@ -71,10 +71,22 @@ describe('title interaction controller', () => {
     ).toHaveBeenCalledOnce();
 
     harness.clearPaneCommand();
-    harness.controller.handleInput(paneId);
+    harness.controller.handleInput(paneId, 'Another title');
     expect(
       harness.resetPaneCommand
     ).toHaveBeenCalledOnce();
+  });
+
+  it('publishes typed titles before blur so pending saves and departure naming see the latest input', () => {
+    const harness = setup('First-line fallback');
+
+    harness.controller.handleInput(paneId, '  My chosen title  ');
+
+    expect(harness.document.working.title).toBe('My chosen title');
+    expect(harness.scheduleAutosave).toHaveBeenCalledWith(harness.document);
+    expect(harness.flushPendingAutosave).not.toHaveBeenCalled();
+    harness.controller.handleInput(paneId, 'My latest title');
+    expect(harness.document.working.title).toBe('My latest title');
   });
 
   it('formats and commits title changes through save and derived-view seams', () => {

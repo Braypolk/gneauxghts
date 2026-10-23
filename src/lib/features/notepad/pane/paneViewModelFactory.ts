@@ -7,6 +7,7 @@ import type {
 import type { NotepadPaneId } from '#lib/features/notepad/session/runtimeStore.svelte.js';
 import type { PaneCommandMode } from '#lib/features/notepad/paneCommandPicker.js';
 import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
+import { locationDisplayLabel } from '../navigation/locationMru';
 import {
   canRemovePane,
   getPaneCapabilityPolicy
@@ -139,7 +140,7 @@ export function paneCommandNoteLabel(note: NoteDraftState | null | undefined) {
 
   const path = getDocumentPath(note);
   if (path) {
-    return path.split('/').pop()?.replace(/\.md$/i, '') ?? 'Untitled note';
+    return locationDisplayLabel({ kind: 'editor', noteId: getDocumentNoteId(note), notePath: path });
   }
 
   return 'Untitled note';

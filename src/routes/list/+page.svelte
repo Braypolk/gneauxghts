@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { noteFileLabel } from '#lib/noteLabels.js';
   import { afterNavigate } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
   import { DropdownMenu } from 'bits-ui';
@@ -331,7 +332,7 @@
                           <span>file hidden</span>
                         {/if}
                         {#if group.fileName !== group.noteTitle}
-                          <span class="max-w-[10rem] truncate sm:max-w-none" title={group.fileName}>{group.fileName}</span>
+                          <span class="max-w-[10rem] truncate sm:max-w-none" title={noteFileLabel(group.fileName, group.noteId)}>{noteFileLabel(group.fileName, group.noteId)}</span>
                         {/if}
                       </span>
                     </span>

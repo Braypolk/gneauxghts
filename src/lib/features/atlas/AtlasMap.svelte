@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { noteFileLabel } from '#lib/noteLabels.js';
   // Topic geography with spaced dots and zoom-faded filenames.
   import { onMount, untrack, type Snippet } from 'svelte';
   import { interpolateAtlas, atlasGeometryMoved, type AtlasGeometry } from './atlasMotion';
@@ -419,7 +420,7 @@
           {/each}</g>
           <g class="graph-dots">
             {#each visibleNodes as mark (mark.node.id)}
-              <g class="note-dot" role="button" tabindex="0" data-node-id={mark.node.id} data-root-id={mark.rootId} aria-label={`Pin ${mark.node.fileName || mark.node.title}`}
+              <g class="note-dot" role="button" tabindex="0" data-node-id={mark.node.id} data-root-id={mark.rootId} aria-label={`Pin ${noteFileLabel(mark.node.fileName || mark.node.title, mark.node.noteId)}`}
                 onmouseenter={() => hoveredId = mark.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = mark.node.id} onblur={() => hoveredId = null}
                 onclick={() => clickNode(mark.node)} ondblclick={() => void openNode(mark.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); if (event.key === 'Enter') void openNode(mark.node); else pin(mark.node); } }}>
                 <circle class="dot-hit" cx={mark.x} cy={mark.y} r={Math.max(visibleRadius(mark.node.id), 8) / cameraScale} fill="transparent"/>
@@ -434,7 +435,7 @@
           {/each}
           <g class="filename-labels" opacity={filenameOpacity} pointer-events={labelsInteractive ? 'auto' : 'none'} aria-hidden={filenameOpacity <= 0.01}>
             {#each filenameLabels as label (label.node.id)}
-              <g class="note-name" role="button" tabindex={labelsInteractive ? 0 : -1} data-filename-id={label.node.id} aria-label={`Read ${label.node.fileName || label.node.title}`}
+              <g class="note-name" role="button" tabindex={labelsInteractive ? 0 : -1} data-filename-id={label.node.id} aria-label={`Read ${noteFileLabel(label.node.fileName || label.node.title, label.node.noteId)}`}
                 onmouseenter={() => hoveredId = label.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = label.node.id} onblur={() => hoveredId = null}
                 onclick={() => clickNode(label.node)} ondblclick={() => void openNode(label.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); if (event.key === 'Enter') void openNode(label.node); else pin(label.node); } }}>
                 <text x={label.x} y={label.labelY} text-anchor="middle" font-size={labelWorldSize} font-weight={activeId === label.node.id ? '600' : '400'} fill="var(--color-foreground)" stroke="var(--color-background)" stroke-width="0.8" stroke-linejoin="round" paint-order="stroke">{label.title}</text>
@@ -460,7 +461,7 @@
       </div>
     {#if active}
       <article class="reader" onwheel={wheelCard} aria-label="Note reader">
-        <h2>{(active.node.fileName || active.node.title).replace(/\.md$/i, '')}</h2><p class="activity-detail">{activityText(active.node)}</p>
+        <h2>{noteFileLabel(active.node.fileName || active.node.title, active.node.noteId).replace(/\.md$/i, '')}</h2><p class="activity-detail">{activityText(active.node)}</p>
         <div class="browse"><span>{query.trim() ? 'Search matches' : 'Connected notes'}</span><div><button disabled={!pool.length} onclick={() => cycle(-1)} aria-label="Previous Atlas note">↑</button><span>{poolIndex >= 0 ? poolIndex + 1 : '–'} / {pool.length}</span><button disabled={!pool.length} onclick={() => cycle(1)} aria-label="Next Atlas note">↓</button></div></div>
         {#if fullText !== null}<div class="full-source" tabindex="0" role="textbox" aria-readonly="true" aria-label="Full note source">{fullText}</div>{:else}<div class="reader-excerpt">{excerptText(active.node.preview) || 'No excerpt available for this note.'}</div>{/if}
         <div class="reader-footer"><span>{links.length} of {neighborhood.total} connections shown · scroll preview to browse</span><button onclick={() => active && void openNode(active.node)}>Open in editor</button><button disabled={readStatus === 'loading'} onclick={loadSource}>{readStatus === 'loading' ? 'Loading…' : fullText !== null ? 'Reload source' : 'Read full note'}</button>{#if readStatus === 'error'}<small>Could not load this note. Try again.</small>{/if}</div>
@@ -488,11 +489,11 @@
           {#if inspectedRegion.cloud.parentId}<p class="region-family">Part of {regions.find(region => region.cloud.id === inspectedRegion!.cloud.parentId)?.name ?? 'a broader region'}</p>{:else if inspectedRegion.cloud.familyId}<p class="region-family">Branched from {inspectedRegion.cloud.familyName ?? regions.find(region => region.cloud.id === inspectedRegion!.cloud.familyId)?.name ?? 'a related region'}</p>{/if}
           {#if inspectedRegion.cloud.childCloudIds.length}<div class="region-children" aria-label="Subthemes">{#each inspectedRegion.cloud.childCloudIds as id}{@const child = regions.find(region => region.cloud.id === id)}{#if child}<button onclick={() => inspectRegion(id)}>{child.name}</button>{/if}{/each}</div>{/if}
           <p class="region-count">{inspectedRegion.cloud.noteCount} notes · examples from this region</p>
-          <div class="region-examples">{#each inspectedRegion.examples as node (node.id)}<button onclick={() => pin(node)}><strong>{node.title || node.fileName}</strong><span>{excerptText(node.preview).slice(0, 150)}</span></button>{/each}</div>
+          <div class="region-examples">{#each inspectedRegion.examples as node (node.id)}<button onclick={() => pin(node)}><strong>{noteFileLabel(node.title || node.fileName, node.noteId)}</strong><span>{excerptText(node.preview).slice(0, 150)}</span></button>{/each}</div>
         {:else}
           <div class="guide-heading"><strong>Regions · {regions.length}</strong></div>
           <p class="guide-help">Larger dots have stronger or more Atlas connections. Brighter dots have more recent opening activity; dimmer notes remain available to rediscover.</p>
-          <div class="region-list">{#each regions.filter(region => !region.cloud.parentId || zoom >= labelZoom) as region (region.cloud.id)}<button data-region-id={region.cloud.id} onmouseenter={() => hoveredRegionId = region.cloud.id} onmouseleave={() => hoveredRegionId = null} onfocus={() => focusedRegionId = region.cloud.id} onblur={() => focusedRegionId = null} onclick={() => inspectRegion(region.cloud.id)}><span><i style:background={region.color}></i><strong>{region.name}</strong><small>{region.cloud.noteCount}</small></span><p>{region.examples.slice(0, 2).map((node) => node.title || node.fileName).join(' · ') || 'No example notes available.'}</p></button>{/each}</div>
+          <div class="region-list">{#each regions.filter(region => !region.cloud.parentId || zoom >= labelZoom) as region (region.cloud.id)}<button data-region-id={region.cloud.id} onmouseenter={() => hoveredRegionId = region.cloud.id} onmouseleave={() => hoveredRegionId = null} onfocus={() => focusedRegionId = region.cloud.id} onblur={() => focusedRegionId = null} onclick={() => inspectRegion(region.cloud.id)}><span><i style:background={region.color}></i><strong>{region.name}</strong><small>{region.cloud.noteCount}</small></span><p>{region.examples.slice(0, 2).map((node) => noteFileLabel(node.title || node.fileName, node.noteId)).join(' · ') || 'No example notes available.'}</p></button>{/each}</div>
         {/if}
       </section>{/key}
     {/if}

@@ -1,4 +1,5 @@
 import { DocumentBody } from './documentBody';
+import { titleFromFirstLine } from '../model/document';
 import {
   getDocumentNoteId,
   getDocumentPath,
@@ -561,6 +562,13 @@ export function createDocumentEditingService<TPaneId extends string>(
     return updateDocumentTitle(document, title);
   }
 
+  function finalizeTitleOnDeparture(document: NoteDraftState): boolean {
+    if (documentHasUnresolvedConflict(document) || getDocumentTitle(document).trim() ||
+      (!document.working.body.hasContent() && !document.working.tags?.length && !getDocumentPath(document))) return false;
+    assertDocumentMutationAdmitted(document);
+    return updateTitle(document, titleFromFirstLine(document.working.body.toMarkdown()));
+  }
+
   return {
     withAgentPublication,
     withAgentPublicationReconciliation,
@@ -576,6 +584,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     recordUserEdit,
     replaceMarkdown,
     updateTitle,
+    finalizeTitleOnDeparture,
     updateTags
   };
 }

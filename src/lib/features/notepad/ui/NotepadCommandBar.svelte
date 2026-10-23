@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { noteFileLabel } from '#lib/noteLabels.js';
   import RelatedResults from '../related/RelatedResults.svelte';
   import WorkspaceInputDock from './WorkspaceInputDock.svelte';
   import SearchResultsPanel from '#lib/ui/search/SearchResultsPanel.svelte';
@@ -858,7 +859,7 @@
                   <div class={getRecentNotesViewportClass()}>
                     {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
                       <div class="group flex items-center gap-1">
-                        <SearchNoteResult title={item.fileName} label={`Open pinned note: ${item.fileName}`}
+                        <SearchNoteResult title={noteFileLabel(item.fileName, item.noteId)} label={`Open pinned note: ${noteFileLabel(item.fileName, item.noteId)}`}
                           onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'pinned', item }) : undefined}
                           active={index === commandBarState.activeIndex} resultIndex={index}
                           onFocus={() => commandBarState.handleSearchItemFocus(index)}
@@ -869,8 +870,8 @@
                         <button
                           type="button"
                           class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-70 transition hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-                          aria-label={`Unpin ${item.fileName}`}
-                          title={`Unpin ${item.fileName}`}
+                          aria-label={`Unpin ${noteFileLabel(item.fileName, item.noteId)}`}
+                          title={`Unpin ${noteFileLabel(item.fileName, item.noteId)}`}
                           data-search-focus-independent
                           onmousedown={(event) => event.preventDefault()}
                           onclick={() => item.noteId && void onSetNotePinned(item.noteId, false)}
@@ -889,7 +890,7 @@
                   <div class={getRecentNotesViewportClass()}>
                     {#each lastEditedNotes as item, index (`edited-${item.noteId ?? item.notePath}-${index}`)}
                       {@const globalIndex = pinnedNotes.length + index}
-                      <SearchNoteResult title={item.fileName} label={`Open last edited note: ${item.fileName}`}
+                      <SearchNoteResult title={noteFileLabel(item.fileName, item.noteId)} label={`Open last edited note: ${noteFileLabel(item.fileName, item.noteId)}`}
                         onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'search', item }) : undefined}
                         active={globalIndex === commandBarState.activeIndex} resultIndex={globalIndex}
                         onFocus={() => commandBarState.handleSearchItemFocus(globalIndex)}
@@ -937,8 +938,8 @@
                   data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
                   class={getSearchResultItemClass(searchMode)}
                   class:bg-accent={index === commandBarState.activeIndex}
-                  aria-label={`Open search result: ${searchMode !== 'current' ? item.fileName : item.sectionLabel}`}
-                  title={searchMode !== 'current' ? item.fileName : item.sectionLabel}
+                  aria-label={`Open search result: ${searchMode !== 'current' ? noteFileLabel(item.fileName, item.noteId) : item.sectionLabel}`}
+                  title={searchMode !== 'current' ? noteFileLabel(item.fileName, item.noteId) : item.sectionLabel}
                   onmousedown={(event) => event.preventDefault()}
                   onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
                   onfocus={() => commandBarState.handleSearchItemFocus(index)}
@@ -961,7 +962,7 @@
                     <div class={getSearchResultHeaderClass()}>
                       <div class="min-w-0 flex-1">
                         <span class={getSearchResultTitleClass()}>
-                          {item.fileName}
+                          {noteFileLabel(item.fileName, item.noteId)}
                         </span>
                         {#if item.reasonLabels && item.reasonLabels.length > 0}
                           <div class="mt-1 flex flex-wrap gap-1.5">
@@ -991,7 +992,7 @@
                   {/if}
                 </button>
                 {#if search.onOpenInSplit && hasSplitNoteDestination(item)}
-                  <SplitSearchResultAction title={item.fileName} onFocus={() => commandBarState.handleSearchItemFocus(index)} onSelect={() => commandBarState.openItemInSplit({ kind: 'search', item })} />
+                  <SplitSearchResultAction title={noteFileLabel(item.fileName, item.noteId)} onFocus={() => commandBarState.handleSearchItemFocus(index)} onSelect={() => commandBarState.openItemInSplit({ kind: 'search', item })} />
                 {/if}
                 </div>
                 {/if}

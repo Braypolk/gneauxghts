@@ -115,7 +115,7 @@ describe('curated native provider connection failures', function () {
     mode = 'success';
   });
 
-  it('names an ordinary capture from its first line without requesting an AI title', async () => {
+  it('saves an untitled capture, then names it on departure', async () => {
     await activatePiEditor();
     await $('button[aria-label="New Idea. Start a blank note in this pane."]').click();
     const before = requests;
@@ -127,12 +127,17 @@ describe('curated native provider connection failures', function () {
       return document.execCommand('insertText', false, 'Garden capture without AI\n\nCollect rainwater for the tomatoes and watch the seedlings grow each morning.');
     });
     assert(inserted);
-    await expect($('[data-testid="note-title"]')).toHaveValue('Garden capture without AI', { wait: 30_000 });
-    await expect($('[data-testid="title-suggestion"]')).not.toExist();
+    await browser.waitUntil(async () => browser.execute(() => Boolean((window as unknown as { __GNEAUXGHTS_NATIVE_E2E__: { readEditorState(): { noteId: string | null } } }).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().noteId)), { timeout: 30_000 });
+    await expect($('[data-testid="note-title"]')).toHaveValue('');
     const noteId = await browser.execute(() => (window as unknown as { __GNEAUXGHTS_NATIVE_E2E__: { readEditorState(): { noteId: string } } }).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().noteId);
     const saved = await invokeNative<{ title: string; markdown: string; path: string }>('read_note', { noteId, path: null });
-    assert.equal(saved.title, 'Garden capture without AI');
-    assert(saved.path.endsWith('Garden capture without AI.md'));
+    assert.equal(saved.title, '');
+    assert(saved.path.endsWith(`Untitled Note ${noteId}.md`));
+    await $('button[aria-label="New Idea. Start a blank note in this pane."]').click();
+    const named = await invokeNative<{ title: string; markdown: string; path: string }>('read_note', { noteId, path: null });
+    assert.equal(named.title, 'Garden capture without AI');
+    assert(named.path.endsWith('Garden capture without AI.md'));
+    assert.equal(named.markdown, saved.markdown);
     assert(saved.markdown.includes('Collect rainwater'));
     assert.equal(requests, before, 'Capture must not contact the provider');
   });

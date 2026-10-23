@@ -64,6 +64,19 @@ function existingBackup(overrides: Partial<DraftBackup> = {}): DraftBackup {
 }
 
 describe('documentEditingService', () => {
+  it('names only nonempty untitled documents on departure without altering body or explicit titles', () => {
+    const f = createHarness();
+    expect(f.service.finalizeTitleOnDeparture(f.note)).toBe(false);
+    const body = '---\ntags: garden\n---\n\n# Collect rainwater for the tomatoes while we travel next summer\n\nDetails stay here.';
+    updateDocumentMarkdown(f.note, body);
+    expect(f.service.finalizeTitleOnDeparture(f.note)).toBe(true);
+    expect(f.note.working.title).toBe('Collect rainwater for the tomatoes while we travel');
+    expect(f.note.working.body.toMarkdown()).toBe(body);
+    f.service.updateTitle(f.note, 'My own title');
+    expect(f.service.finalizeTitleOnDeparture(f.note)).toBe(false);
+    expect(f.note.working.title).toBe('My own title');
+  });
+
   it('restores a never-saved idea into an empty draft through ordinary editor ownership', () => {
     const harness = createHarness();
     harness.service.restoreRecoveryDraft(harness.note, recoveryBackup());
