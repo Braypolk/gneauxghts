@@ -24,6 +24,7 @@ export interface SettingsSearchEntry {
 }
 
 export const settingsSearchEntries: SettingsSearchEntry[] = [
+  { id: 'app-logo', category: 'appearance', title: 'App logo', description: 'Choose Light, Dark, or Auto to follow your system appearance.', keywords: 'icon dock branding application', anchor: 'app-logo' },
   { id: 'diff-layout', category: 'appearance', title: 'Chat edit diffs', description: 'Review edits inline or compare Before and After side by side.', keywords: 'diff layout comparison changes review inline side by side', anchor: 'diff-layout' },
   { id: 'theme', category: 'appearance', title: 'Theme', description: 'Choose Light, Dark, or Auto to follow your system.', keywords: 'color colour mode display night', anchor: 'theme' },
   { id: 'text-size', category: 'appearance', title: 'Editor text size', description: 'Adjust text size, custom body text, and heading scale with a live preview.', keywords: 'font typography zoom large small medium reading', anchor: 'text-size' },

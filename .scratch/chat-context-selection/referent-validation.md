@@ -106,9 +106,8 @@ no actionable findings remain in this phase's reviewed scope.
 [Recorded usage](referent-usage-summary.json) includes **all eight paid attempts**:
 36 delivered answers, 94 recorded chat model calls, 291,911 input tokens (including
 221,332 cached input tokens), and 5,724 output tokens. These are cumulative
-per-answer aggregates counted once, not sums of cumulative usage events. Separate
-automatic conversation-title calls discard their usage events and are excluded;
-these figures therefore are not total provider spend. No general savings or
+per-answer aggregates counted once, not sums of cumulative usage events. These figures cover only instrumented chat calls and therefore are not total
+provider spend. No general savings or
 provider-cost estimate is inferred from this small changing sample.
 
 The [phase patch](referent-phase.patch) is relative to exact pre-phase snapshots

@@ -164,6 +164,15 @@ The ownership map, canonical write paths, and runtime seams are documented in
 [ARCHITECTURE.md](ARCHITECTURE.md). The Pi runtime ownership decision is recorded in
 [ADR 0012](docs/adr/0012-found-ordinary-chat-on-pi.md).
 
+### App icons
+
+The original artwork lives in `static/logo-light.svg` and `static/logo-dark.svg`.
+Run `pnpm icons:generate` with ImageMagick (`magick`) installed to regenerate native
+icons and the iOS asset catalog. Settings → Appearance → App logo offers Auto,
+Light, and Dark independently of the interface theme. Auto is the default and
+follows the system appearance. The running desktop icon and browser favicon use
+this choice; iOS Home Screen appearance is managed by the system asset catalog.
+
 ### Animation iteration
 
 Run `pnpm animation:lab` and open <http://127.0.0.1:1423/__animation-lab/> for

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { noteFileLabel } from '#lib/noteLabels.js';
   import RelatedResults from '../related/RelatedResults.svelte';
+  import type { RelatedView } from '../related/store.svelte';
   import WorkspaceInputDock from './WorkspaceInputDock.svelte';
   import SearchResultsPanel from '#lib/ui/search/SearchResultsPanel.svelte';
   import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
@@ -73,6 +74,22 @@
 
   const relatedPopupId = $props.id();
   let relatedMode = $state(false);
+  let relatedView = $state<RelatedView>('related');
+  let relatedControls = $state<HTMLDivElement | null>(null);
+  function selectRelatedView(view: RelatedView) {
+    if (view === relatedView) return;
+    relatedView = view;
+    relatedIndex = 0;
+    related?.onOpen(view);
+  }
+  function handleRelatedViewKeydown(event: KeyboardEvent) {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault(); event.stopPropagation();
+      selectRelatedView(event.key === 'ArrowLeft' ? 'related' : 'backlinks');
+      void tick().then(() => relatedControls?.querySelector<HTMLButtonElement>(`[data-related-view="${relatedView}"]`)?.focus());
+    }
+  }
   let panelOpen = $state(false);
   let relatedIndex = $state(0);
   let relatedHeader = $state<HTMLButtonElement | null>(null);
@@ -91,7 +108,7 @@
     openedRelatedKey = related.contextKey;
     relatedMode = true;
     relatedIndex = 0;
-    related.onOpen();
+    related.onOpen(relatedView);
     searchBar?.openPanel();
     void tick().then(() => relatedHeader?.focus({ preventScroll: true }));
   }
@@ -99,6 +116,16 @@
     const key = related?.contextKey;
     if (relatedMode && key !== openedRelatedKey) closeRelated();
   });
+  function handleWindowKeydown(event: KeyboardEvent) {
+    // Related has no text input: Select All must not fall through to the page.
+    if (relatedMode && (event.metaKey || event.ctrlKey)
+      && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    commandBarState.handleForgetShortcutKeyDown(event);
+  }
   function handleRelatedKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopPropagation(); closeRelated(true);
@@ -707,7 +734,7 @@
 </script>
 
 <svelte:window
-  onkeydowncapture={commandBarState.handleForgetShortcutKeyDown}
+  onkeydowncapture={handleWindowKeydown}
   onkeyupcapture={commandBarState.handleForgetShortcutKeyUp}
   onblur={commandBarState.handleForgetShortcutBlur}
 />
@@ -823,8 +850,8 @@
 
     {#snippet relatedInput()}
       <div class="related-search-heading flex w-full min-w-0 items-center" role="group" aria-label="Related note controls">
-        <button bind:this={relatedHeader} onkeydown={handleRelatedKeydown} type="button" class="min-w-0 flex-1 truncate rounded py-1.5 text-left text-base text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring min-[700px]:text-sm sm:py-2" aria-label={`Related to ${related?.title || 'this note'}`}>
-          Related to {related?.title || 'this note'}
+        <button bind:this={relatedHeader} onkeydown={handleRelatedKeydown} type="button" class="min-w-0 flex-1 truncate rounded py-1.5 text-left text-base text-foreground outline-none min-[700px]:text-sm sm:py-2" aria-label={`${relatedView === 'backlinks' ? 'Backlinks to' : 'Related to'} ${related?.title || 'this note'}`}>
+          {relatedView === 'backlinks' ? 'Backlinks to' : 'Related to'} {related?.title || 'this note'}
         </button>
       </div>
     {/snippet}
@@ -832,8 +859,20 @@
     {#snippet searchPanel()}
         <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode} busy={presentationPending && !relatedMode} onkeydown={handleSearchResultsKeydown}>
           {#if relatedMode}
-            <div id={relatedPopupId} class="max-h-80 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label="Related notes">
-              <RelatedResults result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()}
+            <div id={relatedPopupId} class="min-h-0 flex-1 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label={relatedView === 'backlinks' ? 'Backlinks' : 'Related notes'}>
+              <div class="flex justify-center px-3 pb-1 pt-2">
+                <div bind:this={relatedControls} class="inline-flex gap-1 rounded-full border border-border/80 bg-muted/40 p-1" role="group" aria-label="Note connections">
+                  {#each [{ id: 'related', label: 'Related' }, { id: 'backlinks', label: 'Backlinks' }] as choice}
+                    <button type="button" aria-pressed={relatedView === choice.id}
+                      data-related-view={choice.id} data-search-focus-independent
+                      onkeydown={handleRelatedViewKeydown}
+                      class={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${relatedView === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                      onmousedown={(event) => event.preventDefault()}
+                      onclick={() => selectRelatedView(choice.id as RelatedView)}>{choice.label}</button>
+                  {/each}
+                </div>
+              </div>
+              <RelatedResults view={relatedView} result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()}
                 onOpenInSplit={related?.onOpenInSplit ? (item) => chooseSplit(() => related?.onOpenInSplit?.(item)) : undefined} />
             </div>
           {:else}

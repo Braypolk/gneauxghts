@@ -1,7 +1,7 @@
 {
   "method": "Final cumulative aggregate per recorded answer; never sum cumulative usage snapshots. Cache tokens are a subset of input. Context byte counts are pre-provider assembly measurements, not token counts.",
   "limitations": [
-    "Recorded chat usage excludes separate automatic title-generation calls, whose observer discards usage events. This is not total provider spend.",
+    "Recorded chat usage covers only the instrumented chat calls. This is not total provider spend.",
     "Variants and stochastic runs differ; no general savings or reliability rate is inferred.",
     "All unsuccessful paid attempts are retained. No dollar estimate is made."
   ],

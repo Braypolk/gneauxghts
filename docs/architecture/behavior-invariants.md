@@ -1087,9 +1087,22 @@ pose with proportional remaining travel; simultaneous pane changes retain their
 coordinated clock. The Related glyph remains visible throughout that exchange.
 Outgoing Search scope labels retain their layout until their fade completes.
 Search and Related share the popup shell, heading and note-row components;
-Related supplies its heading, notes and extra row detail. Its heading is Related.
-The popup begins revealing while the bar expands, and switching an already-open
-Search/Related popup replaces its content without remounting the panel.
+Related supplies its heading, notes and extra row detail. A Related / Backlinks
+switch uses the same segmented control as Recent / Last edited. Backlinks lists
+one row per other saved, eligible note linking to the current saved note, with
+its first linking line as a passage preview. Wikilinks match the existing title,
+filename and vault-relative path rules, including aliases and section fragments;
+relative Markdown links to `.md` files also count. Code, escaped syntax and image
+embeds do not count. Backlinks uses the ordinary note index independently of
+semantic model availability. Unsaved notes explain that saving is required;
+empty results never substitute related matches. Switching retires the previous
+view's request, resets row selection and preserves ordinary search state.
+The popup anchors to the center of the whole discovery dock and fills its
+available width up to the existing popup cap. Switching Search/Related or
+dismissing either view preserves its painted position and width while the
+controls below exchange or contract. The popup begins revealing while the bar
+expands, and switching an already-open Search/Related popup replaces its content
+without remounting the panel.
 
 Opening the popup preserves editor width, wrapping, selection and Markdown.
 Related adds no content at the end of the note. Retrieval belongs to the open

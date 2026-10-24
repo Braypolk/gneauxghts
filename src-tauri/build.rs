@@ -9,6 +9,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-env-changed=GNEAUXGHTS_LLAMA_SERVER_BIN");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=icons");
 
     if should_stage_bundled_runtime() {
         cleanup_staged_runtime_artifacts();

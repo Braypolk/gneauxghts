@@ -11,6 +11,7 @@ pub(crate) mod pi_chat_commands;
 pub(crate) mod search_commands;
 pub(crate) mod task_commands;
 pub(crate) mod wikilink_commands;
+pub(crate) mod backlink_commands;
 
 pub(crate) use note_session::{
     load_note_session_from_notes_dir_with_state, open_note_from_notes_dir_with_state,

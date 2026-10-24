@@ -1654,7 +1654,7 @@
             pendingNoteReturn: collapsingPaneId === activePaneId && retainedPaneIds.some(paneId => getPaneKind(paneId) !== 'chat'),
             title: getPaneDocumentSession(activePaneId).working.title,
             result: relatedSubscription?.result ?? null,
-            onOpen: () => { relatedSubscription?.release(); relatedSubscription = relatedState.acquire(getRelatedContext()); },
+            onOpen: (view) => { relatedSubscription?.release(); relatedSubscription = relatedState.acquire(getRelatedContext(), view); },
             onClose: () => { relatedSubscription?.release(); relatedSubscription = null; },
             onRefresh: () => { if (relatedSubscription) void relatedState.refresh(relatedSubscription.result); },
             onSelect: (item) => { void handleRelatedItemSelect(item).catch(error => console.error('Failed to open related note:', error)); },

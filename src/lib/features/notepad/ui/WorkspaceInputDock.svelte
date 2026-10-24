@@ -2,7 +2,7 @@
   import { tick, untrack, type Snippet } from 'svelte';
   import { ArrowUp, MessagesSquare, Network, Search, Square } from '@lucide/svelte';
   import MorphingContainers, { type ContainerGroupPresentation, type ContainerPresentation, type MorphingContainerItem } from '#lib/ui/morphing-containers/MorphingContainers.svelte';
-  import { containerGeometry, ramp } from '#lib/ui/morphing-containers/motion.js';
+  import { ramp } from '#lib/ui/morphing-containers/motion.js';
   import type { DockSearchPresentation, DockActionPresentation } from './workspaceDockPresentation';
   import { searchExpansionStyles } from '#lib/ui/search/searchMotion.js';
   import './workspaceDockMotion.css';
@@ -71,13 +71,11 @@
     && Math.abs(presentation.transition.origin.bodyWidth - Math.min(barWidth ?? availableBarWidth, availableBarWidth)) > 1);
   const searchWidthFraction = $derived(Math.max(0, Math.min(1,
     ((presentation?.geometry.bodyWidth ?? collapsedBarWidth) - collapsedBarWidth) / Math.max(1, expandedBarWidth - collapsedBarWidth))));
-  // Popups keep the expanded destination center even while the bar beneath
-  // them contracts or reaches the clamp imposed by neighboring actions.
-  const popupGeometry = $derived(containerGeometry(items.map(item =>
-    item.id === 'search' && target === 'search' ? { ...item, width: hasChat ? maxBodyWidth : 42 * fontSize } : item),
-    { width, circle, gap, alignment: 'body' }));
+  // The popup belongs to the whole dock, not the currently expanded input.
+  // Its center and width stay fixed while Search and Related exchange slots.
+  const popupWidth = $derived(Math.min(width, hasChat ? maxBodyWidth : 42 * fontSize));
   const styles = $derived(`${searchExpansionStyles};--dock-search-width-fraction:${searchWidthFraction}fr;--morph-bottom-inset:var(--dock-circle-inset);--dock-gap:${gap}px;
-    --dock-search-results-center:${popupGeometry.bodyX + popupGeometry.bodyWidth / 2 - (presentation?.geometry.bodyX ?? popupGeometry.bodyX)}px;--dock-search-results-width:${hasChat ? availableBarWidth + 'px' : `min(42rem, ${availableBarWidth}px)`};
+    --dock-search-results-center:${width / 2 - (presentation?.geometry.bodyX ?? 0)}px;--dock-search-results-width:${popupWidth}px;
     --dock-search-text:${presentation?.textVisible && target === 'search' ? 1 : 0};--dock-chat-text:${presentation?.textVisible && target === 'chat' ? 1 : 0};
     --search-results-anchor-height:${compactHeight}px;--dock-composer-height:${chatHeight}px;--dock-send-opacity:${hasChat ? sendOpacity : 1};--dock-chat-glyph:${1 - ramp(0.3, 0.48, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};
     --dock-send-glyph:${ramp(0.52, 0.7, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};`);

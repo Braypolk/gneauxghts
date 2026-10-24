@@ -2,8 +2,8 @@ import { DocumentBody } from '../document/documentBody';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRelatedNotesStore, type RelatedContext } from './store.svelte';
 import type { RelatedNotesResponse } from '#lib/types/semantic.js';
-const { retrieve } = vi.hoisted(() => ({ retrieve: vi.fn() }));
-vi.mock('../search/search', () => ({ getRelatedNotes: retrieve }));
+const { retrieve, backlinks } = vi.hoisted(() => ({ retrieve: vi.fn(), backlinks: vi.fn() }));
+vi.mock('../search/search', () => ({ getRelatedNotes: retrieve, getNoteBacklinks: backlinks }));
 const context: RelatedContext = { documentHandle: 'draft-a', currentPath: null, currentTitle: 'Draft', body: DocumentBody.fromMarkdown('A note about connected ideas.') };
 function response(title: string): RelatedNotesResponse {
   return { status: 'ready', reason: null, scope: 'note', items: [{ noteId: title, notePath: `/vault/${title}.md`, noteTitle: title, sectionLabel: 'Context', excerpt: 'A useful passage', matchText: 'A useful passage', score: 1, startLine: 2, endLine: 2 }] };
@@ -14,7 +14,7 @@ function deferred() {
   const promise = new Promise<RelatedNotesResponse>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
-beforeEach(() => { retrieve.mockReset().mockResolvedValue(response('Match')); });
+beforeEach(() => { retrieve.mockReset().mockResolvedValue(response('Match')); backlinks.mockReset().mockResolvedValue(response('Incoming').items); });
 describe('related retrieval lifetime', () => {
   it('does no work while hidden and coalesces two views of one draft', async () => {
     const store = createRelatedNotesStore();
@@ -91,6 +91,64 @@ describe('related retrieval lifetime', () => {
     expect(retrieve).toHaveBeenLastCalledWith(expect.objectContaining({
       currentTitle: 'Renamed', currentPath: '/vault/new.md', currentMarkdown: 'B note about connected ideas.'
     }), null, 4);
+    sub.release();
+  });
+});
+
+
+describe('backlinks retrieval', () => {
+  const saved = { ...context, currentPath: '/vault/current.md' };
+  it('loads incoming links only for the visible view and never serializes the body', async () => {
+    const store = createRelatedNotesStore();
+    const snapshot = vi.spyOn(saved.body, 'toMarkdown');
+    const sub = store.acquire(saved, 'backlinks');
+    await store.refresh(sub.result);
+    expect(backlinks).toHaveBeenCalledWith('/vault/current.md');
+    expect(retrieve).not.toHaveBeenCalled();
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(sub.result.items[0].noteTitle).toBe('Incoming');
+    sub.release(); snapshot.mockRestore();
+  });
+  it('explains unsaved and empty saved notes without falling back to related matches', async () => {
+    const store = createRelatedNotesStore();
+    const unsaved = store.acquire(context, 'backlinks');
+    await store.refresh(unsaved.result);
+    expect(backlinks).not.toHaveBeenCalled();
+    expect(unsaved.result.reason).toBe('Save this note to see backlinks.');
+    store.update(saved);
+    backlinks.mockResolvedValueOnce([]);
+    await store.refresh(unsaved.result);
+    expect(unsaved.result.items).toEqual([]);
+    expect(unsaved.result.reason).toBe('No notes link to this note yet.');
+    unsaved.release();
+  });
+  it('rejects a pending Related response after switching views and a pending backlink after closing', async () => {
+    const store = createRelatedNotesStore(), old = deferred();
+    retrieve.mockReturnValueOnce(old.promise);
+    const related = store.acquire(saved), pending = store.refresh(related.result);
+    related.release();
+    const incoming = store.acquire(saved, 'backlinks');
+    await store.refresh(incoming.result);
+    old.resolve(response('Obsolete')); await pending;
+    expect(related.result.items).toEqual([]);
+    expect(incoming.result.items[0].noteTitle).toBe('Incoming');
+    let resolve!: (items: RelatedNotesResponse['items']) => void;
+    backlinks.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const refresh = store.refresh(incoming.result);
+    incoming.release(); resolve(response('Late').items); await refresh;
+    expect(incoming.result.items[0].noteTitle).toBe('Incoming');
+  });
+  it('retains previous backlinks on failure and retries against the latest path', async () => {
+    const store = createRelatedNotesStore(), sub = store.acquire(saved, 'backlinks');
+    await store.refresh(sub.result);
+    store.update({ ...saved, currentPath: '/vault/renamed.md' });
+    backlinks.mockRejectedValueOnce(new Error('Unavailable'));
+    await store.refresh(sub.result);
+    expect(sub.result.status).toBe('unavailable');
+    expect(sub.result.items[0].noteTitle).toBe('Incoming');
+    await store.refresh(sub.result);
+    expect(backlinks).toHaveBeenLastCalledWith('/vault/renamed.md');
+    expect(sub.result.isStale).toBe(false);
     sub.release();
   });
 });

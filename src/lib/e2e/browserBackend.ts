@@ -929,6 +929,20 @@ function historicalDiff(
       else pinnedNoteIds.delete(noteId);
       return null;
     }
+    if (command === 'get_note_backlinks') {
+      const target = [...notes.values()].find(note => note.path === args.currentPath);
+      if (!target) return [];
+      return [...notes.values()].filter(note => note.path !== target.path).flatMap(note => {
+        const lines = note.markdown.split('\n');
+        const index = lines.findIndex(line => [...line.matchAll(/\[\[([^\]\n]+)\]\]/g)].some(match => {
+          const reference = match[1].split('|')[0].split('#')[0].trim().replace(/\.md$/i, '').toLowerCase();
+          return reference === target.title.toLowerCase() || reference === target.path.split('/').pop()!.replace(/\.md$/i, '').toLowerCase();
+        }));
+        return index < 0 ? [] : [{ noteId: note.noteId, notePath: note.path, noteTitle: note.title,
+          sectionLabel: `Line ${index + 1}`, excerpt: lines[index], matchText: lines[index], score: 1,
+          startLine: index + 1, endLine: index + 1, documentKind: 'note', blockAnchor: null }];
+      }).sort((a, b) => a.noteTitle.localeCompare(b.noteTitle));
+    }
     if (command === 'get_related_notes') {
       if (relatedDelayMillis) await new Promise(resolve => setTimeout(resolve, relatedDelayMillis));
       if (relatedResponse) return relatedResponse;

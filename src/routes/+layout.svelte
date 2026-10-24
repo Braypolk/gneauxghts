@@ -5,6 +5,8 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import "../app.css";
   import { initializeTheme } from '#lib/theme.svelte.js';
+  import { appLogo } from '#lib/appLogo.svelte.js';
+  import { asset } from '$app/paths';
   import '#lib/editorTextSize.svelte.js';
   import { mobileViewport } from '#lib/ui/mobileViewport.js';
   import { installBackgroundPersistence } from '#lib/app/backgroundPersistence.js';
@@ -33,6 +35,7 @@
   setWorkspaceTitleSlot(() => workspaceTitleSlot);
 
   onMount(() => {
+    const disposeLogo = appLogo.initialize();
     const disposeBackgroundPersistence = installBackgroundPersistence();
     if (isTauriRuntime() && import.meta.env.VITE_E2E_BROWSER !== 'true' && /Mac/i.test(navigator.platform)) {
       nativeWindowControlsHeight = 32;
@@ -70,6 +73,7 @@
       }).catch((error) => logDevError('[Pi simulator acceptance] probe failed', error));
     }
     return () => {
+      disposeLogo();
       disposeBackgroundPersistence();
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
@@ -79,6 +83,10 @@
     };
   });
 </script>
+
+<svelte:head>
+  <link rel="icon" type="image/svg+xml" href={asset(appLogo.resolved === 'dark' ? 'logo-dark.svg' : 'logo-light.svg')} />
+</svelte:head>
 
 <div
   use:mobileViewport

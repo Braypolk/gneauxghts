@@ -773,6 +773,7 @@ pub(crate) struct IndexedTask {
 
 #[derive(Clone)]
 pub(crate) struct IndexedNote {
+    pub(crate) links: Vec<crate::note_links::NoteLink>,
     signature: FileSignature,
     pub(crate) note_id: String,
     identity_is_stable: bool,
@@ -1385,6 +1386,7 @@ fn build_indexed_note_with_signature(
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&title, &body),
+        links: crate::note_links::parse(&body),
         tasks: build_tasks(markdown),
         file_name,
     }
@@ -1452,6 +1454,7 @@ fn build_current_override_with_signature(
         title_lower: effective_title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&effective_title, &searchable_body),
+        links: crate::note_links::parse(&searchable_body),
         tasks: build_tasks(markdown),
         file_name,
     }

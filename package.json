@@ -7,6 +7,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "icons:generate": "node scripts/generateIcons.mjs",
     "agent:serve": "node e2e/agent/serve.mjs",
     "agent:session": "pnpm --dir e2e/agent exec wdio session",
     "agent:test": "pnpm --dir e2e/agent exec wdio run ./wdio.conf.js",

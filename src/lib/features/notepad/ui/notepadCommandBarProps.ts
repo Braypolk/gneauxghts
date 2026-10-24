@@ -76,7 +76,7 @@ export interface NotepadCommandBarRelatedProps {
   pendingNoteReturn?: boolean;
   title: string;
   result: import('../related/store.svelte').RelatedResult | null;
-  onOpen: () => void;
+  onOpen: (view: import('../related/store.svelte').RelatedView) => void;
   onClose: () => void;
   onRefresh: () => void;
   onSelect: (item: import('#lib/types/semantic.js').RelatedNoteItem) => void;

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RelatedNotesResponse, SearchItem } from '#lib/types/semantic.js';
+import type { RelatedNoteItem, RelatedNotesResponse, SearchItem } from '#lib/types/semantic.js';
 import type {
   RetrievalContextResponse,
   RetrievalContextScope
@@ -87,6 +87,10 @@ export async function listRecentFocus(context: Pick<SearchContext, 'currentPath'
     limit: RECENT_ITEMS_LIMIT,
     currentPath: context.currentPath
   });
+}
+
+export async function getNoteBacklinks(currentPath: string) {
+  return invoke<RelatedNoteItem[]>('get_note_backlinks', { currentPath });
 }
 
 export async function getRelatedNotes(

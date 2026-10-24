@@ -7,6 +7,7 @@
   import SemanticSettingsPanel from '#lib/features/settings/SemanticSettingsPanel.svelte';
   import ChatSettingsPanel from '#lib/features/settings/ChatSettingsPanel.svelte';
   import EditorTextSizePanel from '#lib/features/settings/EditorTextSizePanel.svelte';
+  import AppLogoPanel from '#lib/features/settings/AppLogoPanel.svelte';
   import EditDiffLayoutPanel from '#lib/features/settings/EditDiffLayoutPanel.svelte';
   import HistorySettingsPanel from '#lib/features/settings/HistorySettingsPanel.svelte';
   import SettingsCard from '#lib/features/settings/SettingsCard.svelte';
@@ -247,6 +248,7 @@
                   </fieldset>
                 </div>
 
+                <AppLogoPanel />
                 <EditorTextSizePanel />
                 <EditDiffLayoutPanel />
               </div>

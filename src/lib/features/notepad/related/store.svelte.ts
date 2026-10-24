@@ -1,7 +1,10 @@
 import { SvelteMap } from 'svelte/reactivity';
-import { getRelatedNotes } from '../search/search';
+import { getRelatedNotes, getNoteBacklinks } from '../search/search';
 import type { DocumentBody } from '../document/documentBody';
 import type { RelatedNoteItem, RelatedNotesResponse } from '#lib/types/semantic.js';
+
+export type RelatedView = 'related' | 'backlinks';
+const entryKey = (handle: string, view: RelatedView) => `${handle}:${view}`;
 
 export interface RelatedContext {
   documentHandle: string;
@@ -23,7 +26,7 @@ export class RelatedResult {
   epoch = 0;
   context: RelatedContext;
   pending: Promise<void> | null = null;
-  constructor(context: RelatedContext) { this.context = { ...context }; }
+  constructor(context: RelatedContext, readonly view: RelatedView = 'related') { this.context = { ...context }; }
 }
 
 /** Related data only. Popup presentation stays local to the command bar; subscribers
@@ -33,17 +36,19 @@ export class RelatedNotesStore {
   #disposed = false;
 
   update(context: RelatedContext) {
-    const entry = this.#entries.get(context.documentHandle);
-    if (!entry || sameInput(entry.context, context)) return;
-    entry.context = { ...context };
-    this.#invalidate(entry);
+    for (const entry of this.#entries.values()) {
+      if (entry.context.documentHandle !== context.documentHandle || sameInput(entry.context, context)) continue;
+      entry.context = { ...context };
+      this.#invalidate(entry);
+    }
   }
 
-  acquire(context: RelatedContext) {
-    let entry = this.#entries.get(context.documentHandle);
+  acquire(context: RelatedContext, view: RelatedView = 'related') {
+    const key = entryKey(context.documentHandle, view);
+    let entry = this.#entries.get(key);
     if (!entry) {
-      entry = new RelatedResult(context);
-      this.#entries.set(context.documentHandle, entry);
+      entry = new RelatedResult(context, view);
+      this.#entries.set(key, entry);
     } else this.update(context);
     const first = entry.consumers++ === 0;
     if (first) void this.refresh(entry);
@@ -56,7 +61,7 @@ export class RelatedNotesStore {
         entry.isLoading = false;
         entry.pending = null;
         // No hidden cache can keep retired document lifetimes alive.
-        this.#entries.delete(context.documentHandle);
+        this.#entries.delete(key);
       }
     } };
   }
@@ -89,8 +94,11 @@ export class RelatedNotesStore {
     const current = () => !this.#disposed && entry.consumers > 0 && entry.epoch === epoch;
     const request = (async () => {
       try {
-        const response = await getRelatedNotes({ currentPath: context.currentPath, currentTitle: context.currentTitle,
-          currentMarkdown: context.body.toMarkdown() }, null, 4);
+        const response: RelatedNotesResponse = entry.view === 'backlinks'
+          ? { status: 'ready', scope: 'note', reason: context.currentPath ? 'No notes link to this note yet.' : 'Save this note to see backlinks.',
+              items: await (context.currentPath ? getNoteBacklinks(context.currentPath) : Promise.resolve([])) }
+          : await getRelatedNotes({ currentPath: context.currentPath, currentTitle: context.currentTitle,
+              currentMarkdown: context.body.toMarkdown() }, null, 4);
         if (!current()) return;
         if (response.status !== 'unavailable') entry.items = response.items;
         entry.status = response.status;
@@ -99,7 +107,7 @@ export class RelatedNotesStore {
       } catch {
         if (!current()) return;
         entry.status = 'unavailable';
-        entry.reason = 'Related notes are unavailable right now.';
+        entry.reason = entry.view === 'backlinks' ? 'Backlinks are unavailable right now.' : 'Related notes are unavailable right now.';
       } finally {
         if (current()) { entry.isLoading = false; entry.pending = null; }
       }

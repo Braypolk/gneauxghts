@@ -1,4 +1,5 @@
 mod app;
+mod app_logo;
 mod asset_paths;
 mod chat_domain;
 mod chatgpt_auth;
@@ -8,6 +9,7 @@ mod e2e_process_fault;
 mod index;
 mod lexical;
 mod note;
+mod note_links;
 mod path_utils;
 mod pi_chat;
 mod provider_config;
@@ -195,6 +197,7 @@ pub fn run() {
 
     let app = builder
         .setup(move |app| {
+            app_logo::initialize(app.handle())?;
             #[cfg(feature = "e2e-wdio")]
             if !e2e_background() {
                 app.add_capability(
@@ -372,6 +375,8 @@ pub fn run() {
             commands::history_commands::delete_missing_notes,
             commands::retry_history_recovery,
             commands::reset_corrupt_history,
+            app_logo::get_system_logo_theme,
+            app_logo::set_app_logo,
             commands::asset_commands::read_image_asset_data_url,
             commands::asset_commands::resolve_image_asset_url,
             commands::asset_commands::read_image_asset_fingerprint,
@@ -381,6 +386,7 @@ pub fn run() {
             commands::prepare_restart,
             commands::wikilink_commands::resolve_note_link,
             commands::wikilink_commands::autocomplete_note_links,
+            commands::backlink_commands::get_note_backlinks,
             commands::save_note,
             commands::save_task_note,
             commands::mark_note_opened,

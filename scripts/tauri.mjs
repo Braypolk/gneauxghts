@@ -170,7 +170,7 @@ function syncIosAppIcons(cliArgs) {
   }
 
   for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".png")) {
+    if (!entry.isFile() || (!entry.name.endsWith(".png") && entry.name !== "Contents.json")) {
       continue;
     }
 
