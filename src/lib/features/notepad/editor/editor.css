@@ -76,12 +76,25 @@
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-quote-line {
+  position: relative;
   margin: 0;
   padding-top: 0.65rem;
   padding-bottom: 0.65rem;
   padding-left: 1rem;
-  border-left: 3px solid var(--gn-markdown-quote-border);
   color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
+}
+
+/* The row includes the move-block lane. Paint the quote rule at the prose
+   inset so it sits between the block extent indicator and the quoted text. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-quote-line::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--gn-editor-side-inset-left);
+  width: 3px;
+  background: var(--gn-markdown-quote-border);
+  pointer-events: none;
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-inline {
