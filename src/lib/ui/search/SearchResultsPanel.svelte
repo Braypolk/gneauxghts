@@ -2,7 +2,16 @@
   import type { Snippet } from 'svelte';
   import { searchResultsReveal } from './searchResultsReveal';
 
-  let { children, navigationMode, onkeydown }: { children: Snippet; navigationMode: string; onkeydown?: (event: KeyboardEvent) => void } = $props();
+  let { children, navigationMode, busy = false, onkeydown }: { children: Snippet; navigationMode: string; busy?: boolean; onkeydown?: (event: KeyboardEvent) => void } = $props();
+
+  function preserveFocus(event: MouseEvent) {
+    // Padding, headings and empty states belong to the popup too. Let its
+    // controls manage their own focus, but don't blur search on background hits.
+    if (event.target instanceof Element
+      && !event.target.closest('button, a[href], input, select, textarea, [contenteditable="true"]')) {
+      event.preventDefault();
+    }
+  }
 </script>
 
 <!-- Arrow keys are delegated from the focusable result buttons within this group. -->
@@ -12,6 +21,8 @@
   data-search-navigation-mode={navigationMode}
   role="group"
   aria-label="Note discovery results"
+  aria-busy={busy}
+  onmousedown={preserveFocus}
   {onkeydown}
   transition:searchResultsReveal|global
 >
@@ -26,7 +37,10 @@
     left: var(--dock-search-results-center, 50%);
     right: auto;
     transform: translateX(-50%);
-    max-height: max(5rem, calc(100dvh - var(--search-results-anchor-height, 3.25rem) - 8rem - var(--keyboard-inset-height, 0px)));
+    --search-results-max-height: max(5rem, calc(100dvh - var(--search-results-anchor-height, 3.25rem) - 8rem - var(--keyboard-inset-height, 0px)));
+    height: min(26rem, var(--search-results-max-height));
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     overscroll-behavior: contain;
     background: var(--search-scope-results-bg, var(--popover));

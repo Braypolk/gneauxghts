@@ -165,6 +165,8 @@ Previous-note navigation restores keyboard editing at the pane's saved cursor.
 The outgoing document releases native editing focus before its mounted editor
 is hidden and rebound; destination focus follows completed presentation and
 still yields to newer user interaction.
+Startup's default editor focus also yields to interaction that occurs while the
+session is loading, so finishing restoration cannot dismiss an open search popup.
 
 Committed selections in the shared discovery popup (Search, Related, pinned
 notes, images and Recent) open in the active pane, replacing its chat view when
@@ -747,6 +749,15 @@ transcript-specific write restriction participates.
 Optional result-type and edited-time cues constrain admission before ranking and
 limits. They remain reversible retrieval controls; writing needs no classification.
 Date/type changes supersede old requests and participate in cache compatibility.
+The search popup retains its displayed list across query edits and filter changes.
+That presentation snapshot stays inert and cannot supply click, keyboard or split
+navigation. Replacements appear after 250 ms of quiet input and both retrieval
+channels settle; canonical note/image results publish together. No skeleton or
+visible loading label interrupts the list. A failed replacement keeps the preview
+with Retry unless a successful channel supplies usable replacement results.
+Clear, scope/image-source changes and dismissal retire the preview and its timer.
+The popup has a fixed height bounded by available viewport space, with results
+scrolling beneath the filter controls.
 Current-note passage search retains occurrence navigation and opening behavior.
 Atlas ranked results and highlights use the same admitted scores and cannot
 reorganize accepted geography.

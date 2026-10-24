@@ -31,6 +31,7 @@ beforeEach(() => {
   mocks.noteTarget.mockReturnValue(null);
   mocks.taskTarget.mockReturnValue(null);
   vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1; });
+  vi.stubGlobal('window', new EventTarget());
 });
 afterEach(() => vi.unstubAllGlobals());
 it('ignores late bootstrap after unmount and allows only the new mount to apply and subscribe', async () => {
@@ -84,4 +85,19 @@ it.each(['ensurePaneEditors', 'refreshCurrentNote', 'openNote'] as const)('does 
   expect(d.focusNavigationPane).not.toHaveBeenCalled(); expect(mocks.subscribe).not.toHaveBeenCalled();
   if (stage === 'ensurePaneEditors') expect(d.refreshCurrentNote).not.toHaveBeenCalled();
   if (stage === 'openNote') expect(d.navigateToTaskTarget).not.toHaveBeenCalled();
+});
+
+it.each(['ensurePaneEditors', 'refreshCurrentNote'] as const)('keeps newer search interaction focused when startup awaits %s', async stage => {
+  const pending = deferred<void>();
+  const entered = deferred<void>();
+  const d = deps();
+  vi.mocked(d[stage]).mockImplementation(() => { entered.resolve(); return pending.promise; });
+  const unmount = createNotepadSessionLifecycle(d).mount();
+  await entered.promise;
+  window.dispatchEvent(new Event('input'));
+  pending.resolve();
+  await unmount.ready;
+  expect(d.focusNavigationPane).not.toHaveBeenCalled();
+  expect(mocks.subscribe).toHaveBeenCalledOnce();
+  unmount();
 });

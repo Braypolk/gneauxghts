@@ -195,8 +195,27 @@
     if (nextTarget instanceof Node && (focusBoundary ?? shellEl)?.contains(nextTarget)) {
       return;
     }
-    closeSearch();
+    // Removing a focused result/control can emit blur during Svelte's render.
+    // Reconcile after that render, when focus handoffs have also completed.
+    const previousTarget = event.target;
+    queueMicrotask(() => {
+      if (!isOpen || (focusBoundary ?? shellEl)?.contains(document.activeElement)) return;
+      if (previousTarget instanceof Element && !previousTarget.isConnected
+        && previousTarget.hasAttribute('data-search-focus-independent')) {
+        inputEl?.focus({ preventScroll: true });
+        return;
+      }
+      closeSearch();
+    });
   }
+
+  $effect(() => {
+    // The dock renders results beside the input shell. Listen across the
+    // whole boundary so keyboard focus can leave a popup control normally.
+    const boundary = focusBoundary ?? shellEl;
+    boundary?.addEventListener('focusout', handleFocusOut);
+    return () => boundary?.removeEventListener('focusout', handleFocusOut);
+  });
 
   function handleInputKeydown(event: KeyboardEvent) {
     onInputKeydown?.(event);
@@ -282,7 +301,6 @@
   data-search-active={visuallyOpen ? 'true' : 'false'}
   data-search-open={isOpen ? 'true' : 'false'}
   onfocusin={handleFocusIn}
-  onfocusout={handleFocusOut}
   role="search"
   onpaste={(event) => {
     const file = Array.from(event.clipboardData?.files ?? []).find(file => file.type.startsWith('image/'));
@@ -304,6 +322,9 @@
         bind:this={inputEl}
         type="text"
         autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck={false}
         inputmode="search"
         enterkeyhint="search"
         class="shared-search-bar-input w-full bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground min-[700px]:text-sm sm:py-2"

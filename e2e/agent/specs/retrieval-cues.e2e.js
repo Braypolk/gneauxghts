@@ -10,7 +10,7 @@ describe('optional retrieval cues', () => {
     await browser.url('/');
     await expect($('[data-testid="note-title"]')).toHaveValue('Alpha note');
     await $('[data-testid="note-search-input"]').setValue('Beta');
-    await expect($('button[aria-label="Open search result: Beta note.md"]')).toBeDisplayed();
+    await expect($('button[aria-label="Open search result: beta.md"]')).toBeDisplayed();
   });
 
   afterEach(async () => {
@@ -37,7 +37,7 @@ describe('optional retrieval cues', () => {
       .invocations.filter(item => item.command === 'search_media').length);
     await $('[data-search-result-type="notes"]').click();
     await expect($('[data-search-result-type="notes"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect($('button[aria-label="Open search result: Beta note.md"]')).toBeDisplayed();
+    await expect($('button[aria-label="Open search result: beta.md"]')).toBeDisplayed();
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__.snapshot()
       .invocations.filter(item => item.command === 'search_media').length)).toBe(mediaCallsBefore);
     await $('[data-search-edited-window="7d"]').click();
@@ -53,7 +53,7 @@ describe('optional retrieval cues', () => {
     expect(media.args).toMatchObject({ includePassages: false, modifiedSinceMillis: notes.args.modifiedSinceMillis });
     await $('[data-search-result-type="all"]').click();
     await expect($('button[aria-label="Open idea.png in Beta note"]')).toBeDisplayed();
-    await expect($('button[aria-label="Open search result: Beta note.md"]')).toBeDisplayed();
+    await expect($('button[aria-label="Open search result: beta.md"]')).toBeDisplayed();
   });
 
   it('preserves a time cue through failure and Retry, then resets to any time', async () => {
@@ -65,11 +65,13 @@ describe('optional retrieval cues', () => {
     await $('[data-search-edited-window="30d"]').click();
     await expect($('.search-results-panel')).toHaveText(expect.stringContaining('Could not search notes. Try again.'));
     await expect($('[data-search-edited-window="30d"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect($$('button[aria-label^="Open search result:"]')).toBeElementsArrayOfSize(0);
+    await expect($('button[aria-label="Open search result: beta.md"]')).toBeDisplayed();
+    await expect($('[data-search-retained="true"]')).toHaveAttribute('inert');
     const failed = await lastCommand('search_notes_hybrid');
     await browser.execute(() => { delete window.__GNEAUXGHTS_E2E_COMMANDS__.search_notes_hybrid; });
     await $('button=Retry').click();
-    await expect($('button[aria-label="Open search result: Beta note.md"]')).toBeDisplayed();
+    await expect($('[data-search-retained="true"]')).not.toExist();
+    await expect($('button[aria-label="Open search result: beta.md"]')).toBeDisplayed();
     const retried = await lastCommand('search_notes_hybrid');
     expect(retried.args.modifiedSinceMillis).toBe(failed.args.modifiedSinceMillis);
     await $('[data-search-edited-window="any"]').click();
@@ -124,7 +126,7 @@ describe('optional retrieval cues', () => {
     await expect($('[data-testid="note-search-input"]')).toBeFocused();
     await expect($('button[data-browse-mode="recent"]')).toBeDisplayed();
     await $('button[data-browse-mode="edited"]').click();
-    await expect($('button[aria-label="Open last edited note: Beta note.md"]')).toBeDisplayed();
+    await expect($('button[aria-label="Open last edited note: beta.md"]')).toBeDisplayed();
     await $('[data-testid="note-search-input"]').click();
     await browser.keys('Escape');
     await expect($('.search-results-panel')).not.toBeDisplayed();

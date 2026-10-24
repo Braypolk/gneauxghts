@@ -69,6 +69,13 @@ Compact header controls retain their geometry across split membership changes;
 the global compact tab selector participates in that same pane presentation
 coordinator. Search content height is separate from the dock's circular action
 size, so wrapping controls cannot change the circle exchange endpoints.
+`NotepadCommandBar` owns a read-only result preview within that fixed-height
+popup. Query edits and filter changes retain it until input has been quiet for
+250 ms and replacement retrieval has settled. `NotepadSearchStore` owns request
+admission and compatible results, publishing note and image channels together.
+The preview cannot navigate and retires on clear, scope/image-source changes or
+dismissal. Failed replacements retain it with Retry unless a successful channel
+supplies usable replacement results.
 
 `NotepadState` owns documents and its one vault-scoped canonical identity/path
 to handle lookup, while `WorkspaceStore` owns ephemeral handle references from

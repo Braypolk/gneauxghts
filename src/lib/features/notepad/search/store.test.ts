@@ -178,6 +178,26 @@ describe('NotepadSearchStore', () => {
     expect(store.imageResults).toEqual([image]);
   });
 
+  it('publishes note and image replacements together after both channels settle', async () => {
+    const notes = deferred<SearchItem[]>();
+    const media = deferred<unknown[]>();
+    searchNotesMock.mockReturnValue(notes.promise);
+    invokeMock.mockReturnValue(media.promise);
+    const store = createStore();
+    const search = store.runSearch('diagram');
+    notes.resolve([result('Ready note')]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.isSearching).toBe(true);
+    expect(store.searchResults).toEqual([]);
+    expect(store.imageResults).toEqual([]);
+    const image = { kind: 'image', assetName: 'ready.png' };
+    media.resolve([image]);
+    await search;
+    expect(store.searchResults).toEqual([result('Ready note')]);
+    expect(store.imageResults).toEqual([image]);
+    expect(store.isSearching).toBe(false);
+  });
+
   it('keeps image-only search pending until image work settles', async () => {
     const media = deferred<unknown[]>();
     invokeMock.mockReturnValue(media.promise);

@@ -7,6 +7,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [Search filter native correction and result presentation](archive/search-filter-native-correction-2026-10-23.md): search preserves literal input after the trusted macOS click reproduction. The fixed-height popup retains results through typing and filters, then replaces them after a quiet period and complete retrieval; skeletons are removed. Records native and browser verification boundaries.
+
 - [Recovery into the original note](archive/draft-recovery-in-place-2026-10-22/README.md): unfinished edits now restore the original identity without duplication; changed or unknown bases require a conflict choice. Seven native cases, three browser cases, 61 frontend and three storage tests passed. Earlier separate-copy evidence is historical.
 
 - [Unified existing-note write permission](archive/pi-write-permission-2026-10-22/README.md): editing and renaming now share permission, folder scope and review; separate tools and native effects remain. Includes the shared tool-policy and typed publication cleanup, retained explicit targets/read receipts, native/browser acceptance and the primary-source review.

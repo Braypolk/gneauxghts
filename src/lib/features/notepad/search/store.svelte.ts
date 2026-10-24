@@ -287,14 +287,16 @@ export class NotepadSearchStore {
         return;
       }
 
+      // Publish one replacement list. A fast note channel must not flash a
+      // partial ranking while image retrieval for the same query is pending.
+      const images = await media;
+      if (requestId !== this.#activeSearchRequest) return;
       if (notes.results) {
         this.searchResults = notes.results;
       } else {
         this.searchError = 'Could not search notes. Try again.';
         console.error('Failed to search notes:', notes.error);
       }
-      const images = await media;
-      if (requestId !== this.#activeSearchRequest) return;
       if (!images.error) this.imageResults = images.results.filter((item): item is ImageSearchItem => item.kind === 'image');
       this.mediaError = images.error;
       this.isSearching = false;

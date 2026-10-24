@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { captureFocusIntent } from '../navigation/focusIntent';
 import { appStore } from '#lib/app/appStore.svelte.js';
 import {
   resolveAssetRootPath,
@@ -58,6 +59,7 @@ export function createNotepadSessionLifecycle(
 
   function mount() {
     let mounted = true;
+    const initialFocus = captureFocusIntent();
     const revision = ++mountRevision;
     const current = () => mounted && revision === mountRevision && deps.isInitialEditorRootReady();
     const unregisterWindowClose = deps.registerWindowCloseHandler();
@@ -125,7 +127,7 @@ export function createNotepadSessionLifecycle(
               requestAnimationFrame(() => resolve())
             );
           });
-          if (current()) deps.focusNavigationPane();
+          if (current() && initialFocus.isCurrent()) deps.focusNavigationPane();
         }
         if (!current()) return;
         const unsubscribe = appStore.subscribeVaultNoteChanged(
@@ -135,11 +137,12 @@ export function createNotepadSessionLifecycle(
       } catch (error) {
         console.error('Notepad init failed:', error);
       }
-    })();
+    })().finally(() => initialFocus.dispose());
 
     // The callable remains the mount cleanup; callers may also join startup.
     return Object.assign(() => {
       mounted = false;
+      initialFocus.dispose();
       unregisterWindowClose();
       unregisterPendingSave();
       unregisterTransientMenus();

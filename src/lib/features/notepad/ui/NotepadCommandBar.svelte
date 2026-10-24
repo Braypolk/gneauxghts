@@ -157,6 +157,40 @@
   const searchMode = $derived(search.searchMode);
   const resultType = $derived(search.resultType ?? 'all');
   const editedWindow = $derived(search.editedWindow ?? 'any');
+  let resultPreview = $state<{ context: string; query: string; items: NotepadCommandBarVisibleItem[] } | null>(null);
+  let presentationQuiet = $state(true);
+  let presentationTimer: number | null = null;
+  function clearPresentation() {
+    if (presentationTimer !== null) window.clearTimeout(presentationTimer);
+    presentationTimer = null;
+    presentationQuiet = true;
+    resultPreview = null;
+  }
+  onDestroy(() => { if (presentationTimer !== null) window.clearTimeout(presentationTimer); });
+  function beginSearchUpdate() {
+    // Preserve the last displayed list before canonical query preparation clears
+    // it. Move focus first, so making old rows inert cannot dismiss the popup.
+    if (searchResultsViewport?.contains(document.activeElement)) searchBar?.focusSearch();
+    if (retainedSearchItems === null) {
+      resultPreview = { context: searchPresentationContext, query: searchQuery, items: [...visibleItems] };
+    }
+    presentationQuiet = false;
+    if (presentationTimer !== null) window.clearTimeout(presentationTimer);
+    presentationTimer = window.setTimeout(() => {
+      presentationTimer = null;
+      presentationQuiet = true;
+    }, 250);
+  }
+  function changeResultType(type: SearchResultType) {
+    if (type === resultType) return;
+    beginSearchUpdate();
+    void search.onResultTypeChange?.(type);
+  }
+  function changeEditedWindow(window: SearchEditedWindow) {
+    if (window === editedWindow) return;
+    beginSearchUpdate();
+    void search.onEditedWindowChange?.(window);
+  }
   const resultTypeChoices: { id: SearchResultType; label: string }[] = [
     { id: 'all', label: 'All' }, { id: 'notes', label: 'Notes' }, { id: 'images', label: 'Images' }
   ];
@@ -249,11 +283,25 @@
     }
   }
   const isSearching = $derived(search.isSearching);
-  const onSearchInput = $derived(search.onSearchInput);
-  const onSearchClear = $derived(search.onSearchClear);
+  function onSearchInput(value: string) {
+    if (value.trim() === '' && !imageQueryUrl) clearPresentation();
+    else if (value !== searchQuery) beginSearchUpdate();
+    search.onSearchInput(value);
+  }
+  function onSearchClear() {
+    clearPresentation();
+    if (search.onSearchClear) search.onSearchClear();
+    else search.onSearchInput('');
+  }
   const onSearchModeChange = $derived(search.onSearchModeChange);
-  const onMatchCaseChange = $derived(search.onMatchCaseChange);
-  const onMatchWholeWordChange = $derived(search.onMatchWholeWordChange);
+  function onMatchCaseChange(enabled: boolean) {
+    if (searchQuery.trim() !== '' || imageQueryUrl) beginSearchUpdate();
+    void search.onMatchCaseChange(enabled);
+  }
+  function onMatchWholeWordChange(enabled: boolean) {
+    if (searchQuery.trim() !== '' || imageQueryUrl) beginSearchUpdate();
+    void search.onMatchWholeWordChange(enabled);
+  }
   const onSearchSelect = $derived(search.onSearchSelect);
   const onSearchNavigate = $derived(search.onSearchNavigate);
   const onPinnedNoteSelect = $derived(search.onPinnedNoteSelect);
@@ -324,35 +372,56 @@
             ...lastEditedNotes.map(item => ({ kind: 'search' as const, item }))]
         : deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, pinnedNotes, recentLocations)
   );
+  // The store owns compatible results and request admission. This snapshot
+  // only keeps the previous presentation steady during typing and retrieval.
+  const searchPresentationContext = $derived(JSON.stringify([searchMode, imageQueryUrl]));
+  const retainedSearchItems = $derived(panelOpen && !relatedMode
+    && resultPreview?.context === searchPresentationContext ? resultPreview.items : null);
+  const displayedItems = $derived(retainedSearchItems ?? visibleItems);
+  const displayedQuery = $derived(retainedSearchItems !== null ? resultPreview!.query : searchQuery);
+  const presentationPending = $derived(isSearching || !presentationQuiet);
+  const presentedSearchError = $derived(presentationQuiet ? search.searchError : null);
+  const presentedMediaError = $derived(presentationQuiet ? search.mediaError : null);
+  $effect(() => {
+    const context = searchPresentationContext;
+    const open = panelOpen && !relatedMode;
+    const pending = presentationPending;
+    const failed = search.searchError || search.mediaError;
+    const available = visibleItems.length > 0;
+    const hasQuery = searchQuery.trim() !== '' || imageQueryUrl !== null;
+    untrack(() => {
+      if (!open || resultPreview?.context !== context || !hasQuery) clearPresentation();
+      // A failed replacement keeps the old preview with Retry. Available results
+      // from a successful channel remain usable even when the other channel fails.
+      else if (!pending && (!failed || available || resultPreview?.items.length === 0)) resultPreview = null;
+    });
+  });
   const hasRecentContent = $derived(pinnedNotes.length > 0 || (browseMode === 'edited' ? lastEditedNotes.length > 0 : recentLocations.length > 0));
   const hasVisibleSearchContent = $derived(
-    searchQuery.trim() === '' && !imageQueryUrl ? hasRecentContent : visibleItems.length > 0
+    displayedQuery.trim() === '' && !imageQueryUrl ? hasRecentContent : displayedItems.length > 0
   );
   const canNavigateCurrentSearchResults = $derived(
-    searchMode === 'current' && searchQuery.trim() !== '' && searchResults.length > 0
+    retainedSearchItems === null && searchMode === 'current' && searchQuery.trim() !== '' && searchResults.length > 0
   );
 
   const commandBarState = createNotepadCommandBarState({
     getSearchQuery: () => imageQueryUrl ? "image query" : searchQuery,
     getSearchMode: () => searchMode,
-    getSearchResults: () => visibleSearchResults,
-    getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
+    getSearchResults: () => retainedSearchItems ? [] : visibleSearchResults,
+    getSearchNavigationResults: () => retainedSearchItems ? [] : (searchMode === 'current' ? searchResults : visibleSearchResults),
     getSearchResultRowIndex: (result) => visibleSearchResults.findIndex(item =>
       searchMode === 'current'
         ? getCurrentSearchResultKey(item) === getCurrentSearchResultKey(result)
         : item === result),
     getPinnedNotes: () => pinnedNotes,
     getRecentLocations: () => recentLocations,
-    getVisibleItems: () => visibleItems,
+    getVisibleItems: () => retainedSearchItems ? [] : visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
     isForgetActionAvailable: () => canForget && !canUnforget,
     getForgetItemLabel: () => forgetItemLabel,
     onSearchInput: (value) => onSearchInput(value),
-    onSearchClear: () => {
-      if (search.onSearchClear) search.onSearchClear();
-      else onSearchInput('');
-    },
+    onSearchClear,
     onSearchSelect: (result) => onSearchSelect(result),
     getOpenInSplit: () => search.onOpenInSplit,
     onBrowseModeFocus: focusBrowseMode,
@@ -389,7 +458,7 @@
     searchQuery;
     // Occurrences may change while the grouped row text stays the same.
     currentSearchRangesFingerprint;
-    commandBarState.resetActiveIndex();
+    if (!retainedSearchItems) commandBarState.resetActiveIndex();
   });
 
   $effect(() => {
@@ -428,7 +497,7 @@
   $effect(() => {
     commandBarState.activeIndex;
     visibleItems;
-    void commandBarState.syncActiveItemIntoView();
+    if (!retainedSearchItems) void commandBarState.syncActiveItemIntoView();
   });
 
   $effect(() => {
@@ -448,6 +517,7 @@
 
   function handleSharedSearchModeChange(mode: string) {
     if (mode !== 'current' && mode !== 'all') return;
+    clearPresentation();
     return onSearchModeChange(mode);
   }
 
@@ -468,8 +538,8 @@
 
   function getSearchResultItemClass(mode: 'current' | 'all') {
     return mode === 'current'
-      ? 'search-result-item grid min-h-10 w-full grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 rounded-[0.9rem] px-3 py-2 text-left transition-colors'
-      : 'search-result-item flex w-full flex-col gap-2 rounded-[1.1rem] px-4 py-3 text-left transition-colors';
+      ? 'search-result-item grid min-h-10 min-w-0 w-full grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 rounded-[0.9rem] px-3 py-2 text-left transition-colors'
+      : 'search-result-item flex min-w-0 w-full flex-col gap-2 rounded-[1.1rem] px-4 py-3 text-left transition-colors';
   }
 
   function getSearchResultTitleClass() {
@@ -496,8 +566,8 @@
     return item.sectionLabel;
   }
 
-  function getCurrentSearchPreviewText(item: SearchItem) {
-    const normalizedQuery = normalizeSearchText(searchQuery.trim());
+  function getCurrentSearchPreviewText(item: SearchItem, query = searchQuery) {
+    const normalizedQuery = normalizeSearchText(query.trim());
     const excerpt = item.excerpt.trim();
 
     if (normalizedQuery === '' || normalizeSearchText(excerpt).includes(normalizedQuery)) {
@@ -508,8 +578,8 @@
   }
 
   function getCurrentSearchPreviewSegments(item: SearchItem) {
-    const previewText = getCurrentSearchPreviewText(item);
-    const trimmedQuery = searchQuery.trim();
+    const previewText = getCurrentSearchPreviewText(item, displayedQuery);
+    const trimmedQuery = displayedQuery.trim();
 
     if (previewText === item.excerpt.trim() && item.highlightRanges.length > 0) {
       return buildHighlightedSegments(...cropTextAroundRanges(item.excerpt, item.highlightRanges, 130, 24));
@@ -760,7 +830,7 @@
     {/snippet}
 
     {#snippet searchPanel()}
-        <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode} onkeydown={handleSearchResultsKeydown}>
+        <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode} busy={presentationPending && !relatedMode} onkeydown={handleSearchResultsKeydown}>
           {#if relatedMode}
             <div id={relatedPopupId} class="max-h-80 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label="Related notes">
               <RelatedResults result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()}
@@ -777,7 +847,7 @@
                     aria-pressed={resultType === choice.id}
                     onkeydown={handleSearchCueKeydown}
                     onmousedown={(event) => event.preventDefault()}
-                    onclick={() => void search.onResultTypeChange?.(choice.id)}>{choice.label}</button>
+                    onclick={() => changeResultType(choice.id)}>{choice.label}</button>
                 {/each}
               </div>
               <div class="search-retrieval-edited flex flex-wrap items-center gap-1" role="group" aria-label="Edited">
@@ -789,21 +859,21 @@
                     aria-pressed={editedWindow === choice.id}
                     onkeydown={handleSearchCueKeydown}
                     onmousedown={(event) => event.preventDefault()}
-                    onclick={() => void search.onEditedWindowChange?.(choice.id)}>{choice.label}</button>
+                    onclick={() => changeEditedWindow(choice.id)}>{choice.label}</button>
                 {/each}
               </div>
             </div>
           {/if}
-          {#if search.searchError || search.mediaError}
+          {#if presentedSearchError || presentedMediaError}
             <div class="flex items-center justify-between gap-2 px-4 py-2 text-sm text-muted-foreground" role="status">
-              <span>{search.searchError ?? search.mediaError}{#if visibleItems.length > 0}{' '}Showing available matches.{/if}</span>
+              <span>{presentedSearchError ?? presentedMediaError}{#if retainedSearchItems}{' '}Previous matches shown. Retry to update results.{:else if visibleItems.length > 0}{' '}Showing available matches.{/if}</span>
               {#if search.onSearchRetry}
                 <button type="button" class="rounded px-2 py-1 text-foreground hover:bg-accent disabled:opacity-50" data-search-focus-independent disabled={isSearching} onclick={() => void search.onSearchRetry?.()}>Retry</button>
               {/if}
             </div>
           {/if}
-          {#if isSearching && visibleItems.length > 0}
-            <p class="px-4 py-2 text-xs text-muted-foreground" role="status">Updating matches…</p>
+          {#if presentationPending}
+            <span class="sr-only" role="status">{retainedSearchItems !== null ? 'Updating search results…' : 'Searching notes…'}</span>
           {/if}
           {#if searchQuery.trim() === '' && !imageQueryUrl}
             <div class="flex justify-center px-3 pb-1 pt-2">
@@ -826,15 +896,16 @@
               </div>
             {/if}
           {/if}
-          {#if isSearching && visibleItems.length === 0 && (searchQuery.trim() !== '' || imageQueryUrl)}
-            <div class="px-4 py-3 text-sm text-muted-foreground">Searching {resultType === 'images' && searchMode === 'all' ? 'images' : 'notes'}…</div>
-          {:else if imageQueryUrl && visibleItems.length === 0 && !search.mediaError}
-            {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">{resultType !== 'all' || editedWindow !== 'any' ? 'No matches with these filters. Try All or Any time.' : 'No matching images or text passages yet.'}</p>{/if}
-          {:else if searchQuery.trim() === '' && !imageQueryUrl && browseMode === 'edited' && search.isLoadingLastEdited && lastEditedNotes.length === 0}
+          <div class="search-results-content" inert={retainedSearchItems !== null} data-search-presentation-query={displayedQuery}>
+          {#if presentationPending && retainedSearchItems === null && displayedItems.length === 0 && (displayedQuery.trim() !== '' || imageQueryUrl)}
+            <div class="min-h-0 flex-1"></div>
+          {:else if imageQueryUrl && displayedItems.length === 0 && !presentedMediaError}
+            {#if !presentationPending}<p class="px-3 py-2 text-sm text-muted-foreground">{resultType !== 'all' || editedWindow !== 'any' ? 'No matches with these filters. Try All or Any time.' : 'No matching images or text passages yet.'}</p>{/if}
+          {:else if displayedQuery.trim() === '' && !imageQueryUrl && browseMode === 'edited' && search.isLoadingLastEdited && lastEditedNotes.length === 0}
             <div class="px-4 py-3 text-sm text-muted-foreground" role="status">Loading last edited notes…</div>
-          {:else if !hasVisibleSearchContent && !search.searchError && !search.mediaError}
+          {:else if !hasVisibleSearchContent && !presentedSearchError && !presentedMediaError}
             <div class="px-4 py-3 text-sm text-muted-foreground">
-              {#if searchQuery.trim() === ''}
+              {#if displayedQuery.trim() === ''}
                 {browseMode === 'edited' ? 'No saved notes yet.' : `Start typing to search ${searchMode === 'current' ? 'this note' : 'all notes'}.`}
               {:else if searchMode === 'all' && (resultType !== 'all' || editedWindow !== 'any')}
                 No matches with these filters. Try All or Any time.
@@ -842,7 +913,7 @@
                 No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
               {/if}
             </div>
-          {:else if searchQuery.trim() === '' && !imageQueryUrl}
+          {:else if displayedQuery.trim() === '' && !imageQueryUrl}
             <div
               bind:this={searchResultsViewport}
               class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
@@ -920,8 +991,8 @@
               {/if}
             </div>
           {:else}
-            <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
-              {#each visibleItems as entry, index (index)}
+            <div bind:this={searchResultsViewport} class="min-h-0 flex-1 overflow-y-auto" inert={retainedSearchItems !== null} data-search-retained={retainedSearchItems !== null}>
+              {#each displayedItems as entry, index (index)}
                 {#if entry.kind === 'image'}
                   <div data-search-result-index={index}>
                   <ImageSearchResult item={entry.item} load={loadThumbnail}
@@ -999,6 +1070,7 @@
               {/each}
             </div>
           {/if}
+          </div>
           {/if}
         </SearchResultsPanel>
     {/snippet}
@@ -1094,8 +1166,13 @@
 </div>
 
 <style>
-  .search-retrieval-cues { container-type: inline-size; }
+  .search-results-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+  .search-retrieval-cues { container-type: inline-size; flex-shrink: 0; }
   .search-retrieval-cue {
+    min-height: 2.25rem;
+    min-width: 2.75rem;
+    white-space: nowrap;
     border-color: transparent;
     color: var(--muted-foreground);
     background: color-mix(in oklab, var(--muted) 45%, transparent);
@@ -1109,7 +1186,10 @@
   @container (max-width: 18rem) {
     .search-edited-label { display: none; }
     .search-retrieval-edited { flex-wrap: nowrap; gap: 0.125rem; }
-    .search-retrieval-cue { min-height: 2rem; padding-inline: 0.375rem; }
+    .search-retrieval-cue { padding-inline: 0.375rem; }
+  }
+  @media (pointer: coarse) {
+    .search-retrieval-cue { min-height: 2.75rem; }
   }
   .notepad-discovery-dock { --discovery-gap: 0.5rem; }
   .related-search-heading { padding-right: var(--search-bar-height); }
