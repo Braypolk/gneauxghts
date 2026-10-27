@@ -1,4 +1,4 @@
-import { EditorSelection, EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorSelection, EditorState, Prec, RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -83,7 +83,9 @@ export function searchQueryFromOptions(options: SearchHighlightOptions) {
 }
 
 export function createExternalSearchHighlightExtension() {
-  return ViewPlugin.fromClass(
+  // Keep search marks inside formatting spans so matches don't split inline
+  // code into separate padded elements and change the surrounding text width.
+  return Prec.highest(ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
 
@@ -148,7 +150,7 @@ export function createExternalSearchHighlightExtension() {
     {
       decorations: (plugin) => plugin.decorations
     }
-  );
+  ));
 }
 
 export function setEditorCurrentSearchHighlightQuery(

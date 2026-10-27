@@ -110,7 +110,7 @@ describe('current-note search previews', () => {
     await openCurrentSearch();
     await $('button[aria-label="Search all notes"]').click();
     await $('[data-testid="note-search-input"]').setValue('Beta note');
-    await $('button[aria-label="Open search result: Beta note.md"]').waitForDisplayed();
+    await $('button[aria-label="Open search result: beta.md"]').waitForDisplayed();
     await waitForWorkspaceAnimationSettled();
     await $('[data-testid="note-search-input"]').click();
     await browser.keys('Enter');
