@@ -552,10 +552,6 @@
     commandBarState.dispose();
   });
 
-  function getRecentNotesViewportClass() {
-    return 'h-[13.75rem] overflow-y-auto';
-  }
-
   function locationHistoryKey(item: LocationHistoryEntry, index: number) {
     if (item.location.kind === 'chat') {
       return `chat-${item.location.conversationId ?? 'slot'}`;
@@ -953,20 +949,22 @@
               {/if}
             </div>
           {:else if displayedQuery.trim() === '' && !imageQueryUrl}
+            <!-- Stacked sections share a viewport so short windows can show whole
+                 rows. Desktop columns each scroll within the full remaining height. -->
             <div
               bind:this={searchResultsViewport}
-              class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
+              class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain lg:flex-row lg:items-stretch lg:gap-0 lg:overflow-visible"
             >
               {#if pinnedNotes.length > 0}
                 <section
-                  class={`min-w-0 flex-1 lg:order-2 ${
+                  class={`flex min-w-0 flex-1 flex-col lg:order-2 lg:min-h-0 ${
                     (browseMode === 'edited' ? lastEditedNotes.length : recentLocations.length) > 0
                       ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
                       : ''
                   }`}
                 >
                   <SearchResultsHeading title="Pinned" />
-                  <div class={getRecentNotesViewportClass()}>
+                  <div class="flex-1 overscroll-contain lg:min-h-0 lg:overflow-y-auto">
                     {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
                       <div class="group flex items-center gap-1">
                         <SearchNoteResult title={noteFileLabel(item.fileName, item.noteId)} label={`Open pinned note: ${noteFileLabel(item.fileName, item.noteId)}`}
@@ -995,9 +993,9 @@
               {/if}
 
               {#if browseMode === 'edited' && lastEditedNotes.length > 0}
-                <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
+                <section class="flex min-w-0 flex-1 flex-col lg:order-1 lg:min-h-0 lg:pr-3">
                   <SearchResultsHeading title="Last edited" />
-                  <div class={getRecentNotesViewportClass()}>
+                  <div class="flex-1 overscroll-contain lg:min-h-0 lg:overflow-y-auto">
                     {#each lastEditedNotes as item, index (`edited-${item.noteId ?? item.notePath}-${index}`)}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={noteFileLabel(item.fileName, item.noteId)} label={`Open last edited note: ${noteFileLabel(item.fileName, item.noteId)}`}
@@ -1010,9 +1008,9 @@
                   </div>
                 </section>
               {:else if browseMode === 'recent' && recentLocations.length > 0}
-                <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
+                <section class="flex min-w-0 flex-1 flex-col lg:order-1 lg:min-h-0 lg:pr-3">
                   <SearchResultsHeading title="Recent" />
-                  <div class={getRecentNotesViewportClass()}>
+                  <div class="flex-1 overscroll-contain lg:min-h-0 lg:overflow-y-auto">
                     {#each recentLocations as item, index (locationHistoryKey(item, index))}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={item.label}
