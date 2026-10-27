@@ -2,6 +2,8 @@
   import { onDestroy } from 'svelte';
   import { Columns2, CornerUpLeft, FileText, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags, Sparkles, LoaderCircle } from '@lucide/svelte';
   import { openPiChat } from '#lib/features/chat/pi/runtime.js';
+  import { chatActivity, activityDescription } from '#lib/features/chat/pi/activity.js';
+  import ChatActivityDot from '#lib/features/chat/ui/ChatActivityDot.svelte';
   import { documentHasUnresolvedConflict, getDocumentNoteId } from './document/documentState';
   import {
     formatShortcutBinding,
@@ -39,6 +41,7 @@
     composerDock?: ComposerDock;
     compact?: boolean;
     collapsed?: boolean;
+    workspaceVisible?: boolean;
     mobileTitleActive?: boolean;
     onExpand?: () => void;
   }
@@ -50,6 +53,7 @@
     composerDock,
     compact = false,
     collapsed = false,
+    workspaceVisible = true,
     mobileTitleActive = true,
     onExpand,
     paneCommandFocusRoot = $bindable<HTMLElement | null>(null)
@@ -175,13 +179,14 @@
     {/if}
     <button
       type="button"
-      class="mobile-touch-target pane-header-action"
+      class="mobile-touch-target pane-header-action relative"
       onmousedown={(event) => event.preventDefault()}
       onclick={() => void runSplitPaneTopAction(action)}
       aria-label={label}
-      title={label}
+      title={`${label}${action === 'open-chat' && $chatActivity.status ? ` — ${activityDescription($chatActivity.status)}` : ''}`}
     >
       <ActionIcon class="h-4 w-4" />
+      {#if action === 'open-chat'}<ChatActivityDot status={$chatActivity.status} />{/if}
     </button>
   {/each}
 {/snippet}
@@ -194,9 +199,10 @@
     {#if fullWidth.current}
       <div class="compact-pane-switch flex items-center gap-1 sm:hidden">
         {#if viewModel.paneKind === 'editor'}
-          <button type="button" class="mobile-touch-target pane-header-action" onmousedown={(event) => event.preventDefault()}
-            onclick={() => void actions.onOpenPaneChoice('thoughtPartner')} aria-label="Open thought partner" title="Open thought partner">
+          <button type="button" class="mobile-touch-target pane-header-action relative" onmousedown={(event) => event.preventDefault()}
+            onclick={() => void actions.onOpenPaneChoice('thoughtPartner')} aria-label="Open thought partner" title={`Open thought partner${$chatActivity.status ? ` — ${activityDescription($chatActivity.status)}` : ''}`}>
             <MessagesSquare class="h-4 w-4" />
+            <ChatActivityDot status={$chatActivity.status} />
           </button>
         {/if}
         <button type="button" class="mobile-touch-target pane-header-action" onmousedown={(event) => event.preventDefault()}
@@ -213,13 +219,14 @@
       <div class="mobile-pane-switch sm:hidden">
         <button
           type="button"
-          class="mobile-touch-target pane-header-action"
+          class="mobile-touch-target pane-header-action relative"
           onmousedown={(event) => event.preventDefault()}
           onclick={() => void actions.onOpenPaneChoice(viewModel.paneKind === 'editor' ? 'thoughtPartner' : 'previous')}
           aria-label={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
-          title={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
+          title={viewModel.paneKind === 'editor' ? `Open thought partner${$chatActivity.status ? ` — ${activityDescription($chatActivity.status)}` : ''}` : 'Open previous location'}
         >
           {#if viewModel.paneKind === 'editor'}<MessagesSquare class="h-4 w-4" />{:else}<CornerUpLeft class="h-4 w-4" />{/if}
+          {#if viewModel.paneKind === 'editor'}<ChatActivityDot status={$chatActivity.status} />{/if}
         </button>
       </div>
     {/if}
@@ -444,6 +451,7 @@
       {:else}
         <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden">
           <ChatPanel
+            visible={workspaceVisible && !collapsed}
             binding={viewModel.chat.session.binding}
             conversationId={viewModel.chat.session.conversationId}
             draftSlot={viewModel.chat.session.draftSlot}

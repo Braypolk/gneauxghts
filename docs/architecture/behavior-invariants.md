@@ -968,7 +968,7 @@ input. Reasoning uses normal Pi retention and is collapsed by default in the UI.
 Observable generation/tool/compaction state, safe tool failures and elapsed time
 are displayed without inventing thinking or stuck diagnoses.
 
-Pi's creation hook establishes app chat and empty review documents in the same
+Pi's creation hook establishes app chat, read cursor and empty review documents in the same
 transaction as conversation creation, including raw creation and forks. Selection
 loads their watch values without initialization writes or full agent resolution.
 Metadata changes during attachment remain observable. Progress-only view frames
@@ -996,6 +996,24 @@ binding/current authority and models are installed before scheduling resumes.
 Stopped work stays stopped; terminal failure offers a new attempt under current
 settings rather than exact Retry. Human-visible history does not itself authorize
 inference or fetching excluded content.
+
+The vault-lifetime chat activity projection observes Pi live/inbox state and
+terminal input submissions independently of mounted panes and paginated lists.
+Chat switcher and conversation-history buttons show a grey pulsing dot while
+work runs, and a solid green dot for unread results; unread results take
+precedence when another chat is still running. Conversation rows show their own
+state. Reduced motion keeps the running dot static. Forgotten chats, internal
+note-title jobs, passive history writes and explicitly aborted inputs do not
+produce unread notifications; a failed placed input does, even without an answer.
+Only a loaded, expanded chat in a visible, focused window acknowledges a result.
+History Mode hides retained chats from read admission. The exact completed answer
+must be loaded, or an answerless failure must be the displayed input; a newer
+aborted input cannot acknowledge an older result that compaction has hidden.
+Its displayed completion ID advances the monotonic Pi `ChatReadDoc` cursor, so a
+late acknowledgement cannot clear a newer result and unread status survives
+reopen. Existing controls attach to each successfully opened runtime, including
+an explicit open after failed startup. Existing history without an initialized cursor starts read. Indicators
+derive execution and outcomes from Pi; they do not schedule or settle work.
 
 Tool activity distinguishes expected domain outcomes from execution failures using
 structured native codes and Pi diagnostics. Rejected reviews, stopped/unstarted

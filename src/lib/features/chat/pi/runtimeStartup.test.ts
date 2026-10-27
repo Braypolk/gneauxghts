@@ -4,6 +4,7 @@ import { createModels } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { ChatDoc, openPiChat, type PiChat } from './runtime';
+import { chatActivity, type ChatActivitySnapshot } from './activity';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), storage: undefined as unknown }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke, Channel: class {} }));
@@ -101,6 +102,28 @@ it('fails startup model discovery before any scheduling operation', async () => 
   expect(scheduled).toEqual([]);
   expect(native.listen).not.toHaveBeenCalled();
   expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_fetch')).toHaveLength(0);
+});
+
+it('reattaches existing activity subscribers after failed startup and runtime replacement', async () => {
+  await seed();
+  failConfiguration = true;
+  vi.stubGlobal('window', {});
+  let observed!: ChatActivitySnapshot;
+  const stop = chatActivity.subscribe(value => { observed = value; });
+  try {
+    await expect(openPiChat()).rejects.toThrow('Native discovery unavailable');
+    expect(observed.conversations.size).toBe(0);
+    failConfiguration = false;
+    chat = await openPiChat();
+    expect(observed.conversations.size).toBe(6);
+    await chat.close();
+    expect(observed.conversations.size).toBe(0);
+    chat = await openPiChat();
+    expect(observed.conversations.size).toBe(6);
+    const id = (await chat.listConversations()).items[0].id;
+    await chat.harness.commit(async tx => { (await tx.doc(ChatDoc, id)).forgotten = true; }, context);
+    expect(observed.conversations.has(id)).toBe(false);
+  } finally { stop(); vi.unstubAllGlobals(); }
 });
 
 it('isolates a manual title request from chats and retires its exact-note native binding', async () => {

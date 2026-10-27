@@ -49,6 +49,7 @@ concrete state references, independently of Tauri dispatch.
 | Global history browsing, bounded revision-label, confirmed history-clear, and complete Version Restore actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
 | Conversations, immutable entries, submissions, generation/tool tasks, queue, usage, recovery and compaction | Pi Durable/Pi AI/Chord through `features/chat/pi/runtime.ts` |
 | Selected conversation, composer and mounted chat views | `ChatPanel.svelte` and its disposable Pi view binding; workspace retains pane membership |
+| Running/unread chat indicators and read acknowledgement | Vault-lifetime `features/chat/pi/activity.ts` projects Pi live/inbox/submission state; `ChatReadDoc` retains only the greatest viewed completion submission ID |
 | Read/write authority, source identity and exact external-effect proof | Native `pi_chat/authority.rs`, `notes.rs`, `citations.rs` and `publication.rs`; NoteTimeline remains canonical publication owner |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |

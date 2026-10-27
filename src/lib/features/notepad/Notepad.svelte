@@ -1629,6 +1629,7 @@
             viewModel={getPaneViewModel(paneId)}
             actions={paneActions}
             mobileTitleActive={paneId === activePaneId && !historyMode.isActive}
+            workspaceVisible={!historyMode.isActive && !agentPublicationActive}
             compact={compactPaneFrames}
             collapsed={compactPaneFrames && (collapsingPaneId
               ? paneId === collapsingPaneId : paneId !== activePaneId)}

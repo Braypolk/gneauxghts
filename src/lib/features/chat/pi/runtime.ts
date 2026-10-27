@@ -1,6 +1,6 @@
 import { invoke } from './nativeInvoke';
 import { listen } from '@tauri-apps/api/event';
-import { AgentDoc, Harness, ProviderDoc, createRegistry, defineDoc, type Conversation, type ConversationId, type Cursor, type HarnessOptions, type ModelRef } from '@earendil-works/pi-durable';
+import { AgentDoc, Harness, ProviderDoc, createRegistry, type Conversation, type ConversationId, type Cursor, type HarnessOptions, type ModelRef } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import { openNativeSqlite } from './nativeSqlite';
@@ -14,12 +14,14 @@ import { renameExtension } from './rename';
 import { createNoteTitleJobs } from './noteTitles';
 import { createPiDiagnostics, type PiDiagnostics } from './diagnostics';
 
+import { ChatDoc, ChatReadDoc } from './documents';
+import { bindChatActivity, getChatActivity } from './activity';
+
 export const PI_CONTEXT = BACKGROUND_CONTEXT;
-// Internal title scopes never appear as human chats.
-export const ChatDoc = defineDoc({ kind: 'gneauxghts.chat', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
-  initial: () => ({ title: '', authorityId: '', createdAtMillis: Date.now(), retired: false as boolean, forgotten: false as boolean, purpose: 'chat' as 'chat' | 'noteTitles' }) });
+export { ChatDoc } from './documents';
 export const initializeChatDocuments: NonNullable<HarnessOptions['conversationCreated']> = async (tx, conversation) => {
   await tx.doc(ChatDoc, conversation.id);
+  (await tx.doc(ChatReadDoc, conversation.id)).initialized = true;
   await tx.doc(EditReviewDoc, conversation.id);
 };
 export type PiChatSettings = {
@@ -46,11 +48,12 @@ export type PiChat = {
 let current: Promise<PiChat> | undefined;
 
 /** One Running Vault lifetime. Pi owns all scheduling and durable chat progression. */
-export function openPiChat(): Promise<PiChat> {
-  if (import.meta.env.DEV && import.meta.env.VITE_E2E_BROWSER === 'true') {
-    return import('#lib/e2e/piBrowserFixture.js').then(({ openBrowserPiChat }) => openBrowserPiChat());
-  }
-  return current ??= compose().catch(error => { current = undefined; throw error; });
+export async function openPiChat(): Promise<PiChat> {
+  const chat = await (import.meta.env.DEV && import.meta.env.VITE_E2E_BROWSER === 'true'
+    ? import('#lib/e2e/piBrowserFixture.js').then(({ openBrowserPiChat }) => openBrowserPiChat())
+    : current ??= compose().catch(error => { current = undefined; throw error; }));
+  bindChatActivity(getChatActivity(chat));
+  return chat;
 }
 
 async function compose(): Promise<PiChat> {
@@ -212,6 +215,7 @@ async function compose(): Promise<PiChat> {
     }));
     // All mappings are installed before any operation that enables scheduling.
     for (const conversation of denied) await conversation.abort(PI_CONTEXT, { background: true });
+    await getChatActivity(chat).ready;
     harness.resume();
     void harness.closed.then(end => { diagnostics.end(end); bindings.clear(); unlisten.splice(0).forEach(stop => stop()); current = undefined; });
     return chat;

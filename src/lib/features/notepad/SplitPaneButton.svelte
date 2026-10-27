@@ -2,6 +2,8 @@
   import { Columns2, CornerUpLeft, FileText, MessagesSquare } from '@lucide/svelte';
   import { PANE_COMMAND_OPTIONS, type PaneCommandChoice } from '#lib/features/notepad/paneCommandPicker.js';
   import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
+  import { chatActivity, activityDescription } from '#lib/features/chat/pi/activity.js';
+  import ChatActivityDot from '#lib/features/chat/ui/ChatActivityDot.svelte';
   import {
     getPaneTopActions,
     type PaneTopAction
@@ -88,11 +90,12 @@
       aria-hidden={option.choice === 'current' && !splitMode}
       style={`--split-pane-position: ${quickOptions.length - index}`}
       aria-label={optionLabel(option.choice)}
-      title={optionLabel(option.choice)}
+      title={`${optionLabel(option.choice)}${option.choice === 'thoughtPartner' && $chatActivity.status ? ` — ${activityDescription($chatActivity.status)}` : ''}`}
       onmousedown={(event) => event.preventDefault()}
       onclick={() => void handleOptionClick(option.choice)}
     >
       <OptionIcon class="h-4 w-4" />
+      {#if option.choice === 'thoughtPartner'}<ChatActivityDot status={$chatActivity.status} />{/if}
       <Columns2 class="split-pane-indicator absolute h-2.5 w-2.5" aria-hidden="true" />
     </button>
   {/each}

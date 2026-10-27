@@ -10,6 +10,7 @@ import { ChatDoc, PI_CONTEXT, defaultReadPolicy, openPiChat, readPiChatSettings,
 import type { PiDiagnostics, PiDiagnosticSnapshot } from '../pi/diagnostics';
 import { setReadPolicy, type AuthoritySnapshot, type ReadPolicy, type WritePolicy } from '../pi/authority';
 import { EditReviewDoc, PublicationTask, committedPublicationResult, decideEditReview, setWritePolicy, type CommittedEdit, type EditReview } from '../pi/publication';
+import { getChatActivity, type ChatActivity } from '../pi/activity';
 
 export function chatErrorMessage(error: unknown): string {
   if (error && typeof error === 'object' && 'message' in error) return String(error.message);
@@ -38,6 +39,7 @@ export type PiViewSnapshot = {
   conversations: PiConversationSummary[]; listNext?: Cursor; authority?: AuthoritySnapshot;
   settings: PiChatSettings | null; read: ReadPolicy; provider: 'local' | 'openai'; model: string;
   diagnostics?: PiDiagnostics; runtimeState?: PiDiagnosticSnapshot['state'];
+  activity?: ChatActivity;
   stopping: boolean; runStartedAt?: number; latestInput?: SubmissionRecord;
   recentlyForgotten?: ConversationId; forgetting?: boolean;
   editReviews?: EditReview[];
@@ -95,7 +97,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
       const [runtime, settings] = await Promise.all([(deps.open ?? openPiChat)(), (deps.settings ?? readPiChatSettings)()]);
       if (disposed) return;
       chat = runtime;
-      state.update(value => ({ ...value, initialized: true, diagnostics: runtime.diagnostics, settings, read: defaultReadPolicy(settings), provider: settings.provider,
+      state.update(value => ({ ...value, initialized: true, activity: getChatActivity(runtime), diagnostics: runtime.diagnostics, settings, read: defaultReadPolicy(settings), provider: settings.provider,
         model: settings.provider === 'local' ? settings.localModel : settings.openaiModel }));
       stopDiagnostics = runtime.diagnostics.subscribe(value => { if (!disposed) state.update(current => ({ ...current, runtimeState: value.state })); });
       unsubscribe = runtime.harness.subscribeCommits(publication => {

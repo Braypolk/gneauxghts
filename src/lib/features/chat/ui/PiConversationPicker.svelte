@@ -3,9 +3,12 @@
   import type { ConversationId } from '@earendil-works/pi-durable';
   import { Eraser, Undo2 } from '@lucide/svelte';
   import { canForgetConversation, chatErrorMessage, type PiConversationBinding } from './piConversationView';
+  import { emptyChatActivity } from '../pi/activity';
+  import ChatActivityDot from './ChatActivityDot.svelte';
 
   let { binding, onSelect }: { binding: PiConversationBinding; onSelect: (id: string | null) => void } = $props();
   const snapshot = $derived($binding);
+  const activity = $derived(snapshot.activity ?? emptyChatActivity);
   const unavailable = $derived(snapshot.runtimeState !== 'open' || Boolean(snapshot.forgetting));
   let root = $state<HTMLDivElement | null>(null);
   let confirming = $state<ConversationId | null>(null);
@@ -58,11 +61,13 @@
   <button type="button" role="menuitem" data-new-conversation onclick={() => onSelect(null)}>New conversation</button>
   {#each snapshot.conversations as item (item.id)}
     {@const selected = item.id === snapshot.conversation?.id}
+    {@const activityItem = $activity.conversations.get(item.id)}
     {@const blocked = unavailable || pending || (selected && !canForgetConversation(snapshot))}
     <div class="conversation-row" class:conversation-row--selected={selected} role="none">
       <button class="conversation-title" type="button" role="menuitem" data-conversation-id={item.id} aria-current={selected ? 'true' : undefined} title={item.title || 'Conversation'} onclick={() => onSelect(String(item.id))}>
         {item.title || 'Conversation'}{item.retired ? ' · Previous access' : ''}
       </button>
+      <ChatActivityDot status={activityItem?.unread ? 'unread' : activityItem?.running ? 'running' : null} inline />
       {#if confirming === item.id}
         <button class="conversation-cancel" type="button" role="menuitem" disabled={pending} onclick={() => { confirming = null; void focusAction(item.id, root?.scrollTop ?? 0); }}>Cancel</button>
         <button class="conversation-forget" type="button" role="menuitem" data-confirm-forget aria-label={`Confirm forget ${item.title || 'conversation'}`} disabled={blocked} onclick={() => forget(item.id)}>{pending ? 'Forgetting…' : 'Forget'}</button>

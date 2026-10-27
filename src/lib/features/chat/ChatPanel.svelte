@@ -27,8 +27,10 @@
   import PiEditReview from './ui/PiEditReview.svelte';
   import type { ChatSurfaceHandle } from './types';
   import './ui/chatPanel.css';
-  let { binding, conversationId = null, autoInitialize = true, variant = 'pane', showConversationPicker = true, headerActions, headerSplit = false, mobileTitleActive = true, composerDock, draftSlot = null, onConversationChange, onSurfaceHandleChange, onOpenSource }: {
-    binding: PiConversationBinding; conversationId?: string | null; autoInitialize?: boolean; variant?: 'pane' | 'focused' | 'inline'; showConversationPicker?: boolean; headerActions?: Snippet; headerSplit?: boolean; mobileTitleActive?: boolean; composerDock?: ComposerDock; draftSlot?: string | null;
+  import { activityDescription, emptyChatActivity, isCompletionDisplayed } from './pi/activity';
+  import ChatActivityDot from './ui/ChatActivityDot.svelte';
+  let { binding, conversationId = null, autoInitialize = true, visible = true, variant = 'pane', showConversationPicker = true, headerActions, headerSplit = false, mobileTitleActive = true, composerDock, draftSlot = null, onConversationChange, onSurfaceHandleChange, onOpenSource }: {
+    binding: PiConversationBinding; conversationId?: string | null; autoInitialize?: boolean; visible?: boolean; variant?: 'pane' | 'focused' | 'inline'; showConversationPicker?: boolean; headerActions?: Snippet; headerSplit?: boolean; mobileTitleActive?: boolean; composerDock?: ComposerDock; draftSlot?: string | null;
     onConversationChange?: (id: string | null) => void; onSurfaceHandleChange?: (handle: ChatSurfaceHandle | null) => void; onOpenSource?: (authorityId: string, sourceId: string) => Promise<string | void>;
   } = $props();
   const snapshot = $derived($binding), live = $derived(viewLive(snapshot.view)), inbox = $derived(viewInbox(snapshot.view));
@@ -41,6 +43,16 @@
   const unanswered = $derived(snapshot.latestInput?.status === 'unanswered' && snapshot.latestInput.entry !== undefined ? snapshot.latestInput : undefined);
   const stopped = $derived(unanswered?.reason === 'aborted');
   const hasWork = $derived(Boolean(live.run || live.compactions?.length || inbox.items.length));
+  const activity = $derived(snapshot.activity ?? emptyChatActivity);
+  let foreground = $state(false);
+  $effect(() => {
+    const id = snapshot.conversation?.id;
+    const item = id === undefined ? undefined : $activity.conversations.get(id);
+    if (!visible || !foreground || snapshot.loading || hasWork || !item?.unread || item.running) return;
+    if (!isCompletionDisplayed(item.completion, snapshot.latestInput, snapshot.entries)) return;
+    const owner = snapshot.activity;
+    if (owner && id !== undefined) void owner.markRead(id, item.completed).catch(error => binding.report(error));
+  });
   const runtimeUnavailable = $derived(snapshot.runtimeState !== 'open');
   const chatPending = $derived(snapshot.loading || (!snapshot.initialized && !snapshot.error));
   let draft = $state(''), titleDraft = $state(''), titleFocused = $state(false), submitting = $state(false);
@@ -140,13 +152,21 @@
       if (request === sourceNavigation) sourceNotice = notice || null;
     });
   }
-  onMount(() => { if (autoInitialize) void binding.initialize(conversationId); const unregister = registerBackgroundSave(async () => { drafts.record(input?.value ?? draft); await drafts.flush(); }); return () => { unregister(); drafts.dispose(); }; });
+  onMount(() => {
+    const updateForeground = () => { foreground = document.visibilityState === 'visible' && document.hasFocus(); };
+    updateForeground();
+    window.addEventListener('focus', updateForeground); window.addEventListener('blur', updateForeground);
+    document.addEventListener('visibilitychange', updateForeground);
+    if (autoInitialize) void binding.initialize(conversationId);
+    const unregister = registerBackgroundSave(async () => { drafts.record(input?.value ?? draft); await drafts.flush(); });
+    return () => { window.removeEventListener('focus', updateForeground); window.removeEventListener('blur', updateForeground); document.removeEventListener('visibilitychange', updateForeground); unregister(); drafts.dispose(); };
+  });
 </script>
 <svelte:window onkeydown={event => { if (event.key === 'Escape') menu = null; }} onpointerdown={event => { if (menu && menu !== 'history' && event.target instanceof Element && !event.target.closest('[data-chat-menu]')) menu = null; }} />
 <section class={`chat-panel pane-header-host chat-panel--${variant} relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden`} class:chat-panel--docked={Boolean(composerDock)} aria-label="Thought partner chat" data-testid="pi-chat-panel">
   <PaneHeader titleText={snapshot.title} titlePlaceholder="New chat" right={headerActions} split={headerSplit} workspace={variant === 'pane'} {mobileTitleActive}>
     {#snippet title()}<input class="pane-header-title-input" aria-label="Conversation title" placeholder="New chat" disabled={runtimeUnavailable || !snapshot.conversation} bind:value={titleDraft} onfocus={() => titleFocused = true} onblur={() => { titleFocused = false; void action(() => binding.rename(titleDraft)); }} onkeydown={event => { if (event.key === 'Enter') input?.focus(); }} />{/snippet}
-    {#snippet secondaryActions()}{#if showConversationPicker}<button type="button" class="pane-header-action" aria-label="Conversations" aria-expanded={menu === 'history'} onclick={() => menu = menu === 'history' ? null : 'history'}><History size={18} /></button>{/if}{/snippet}
+    {#snippet secondaryActions()}{#if showConversationPicker}<button type="button" class="pane-header-action relative" aria-label="Conversations" title={activityDescription($activity.status) ?? 'Conversations'} aria-expanded={menu === 'history'} onclick={() => menu = menu === 'history' ? null : 'history'}><History size={18} /><ChatActivityDot status={$activity.status} /></button>{/if}{/snippet}
   </PaneHeader>
   {#if menu === 'history'}<PiConversationPicker {binding} onSelect={switchConversation} />{/if}
   <div role="log" aria-label="Conversation messages" aria-busy={chatPending} data-pane-content class="min-h-0 flex-1 overflow-y-auto" bind:this={scrollRoot} use:trackScroll={{ conversationId: visibleId, ready: snapshot.initialized && !snapshot.loading, positions }}><div class="chat-content-lane">
