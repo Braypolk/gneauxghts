@@ -415,9 +415,13 @@ metadata without changing content embeddings, graph edges, or geometry inputs.
 Atlas searches filter rendered nodes, filenames and connections at their existing
 positions; clearing the filter restores the admitted inventory. Search never
 regroups notes or changes accepted geography, and does not offer an editor-style
-note suggestion panel. Native query relevance admits matches using the active
-provider's text floor or sufficient lexical/title/tag/path evidence; recency and
-opening frequency affect ordering only. The frontend does not apply another
+note suggestion panel. Native query relevance requires every query word across
+title, filename, vault-relative path, preview and tags, or strong semantic evidence.
+Text matching uses word boundaries, with prefix completion for the final word
+once it contains at least three characters. Semantic-only matches must exceed a
+stricter floor derived from the active provider's text floor and remain close to
+the best similarity in the tag-filtered inventory. Recency, opening frequency
+and structural boosts affect ordering only. The frontend does not apply another
 model-independent similarity threshold.
 
 ### External changes never overwrite dirty local work

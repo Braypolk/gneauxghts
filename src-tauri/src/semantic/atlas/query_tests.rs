@@ -43,6 +43,7 @@ fn atlas_search_ignores_legacy_frontmatter_derived_tags() {
 
 #[test]
 fn query_admission_rejects_background_similarity_and_activity_boosts() {
+    let semantic_floor = atlas_semantic_search_floor(0.70, 0.80);
     let mut item = AtlasSearchMatch {
         note_id: None,
         note_path: "Unrelated.md".into(),
@@ -53,15 +54,71 @@ fn query_admission_rejects_background_similarity_and_activity_boosts() {
         structural_score: 0.0,
         reason_labels: vec!["Recent or accessed".into()],
     };
-    assert!(!admits_search_match(&item, false, 0.70));
+    assert!(!admits_search_match(&item, false, semantic_floor));
     item.semantic_score = 0.71;
-    assert!(admits_search_match(&item, false, 0.70));
+    assert!(!admits_search_match(&item, false, semantic_floor));
+    item.semantic_score = 0.80;
+    assert!(admits_search_match(&item, false, semantic_floor));
     item.semantic_score = 0.0; // embedding unavailable
-    assert!(!admits_search_match(&item, false, 0.70));
+    item.structural_score = 1.0;
+    item.lexical_score = 2.0 / 3.0;
+    assert!(!admits_search_match(&item, false, semantic_floor));
     item.lexical_score = 1.0;
-    assert!(admits_search_match(&item, false, 0.70));
+    assert!(admits_search_match(&item, false, semantic_floor));
     item.lexical_score = 0.0;
-    assert!(admits_search_match(&item, true, 0.70)); // tags already intersected
+    assert!(admits_search_match(&item, true, semantic_floor)); // tags already intersected
     item.semantic_score = 0.22;
-    assert!(admits_search_match(&item, false, 0.18)); // retained Jina calibration
+    let legacy_floor = atlas_semantic_search_floor(0.18, 0.45);
+    assert!(!admits_search_match(&item, false, legacy_floor));
+    item.semantic_score = 0.45;
+    assert!(admits_search_match(&item, false, legacy_floor));
+}
+
+#[test]
+fn semantic_only_matches_stay_near_the_best_query_match() {
+    let floor = atlas_semantic_search_floor(0.70, 0.95);
+    let mut item = AtlasSearchMatch {
+        note_id: None,
+        note_path: "Loosely related.md".into(),
+        document_kind: DocumentKind::Note,
+        score: 1.0,
+        semantic_score: 0.80,
+        lexical_score: 0.0,
+        structural_score: 0.0,
+        reason_labels: vec![],
+    };
+    assert!(!admits_search_match(&item, false, floor));
+    item.semantic_score = 0.93;
+    assert!(admits_search_match(&item, false, floor));
+    item.semantic_score = f32::NAN;
+    assert!(!admits_search_match(&item, false, floor));
+    item.lexical_score = 1.0;
+    assert!(admits_search_match(&item, false, floor));
+}
+
+#[test]
+fn text_matches_require_complete_words_and_every_query_term() {
+    for (query, title, matched) in [
+        ("rain", "Brainstorming", false),
+        ("go", "Django", false),
+        ("blue bell", "deploy", false),
+        ("blue bell", "Bluebird bell", false), // completed first term must match
+        ("blue bell", "Blue-bell trip", true),
+        ("blue bel", "Blue Bell Day 1", true),
+        ("blue bell", "Blue bells", true),
+        ("rain water budget", "Rain water", false),
+        ("rain water budget", "Budget for rain water", true),
+        ("café", "CAFÉ plans", true),
+    ] {
+        let normalized_query = normalize_search_text(query);
+        let terms = search_words(&normalized_query)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lexical_note_score(&terms, &[title], &[]) >= 1.0,
+            matched,
+            "{query:?} / {title:?}"
+        );
+    }
 }

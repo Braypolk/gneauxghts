@@ -21,7 +21,7 @@ impl EmbeddingProvider for CountingQueryProvider {
         Ok(texts
             .iter()
             .map(|text| {
-                if text == "zxqvnoidea" {
+                if text == "zxqvnoidea" || text == "blue bell" {
                     vec![0.0, 0.0, 1.0]
                 } else {
                     vec![1.0, 0.0, 0.0]
@@ -292,8 +292,28 @@ fn atlas_query_filters_real_index_rows_before_returning_map_matches() {
     let mut connection = open_database(&active.db_path).unwrap();
     for (title, vector) in [
         ("Irrigation", vec![0.8, 0.6, 0.0]),
-        ("Invoices", vec![0.6, 0.8, 0.0]),
+        (
+            "Invoices",
+            vec![0.71, (1.0_f32 - 0.71_f32.powi(2)).sqrt(), 0.0],
+        ),
+        ("Brainstorming", vec![0.0, 1.0, 0.0]),
+        ("Rain water budget", vec![0.0, 1.0, 0.0]),
+        ("Rain water", vec![0.0, 1.0, 0.0]),
         ("Rain barrel", vec![0.0, 1.0, 0.0]),
+        // Representative real-model scores from the reported "blue bell" case:
+        // an unrelated note can score almost identically to a named match.
+        (
+            "deploy",
+            vec![0.0, (1.0_f32 - 0.7124_f32.powi(2)).sqrt(), 0.7124],
+        ),
+        (
+            "Blue Bell Day 1",
+            vec![0.0, (1.0_f32 - 0.7496_f32.powi(2)).sqrt(), 0.7496],
+        ),
+        (
+            "Blue Bell trip 1 summary",
+            vec![0.0, (1.0_f32 - 0.7128_f32.powi(2)).sqrt(), 0.7128],
+        ),
     ] {
         let path = temp.path().join(format!("{title}.md"));
         fs::write(&path, title).unwrap();
@@ -337,12 +357,43 @@ fn atlas_query_filters_real_index_rows_before_returning_map_matches() {
             .unwrap()
     };
     let response = search("rain");
-    assert_eq!(response.matches.len(), 2); // lexical Rain barrel + semantic Irrigation
-    assert!(!response
-        .matches
-        .iter()
-        .any(|hit| hit.note_path.ends_with("Invoices.md")));
+    let names = |response: atlas::AtlasSearchResponse| {
+        let mut names = response
+            .matches
+            .into_iter()
+            .map(|hit| {
+                Path::new(&hit.note_path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        names(response),
+        vec![
+            "Irrigation.md",
+            "Rain barrel.md",
+            "Rain water budget.md",
+            "Rain water.md"
+        ]
+    );
+    assert_eq!(
+        names(search("rain water budget")),
+        vec!["Irrigation.md", "Rain water budget.md"]
+    );
+    assert_eq!(
+        names(search("blue bell")),
+        vec!["Blue Bell Day 1.md", "Blue Bell trip 1 summary.md"]
+    );
+    assert_eq!(
+        names(search("tag:garden blue bell")),
+        vec!["Blue Bell Day 1.md", "Blue Bell trip 1 summary.md"]
+    );
     assert!(search("zxqvnoidea").matches.is_empty());
-    assert_eq!(search("tag:garden").matches.len(), 3);
+    assert_eq!(search("tag:garden").matches.len(), 9);
     assert!(search("tag:absent").matches.is_empty());
 }

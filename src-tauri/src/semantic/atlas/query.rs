@@ -5,6 +5,10 @@ const ATLAS_SEARCH_LEXICAL_WEIGHT: f32 = 0.25;
 const ATLAS_SEARCH_STRUCTURAL_WEIGHT: f32 = 0.10;
 const ATLAS_SEARCH_RECENCY_WEIGHT: f32 = 0.07;
 const ATLAS_SEARCH_FREQUENCY_WEIGHT: f32 = 0.03;
+// A map filter needs stronger evidence than the broad retrieval candidate floor.
+// Express both cutoffs above that floor so retained providers keep their scale.
+const ATLAS_SEMANTIC_MIN_HEADROOM: f32 = 0.20;
+const ATLAS_SEMANTIC_BEST_HEADROOM: f32 = 0.80;
 
 use super::*;
 
@@ -59,9 +63,8 @@ impl ActiveSemanticState {
         };
         let now = current_time_millis()?;
         let normalized_query = normalize_search_text(&trimmed_query);
-        let terms = normalized_query
-            .split_whitespace()
-            .filter(|term| !term.is_empty())
+        let terms = search_words(&normalized_query)
+            .into_iter()
             .map(|term| term.to_string())
             .collect::<Vec<_>>();
 
@@ -158,14 +161,15 @@ impl ActiveSemanticState {
                     },
                 }
             })
-            .filter(|item| {
-                admits_search_match(
-                    item,
-                    trimmed_query.is_empty(),
-                    self.provider.minimum_text_score(),
-                )
-            })
             .collect::<Vec<_>>();
+        let semantic_floor = atlas_semantic_search_floor(
+            self.provider.minimum_text_score(),
+            matches
+                .iter()
+                .map(|item| item.semantic_score)
+                .fold(0.0, f32::max),
+        );
+        matches.retain(|item| admits_search_match(item, trimmed_query.is_empty(), semantic_floor));
         matches.sort_by(|left, right| {
             right
                 .score
@@ -185,13 +189,28 @@ impl ActiveSemanticState {
         })
     }
 }
-// Activity affects ordering only. Relevance is calibrated for the active provider;
-// the map must not apply a second, model-independent similarity threshold.
+fn atlas_semantic_search_floor(provider_floor: f32, best_score: f32) -> f32 {
+    provider_floor
+        + ((1.0 - provider_floor) * ATLAS_SEMANTIC_MIN_HEADROOM)
+            .max((best_score - provider_floor) * ATLAS_SEMANTIC_BEST_HEADROOM)
+}
+
+// Activity and structural boosts affect ordering only. Text must cover the full
+// query; semantic-only hits must clear the map floor and stay near the best hit.
 fn admits_search_match(item: &AtlasSearchMatch, tags_only: bool, semantic_floor: f32) -> bool {
     tags_only
-        || item.lexical_score >= 0.65
-        || item.structural_score >= 0.38
+        || item.lexical_score >= 1.0
         || (item.semantic_score.is_finite() && item.semantic_score >= semantic_floor)
+}
+
+fn search_words(text: &str) -> Vec<&str> {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+fn term_matches_word(term: &str, word: &str, final_term: bool) -> bool {
+    word == term || (final_term && term.chars().count() >= 3 && word.starts_with(term))
 }
 
 fn lexical_note_score(terms: &[String], text_parts: &[&str], tags: &[String]) -> f32 {
@@ -199,22 +218,17 @@ fn lexical_note_score(terms: &[String], text_parts: &[&str], tags: &[String]) ->
         return 0.0;
     }
     let haystack = normalize_search_text(&format!("{} {}", text_parts.join(" "), tags.join(" ")));
+    let words = search_words(&haystack);
     let matched = terms
         .iter()
-        .filter(|term| {
-            haystack
-                .split_whitespace()
-                .any(|word| word == term.as_str())
-                || haystack.contains(term.as_str())
+        .enumerate()
+        .filter(|(index, term)| {
+            words
+                .iter()
+                .any(|word| term_matches_word(term, word, *index + 1 == terms.len()))
         })
         .count();
-    let coverage = matched as f32 / terms.len().max(1) as f32;
-    let phrase_bonus = if haystack.contains(&terms.join(" ")) {
-        0.18
-    } else {
-        0.0
-    };
-    (coverage + phrase_bonus).clamp(0.0, 1.0)
+    matched as f32 / terms.len() as f32
 }
 
 fn title_tag_path_score(
@@ -225,7 +239,7 @@ fn title_tag_path_score(
     note_path: &str,
     tags: &[String],
 ) -> f32 {
-    if normalized_query.is_empty() {
+    if normalized_query.is_empty() || terms.is_empty() {
         return 0.0;
     }
     let title = normalize_search_text(title);
@@ -233,22 +247,28 @@ fn title_tag_path_score(
     let note_path = normalize_search_text(note_path);
     let tags = normalize_search_text(&tags.join(" "));
     let exact = [
-        (title.contains(normalized_query), 0.48_f32),
-        (tags.contains(normalized_query), 0.28_f32),
-        (file_name.contains(normalized_query), 0.18_f32),
-        (note_path.contains(normalized_query), 0.12_f32),
+        (&title, 0.48_f32),
+        (&tags, 0.28_f32),
+        (&file_name, 0.18_f32),
+        (&note_path, 0.12_f32),
     ]
     .into_iter()
-    .filter_map(|(matched, weight)| matched.then_some(weight))
+    .filter_map(|(text, weight)| (lexical_note_score(terms, &[text], &[]) >= 1.0).then_some(weight))
     .sum::<f32>();
     let term_hits = terms
         .iter()
-        .map(|term| {
-            if title.contains(term) {
+        .enumerate()
+        .map(|(index, term)| {
+            let contains = |text: &str| {
+                search_words(text)
+                    .iter()
+                    .any(|word| term_matches_word(term, word, index + 1 == terms.len()))
+            };
+            if contains(&title) {
                 0.12
-            } else if tags.contains(term) {
+            } else if contains(&tags) {
                 0.1
-            } else if file_name.contains(term) || note_path.contains(term) {
+            } else if contains(&file_name) || contains(&note_path) {
                 0.05
             } else {
                 0.0
