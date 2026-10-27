@@ -1,4 +1,5 @@
 use crate::{
+    app::watcher_health::{WatcherFailure, WatcherHealth},
     index::AppState,
     semantic::db::content_hash,
     services::note_timeline::{
@@ -289,6 +290,7 @@ impl DirtyQueue {
 }
 
 pub(crate) struct VaultWatcherHandle {
+    health: std::sync::Arc<WatcherHealth>,
     watcher: Option<RecommendedWatcher>,
     queue: std::sync::Arc<DirtyQueue>,
     debounce: Option<thread::JoinHandle<()>>,
@@ -297,6 +299,7 @@ pub(crate) struct VaultWatcherHandle {
 
 impl VaultWatcherHandle {
     pub(crate) fn stop_and_join(&mut self) -> Result<(), String> {
+        self.health.stop();
         self.watcher.take();
         self.queue.stop();
         let mut first_error = None;
@@ -317,28 +320,56 @@ impl VaultWatcherHandle {
 }
 
 pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherHandle, String> {
-    let notes_dir = app_handle
+    let state = app_handle
         .try_state::<AppState>()
-        .ok_or_else(|| "Application state unavailable".to_string())?
-        .running_vault()
-        .root()
-        .to_path_buf();
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+        .ok_or_else(|| "Application state unavailable".to_string())?;
+    let health = state.watcher_health.clone();
+    let notes_dir = state.running_vault().root().to_path_buf();
+    drop(state);
+    let result = start_vault_watcher_inner(app_handle, notes_dir, health.clone());
+    match &result {
+        Ok(_) => health.started(),
+        Err(_) => health.startup_failed(WatcherFailure::Other),
+    }
+    result
+}
+
+fn start_vault_watcher_inner(
+    app_handle: AppHandle,
+    notes_dir: PathBuf,
+    health: std::sync::Arc<WatcherHealth>,
+) -> Result<VaultWatcherHandle, String> {
+    fs::create_dir_all(&notes_dir).map_err(|err| {
+        health.startup_failed(WatcherFailure::from_io(&err));
+        err.to_string()
+    })?;
 
     let queue = std::sync::Arc::new(DirtyQueue::new());
 
     let callback_queue = queue.clone();
     let callback_notes_dir = notes_dir.clone();
+    let callback_health = health.clone();
     let mut watcher = RecommendedWatcher::new(
         move |result| {
-            collect_watch_result(&callback_queue, &callback_notes_dir, result);
+            collect_watch_result(
+                &callback_queue,
+                &callback_notes_dir,
+                &callback_health,
+                result,
+            );
         },
         NotifyConfig::default(),
     )
-    .map_err(|err| err.to_string())?;
+    .map_err(|err| {
+        health.startup_failed(WatcherFailure::from_notify(&err));
+        err.to_string()
+    })?;
     watcher
         .watch(&notes_dir, RecursiveMode::Recursive)
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            health.startup_failed(WatcherFailure::from_notify(&err));
+            err.to_string()
+        })?;
 
     let debounce = spawn_debounce_flush_loop(app_handle.clone(), queue.clone(), notes_dir.clone())?;
     let reconcile = match spawn_background_reconcile_loop(app_handle, queue.clone(), notes_dir) {
@@ -351,6 +382,7 @@ pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherH
         }
     };
     Ok(VaultWatcherHandle {
+        health,
         watcher: Some(watcher),
         queue,
         debounce: Some(debounce),
@@ -361,10 +393,16 @@ pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherH
 /// Watcher callback: cheap. Filter events and record dirty paths only; all
 /// disk reads and index queueing happen later on the debounce thread so a
 /// burst never blocks the notify thread.
-fn collect_watch_result(queue: &DirtyQueue, notes_dir: &Path, result: notify::Result<Event>) {
+fn collect_watch_result(
+    queue: &DirtyQueue,
+    notes_dir: &Path,
+    health: &WatcherHealth,
+    result: notify::Result<Event>,
+) {
     let event = match result {
         Ok(event) => event,
         Err(error) => {
+            health.callback_failed(&error);
             eprintln!("vault watcher error: {error}");
             return;
         }
@@ -866,6 +904,41 @@ mod tests {
         path::{Path, PathBuf},
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn callback_errors_retain_health_while_later_file_events_still_enter_the_queue() {
+        use crate::app::watcher_health::{WatcherFailure, WatcherHealth, WatcherStatus};
+        let health = WatcherHealth::new(EventBus::disabled());
+        let queue = DirtyQueue::new();
+        let root = Path::new("/disposable-vault");
+        health.started();
+        super::collect_watch_result(
+            &queue,
+            root,
+            &health,
+            Err(notify::Error::new(notify::ErrorKind::MaxFilesWatch)),
+        );
+        let degraded = health.snapshot();
+        assert_eq!(degraded.status, WatcherStatus::Degraded);
+        assert_eq!(degraded.reason, Some(WatcherFailure::WatchLimit));
+        assert!(degraded.reconciliation_running);
+        assert!(queue.state.lock().unwrap().paths.is_empty());
+
+        let path = root.join("external.md");
+        super::collect_watch_result(
+            &queue,
+            root,
+            &health,
+            Ok(notify::Event::new(EventKind::Create(CreateKind::File)).add_path(path.clone())),
+        );
+        assert!(queue.state.lock().unwrap().paths.contains(&path));
+        assert_eq!(health.snapshot(), degraded);
+        health.stop();
+        queue.stop();
+        let stopped = health.snapshot();
+        super::collect_watch_result(&queue, root, &health, Err(notify::Error::generic("late")));
+        assert_eq!(health.snapshot(), stopped);
+    }
 
     #[test]
     fn ignores_metadata_only_changes() {

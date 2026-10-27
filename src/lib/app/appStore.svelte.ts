@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ListenerScope } from './listenerScope';
 import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '#lib/types/semantic.js';
-import type { VaultInfo } from '#lib/types/vault.js';
+import type { VaultInfo, WatcherHealth } from '#lib/types/vault.js';
 import {
   loadBootstrapPayload,
   type BootstrapAppResult
@@ -50,12 +50,14 @@ type AppSnapshotSlice = keyof Omit<AppSnapshotAdmission, 'generation'>;
 
 type AppSnapshot = {
   vault?: VaultInfo;
+  watcherHealth?: WatcherHealth;
   semanticStatus?: SemanticStatus | null;
   indexRevision?: number;
 };
 
 export interface SettingsViewPayload {
   vault: VaultInfo;
+  watcherHealth: WatcherHealth;
   semanticStatus: SemanticStatus;
   semanticSettings: SemanticSettings;
   semanticDebug: SemanticDebugSnapshot;
@@ -63,6 +65,7 @@ export interface SettingsViewPayload {
 
 export class AppStore {
   vaultInfo = $state<VaultInfo | null>(null);
+  watcherHealth = $state<WatcherHealth | null>(null);
   semanticStatus = $state<SemanticStatus | null>(null);
   indexRevision = $state<number>(0);
   ready = $state(false);
@@ -92,24 +95,22 @@ export class AppStore {
     const scope = new ListenerScope();
     this.#listenerScope = scope;
     const attempt = (async () => {
-      // Establish event admission while the backend restores canonical Markdown.
-      // Editable session application still waits for both, so the first save
-      // cannot outrun its note-saved listener.
-      const [bootstrap, listeners] = await Promise.all([
-        loadBootstrapPayload().then(payload => {
-          startupMark('canonical-bootstrap-payload', { noteId: payload.session.currentNoteId });
-          observeStartupReadiness(payload.session.currentNoteId);
-          return payload;
-        }),
-        this.#createListeners(generation, scope)
-      ]);
-      const payload = bootstrap;
+      // Attach before fetching: an early startup failure must be present in
+      // either the retained snapshot or the event queue, with no listener gap.
+      const listeners = await this.#createListeners(generation, scope);
+      if (generation !== this.#generation || scope.closed) {
+        throw new Error('Application bootstrap was disposed');
+      }
+      const payload = await loadBootstrapPayload();
+      startupMark('canonical-bootstrap-payload', { noteId: payload.session.currentNoteId });
+      observeStartupReadiness(payload.session.currentNoteId);
       if (generation !== this.#generation) return payload;
       listeners();
       startupMark('bootstrap-listeners-admitted');
       this.#admitSnapshot(
         {
           vault: payload.vault,
+          watcherHealth: payload.watcherHealth,
           semanticStatus: payload.semanticStatus,
           indexRevision: payload.indexRevision ?? 0
         },
@@ -137,6 +138,7 @@ export class AppStore {
     this.#detachListeners();
     this.#bootstrapPromise = null;
     this.ready = false;
+    this.watcherHealth = null;
   }
 
   #detachListeners() {
@@ -182,6 +184,7 @@ export class AppStore {
   #admitSnapshot(snapshot: AppSnapshot, admission: AppSnapshotAdmission) {
     const admitted = { vault: false, semanticStatus: false, indexRevision: false };
     if (admission.generation !== this.#generation) return admitted;
+    if (snapshot.watcherHealth) this.#admitWatcherHealth(snapshot.watcherHealth);
     if (
       'vault' in snapshot &&
       admission.vault !== null &&
@@ -215,7 +218,7 @@ export class AppStore {
   async loadSettingsView() {
     const admission = this.#beginSnapshotAdmission('vault', 'semanticStatus');
     const view = await invoke<SettingsViewPayload>('get_settings_view');
-    this.#admitSnapshot({ vault: view.vault, semanticStatus: view.semanticStatus }, admission);
+    this.#admitSnapshot({ vault: view.vault, watcherHealth: view.watcherHealth, semanticStatus: view.semanticStatus }, admission);
     return { semanticSettings: view.semanticSettings, semanticDebug: view.semanticDebug };
   }
 
@@ -238,6 +241,14 @@ export class AppStore {
     this.#admitSnapshot({ semanticStatus }, admission);
   }
 
+  #admitWatcherHealth(health: WatcherHealth) {
+    // This slice carries the native lifetime's revision. It orders snapshots
+    // and callbacks even when IPC delivers them in a different order.
+    if (!this.watcherHealth || health.revision > this.watcherHealth.revision) {
+      this.watcherHealth = health;
+    }
+  }
+
   #dispatchToListeners<T>(channel: string, listeners: Set<Listener<T>>, payload: T): void {
     for (const listener of listeners) {
       try {
@@ -258,6 +269,7 @@ export class AppStore {
         else pendingEvents.push(() => callback(event.payload));
       }));
     await Promise.all([
+      attach<WatcherHealth>('watcher-health-changed', payload => this.#admitWatcherHealth(payload)),
       attach<VaultNoteChangedPayload>('vault-note-changed', (payload) => {
         this.#dispatchToListeners('vault-note-changed', this.#vaultNoteChangedListeners, payload);
       }),

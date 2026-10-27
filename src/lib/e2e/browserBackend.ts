@@ -640,6 +640,7 @@ function historicalDiff(
     if (command === 'bootstrap_app') {
       return {
         vault: vaultInfo(),
+        watcherHealth: { revision: 1, status: 'watching', reason: null, reconciliationRunning: true },
         noteSession: session(activeNote),
         semanticStatus,
         indexRevision: 1
@@ -807,6 +808,7 @@ function historicalDiff(
     if (command === 'get_settings_view') {
       return {
         vault: vaultInfo(),
+        watcherHealth: { revision: 1, status: 'watching', reason: null, reconciliationRunning: true },
         semanticStatus,
         semanticSettings: semanticStatus.settings,
         semanticDebug: null

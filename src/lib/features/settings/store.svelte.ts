@@ -111,6 +111,10 @@ export class SettingsStore {
     return this.app.vaultInfo;
   }
 
+  get watcherHealth() {
+    return this.app.watcherHealth;
+  }
+
   get usesVaultContainer() {
     return this.vaultInfo != null && this.vaultInfo.canPickArbitraryPath === false;
   }

@@ -2,7 +2,7 @@ import type { SettingsViewPayload } from '#lib/app/appStore.svelte.js';
 import type { BootstrapAppResult } from '#lib/features/notepad/session/bootstrap.js';
 import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 import type { SemanticStatus } from '#lib/types/semantic.js';
-import type { VaultInfo } from '#lib/types/vault.js';
+import type { VaultInfo, WatcherHealth } from '#lib/types/vault.js';
 import type { HistoryHealthReport } from '#lib/types/history.js';
 
 export const semanticStatusFixture: SemanticStatus = {
@@ -87,12 +87,15 @@ export const vaultFixture: VaultInfo = {
 };
 
 export function bootstrapFixture(): BootstrapAppResult {
-  return { vault: { ...vaultFixture }, semanticStatus: structuredClone(semanticStatusFixture), indexRevision: 1, session: createEmptySessionSnapshot() };
+  return { vault: { ...vaultFixture }, watcherHealth: { ...watcherHealthFixture }, semanticStatus: structuredClone(semanticStatusFixture), indexRevision: 1, session: createEmptySessionSnapshot() };
 }
+
+export const watcherHealthFixture: WatcherHealth = { revision: 1, status: 'watching', reason: null, reconciliationRunning: true };
 
 export function settingsViewFixture(): SettingsViewPayload {
   return {
     vault: { ...vaultFixture },
+    watcherHealth: { ...watcherHealthFixture },
     semanticStatus: structuredClone(semanticStatusFixture),
     semanticSettings: { ...semanticStatusFixture.settings },
     semanticDebug: { capturedAtMillis: 1, recentEvents: [], metrics: {

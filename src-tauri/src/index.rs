@@ -48,6 +48,7 @@ pub(crate) struct AppState {
     pub(crate) semantic: Arc<SemanticState>,
     /// Typed domain event bus (vault/note/semantic/chat-projection).
     pub(crate) events: crate::app::EventBus,
+    pub(crate) watcher_health: Arc<crate::app::watcher_health::WatcherHealth>,
     interactive_invalidation: Mutex<InteractiveInvalidationState>,
     /// Phase 5: bounded cache of recent draft bodies keyed by `(path, hash)`.
     /// Frontend sends only `hash` for keystroke-driven requests; backend
@@ -194,6 +195,9 @@ impl AppState {
             notes_index: Mutex::new(NotesIndex::default()),
             lexical,
             semantic: Arc::new(semantic),
+            watcher_health: Arc::new(crate::app::watcher_health::WatcherHealth::new(
+                events.clone(),
+            )),
             events,
             interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
             draft_cache: Mutex::new(DraftCache::default()),

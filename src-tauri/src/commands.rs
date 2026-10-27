@@ -821,6 +821,7 @@ pub(crate) fn emit_semantic_status_changed(state: &AppState) {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BootstrapAppPayload {
     vault: VaultInfo,
+    watcher_health: crate::app::watcher_health::WatcherHealthSnapshot,
     note_session: NoteSession,
     semantic_status: SemanticStatus,
     index_revision: u64,
@@ -839,6 +840,7 @@ pub(crate) async fn bootstrap_app<R: tauri::Runtime>(
         let index_revision = state.semantic.current_index_revision();
         Ok(BootstrapAppPayload {
             vault,
+            watcher_health: state.watcher_health.snapshot(),
             note_session,
             semantic_status,
             index_revision,
@@ -855,6 +857,7 @@ pub(crate) async fn bootstrap_app<R: tauri::Runtime>(
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsViewPayload {
     vault: VaultInfo,
+    watcher_health: crate::app::watcher_health::WatcherHealthSnapshot,
     semantic_status: SemanticStatus,
     semantic_settings: SemanticSettings,
     semantic_debug: SemanticDebugSnapshot,
@@ -871,6 +874,7 @@ pub(crate) async fn get_settings_view<R: tauri::Runtime>(
         let semantic_debug = state.semantic.debug_snapshot()?;
         Ok(SettingsViewPayload {
             vault,
+            watcher_health: state.watcher_health.snapshot(),
             semantic_status,
             semantic_settings,
             semantic_debug,

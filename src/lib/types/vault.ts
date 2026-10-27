@@ -13,6 +13,13 @@ export interface VaultInfo {
   pathConfigurationNote: string | null;
 }
 
+export interface WatcherHealth {
+  revision: number;
+  status: 'starting' | 'watching' | 'degraded' | 'unavailable' | 'stopped';
+  reason: 'other' | 'permissionDenied' | 'watchLimit' | null;
+  reconciliationRunning: boolean;
+}
+
 export interface VaultFolderInfo {
   name: string;
   path: string;

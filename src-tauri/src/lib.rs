@@ -280,7 +280,7 @@ pub fn run() {
             // watcher is mounted simply trigger the existing periodic
             // reconciliation pass.
             let watcher_handle = app.handle().clone();
-            let _ = thread::Builder::new()
+            if let Err(error) = thread::Builder::new()
                 .name("vault-watcher-startup".to_string())
                 .spawn(move || {
                     match vault_watcher::start_vault_watcher(watcher_handle.clone()) {
@@ -329,7 +329,13 @@ pub fn run() {
                             }
                         }
                     }
-                });
+                })
+            {
+                app.state::<AppState>().watcher_health.startup_failed(
+                    app::watcher_health::WatcherFailure::Other,
+                );
+                eprintln!("vault watcher startup thread failed: {error}");
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

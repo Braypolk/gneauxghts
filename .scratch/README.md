@@ -7,6 +7,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [Watcher health, 2026-10-27](archive/watcher-health-2026-10-27.md): retained startup/callback diagnostics in Vault Settings, truthful periodic-scan status, restart-retained warnings and stale-update/shutdown guards. Retry and fallback scanning remain separate work.
+
 - [Search filter native correction and result presentation](archive/search-filter-native-correction-2026-10-23.md): search preserves literal input after the trusted macOS click reproduction. The fixed-height popup retains results through typing and filters, then replaces them after a quiet period and complete retrieval; skeletons are removed. Records native and browser verification boundaries.
 
 - [Recovery into the original note](archive/draft-recovery-in-place-2026-10-22/README.md): unfinished edits now restore the original identity without duplication; changed or unknown bases require a conflict choice. Seven native cases, three browser cases, 61 frontend and three storage tests passed. Earlier separate-copy evidence is historical.
@@ -17,7 +19,7 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 - [Untitled capture naming](archive/untitled-capture-naming-2026-10-22.md): stable internal filenames keep autosaved titles blank; leaving supplies a short first-line title unless one was chosen.
 - [Atlas relevance](archive/atlas-relevance-2026-10-22.md): calibrated admission while filtering existing map nodes.
 
-- [Upgraded-package capability outcome](archive/package-capabilities-2026-10-21.md): all ready items assigned to this chat are implemented or have a completed bounded no-change experiment. Combined verification passed, including 65 browser specs and 12 native specs; explicit measurement/restart skips and inspector limits are recorded in the outcome. Historical execution tickets are archived; the [plan](package-capabilities/spec.md) retains scope/dispositions. [Image delivery](package-capabilities/issues/05-native-image-delivery.md) belongs to the separate image chat, and [watcher health](package-capabilities/issues/09-watcher-diagnostics.md) and the newly observed [inspector activation limits](package-capabilities/issues/12-inspector-native-activation.md) remain `needs-triage`.
+- [Upgraded-package capability outcome](archive/package-capabilities-2026-10-21.md): all ready items assigned to this chat are implemented or have a completed bounded no-change experiment. Combined verification passed, including 65 browser specs and 12 native specs; explicit measurement/restart skips and inspector limits are recorded in the outcome. Historical execution tickets are archived; the [plan](package-capabilities/spec.md) retains scope/dispositions. [Image delivery](package-capabilities/issues/05-native-image-delivery.md) belongs to the separate image chat. [Watcher health is now implemented](archive/watcher-health-2026-10-27.md); [inspector activation limits](package-capabilities/issues/12-inspector-native-activation.md) remain `needs-triage`.
 
 - [Bottom bar animation inventory](workspace-dock-motion/animation-inventory.md): current surface variants, editor/chat journeys, local exchanges, split layouts, display-size rules, timing, and the acceptance checklist for animation cleanup. The [existing motion spec](workspace-dock-motion/spec.md) supplies implementation context.
 

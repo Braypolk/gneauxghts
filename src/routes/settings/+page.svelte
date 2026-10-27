@@ -11,6 +11,7 @@
   import EditDiffLayoutPanel from '#lib/features/settings/EditDiffLayoutPanel.svelte';
   import HistorySettingsPanel from '#lib/features/settings/HistorySettingsPanel.svelte';
   import SettingsCard from '#lib/features/settings/SettingsCard.svelte';
+  import WatcherHealthPanel from '#lib/features/settings/WatcherHealthPanel.svelte';
   import SettingsLabel from '#lib/features/settings/SettingsLabel.svelte';
   import {
     averageDuration,
@@ -551,6 +552,7 @@
           {/if}
 
           {#if settings.vaultInfo}
+            <WatcherHealthPanel health={settings.watcherHealth} />
             <details class="settings-disclosure" data-settings-anchor="vault-details">
               <summary>Folder details · {settings.vaultInfo.noteCount} notes</summary>
               <div class="mt-4 grid gap-4">

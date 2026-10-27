@@ -57,6 +57,7 @@ concrete state references, independently of Tauri dispatch.
 | Next-launch semantic recovery | Vault-local `semantic-provider.json` stages Gemma or retained Jina; composition selects one provider on launch |
 | Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
 | Next-launch vault selection | The atomically published vault configuration preference; Settings Apply stages it without rebinding running resources |
+| Running Vault watcher diagnostics | `AppState.watcher_health` retains bounded, revisioned health; the existing watcher/lifecycle report startup, callback and terminal shutdown transitions; AppStore admits snapshots/events for Vault Settings |
 
 Compact pane rails derive their geometry from measured workspace space and
 WorkspaceStore's active pane. They retain editor/chat mounts and share the
@@ -133,10 +134,13 @@ it does not recursively start another public navigation operation. The UI suppli
 rendered effects, not getter/setter mirrors or a configurable phase program.
 
 `AppStore` is the sole frontend admission point for bundled bootstrap and the
-shared running/next-launch vault and semantic snapshots. Listener attachment is
-part of bootstrap admission and a failed attempt cleans partial listeners before
-retry. Snapshot loads and commands claim per-slice revisions when they start, so
-older results cannot replace newer events or operations. AppStore also owns complete Settings-view loading and next-launch vault staging;
+shared running/next-launch vault, watcher health and semantic snapshots. Listeners
+attach before the bootstrap request so retained startup diagnostics and events
+have no delivery gap; a failed attempt cleans partial listeners before retry.
+Watcher health carries the native lifetime's monotonic revision to order snapshots
+and events. Other snapshot loads and commands claim per-slice revisions when they
+start, so older results cannot replace newer events or operations. AppStore also
+owns complete Settings-view loading and next-launch vault staging;
 its snapshot revision/admission protocol stays private. Settings retains only
 its editable inputs, action state, and Settings-only diagnostics; the mounted
 Notepad session separately records whether an admitted bootstrap session has

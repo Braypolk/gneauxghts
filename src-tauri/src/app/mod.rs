@@ -6,6 +6,7 @@
 
 pub(crate) mod events;
 pub(crate) mod lifecycle;
+pub(crate) mod watcher_health;
 
 pub(crate) use events::EventBus;
 pub(crate) use lifecycle::{AppLifecycle, PrepareRestartReceipt};

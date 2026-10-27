@@ -316,6 +316,9 @@ impl AppLifecycle {
                 .finish_restart_shutdown()
                 .map_err(|error| error.message)?;
             database.finish_restart_shutdown()?;
+            // Retire diagnostics even if background registration has not yet
+            // produced a handle. Late startup/callback work cannot revive it.
+            state.watcher_health.stop();
             if let Some(mut watcher) = self
                 .watcher
                 .lock()
@@ -473,6 +476,19 @@ mod tests {
             assert!(first.timeline_portable);
             assert!(second.timeline_portable);
         });
+        // No watcher handle was installed: a late background startup must not
+        // revive diagnostics after the lifecycle has closed the Running Vault.
+        let state = app.state::<AppState>();
+        let stopped = state.watcher_health.snapshot();
+        assert_eq!(
+            stopped.status,
+            crate::app::watcher_health::WatcherStatus::Stopped
+        );
+        state.watcher_health.started();
+        state
+            .watcher_health
+            .callback_failed(&notify::Error::generic("late callback"));
+        assert_eq!(state.watcher_health.snapshot(), stopped);
         crate::state::set_notes_root_override(None).unwrap();
     }
 

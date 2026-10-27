@@ -6,6 +6,7 @@
 //! the original event channel names (e.g. `vault-note-changed`) so the
 //! contract across IPC is preserved.
 
+use super::watcher_health::WatcherHealthSnapshot;
 use crate::note::DocumentKind;
 use crate::semantic::SemanticStatus;
 use crate::state::VaultInfo;
@@ -53,6 +54,7 @@ pub(crate) enum AppEvent {
     },
     /// Vault location or note count changed; carries the fresh `VaultInfo`.
     VaultChanged(VaultInfo),
+    WatcherHealthChanged(WatcherHealthSnapshot),
 }
 
 impl AppEvent {
@@ -62,6 +64,7 @@ impl AppEvent {
             AppEvent::SemanticStatusChanged(_) => SEMANTIC_STATUS_CHANGED_EVENT,
             AppEvent::NoteSaved { .. } => NOTE_SAVED_EVENT,
             AppEvent::VaultChanged(_) => VAULT_CHANGED_EVENT,
+            AppEvent::WatcherHealthChanged(_) => "watcher-health-changed",
         })
     }
 
@@ -99,6 +102,9 @@ impl AppEvent {
             }),
             AppEvent::VaultChanged(info) => {
                 serde_json::to_value(info).unwrap_or_else(|_| json!({}))
+            }
+            AppEvent::WatcherHealthChanged(health) => {
+                serde_json::to_value(health).unwrap_or_else(|_| json!({}))
             }
         }
     }
@@ -178,6 +184,10 @@ impl EventBus {
     pub(crate) fn vault_changed(&self, info: VaultInfo) {
         self.emit(AppEvent::VaultChanged(info));
     }
+
+    pub(crate) fn watcher_health_changed(&self, health: WatcherHealthSnapshot) {
+        self.emit(AppEvent::WatcherHealthChanged(health));
+    }
 }
 
 #[cfg(test)]
@@ -187,6 +197,23 @@ mod tests {
         semantic::{embed::ModelInfo, SemanticHealth, SemanticIndexJob, SemanticSettings},
         test_support::load_json_fixture,
     };
+
+    #[test]
+    fn watcher_health_event_has_a_safe_versioned_payload() {
+        let event = AppEvent::WatcherHealthChanged(WatcherHealthSnapshot {
+            revision: 2,
+            status: super::super::watcher_health::WatcherStatus::Degraded,
+            reason: Some(super::super::watcher_health::WatcherFailure::WatchLimit),
+            reconciliation_running: true,
+        });
+        assert_eq!(event.channel().0, "watcher-health-changed");
+        assert_eq!(
+            event.legacy_payload(),
+            json!({
+                "revision": 2, "status": "degraded", "reason": "watchLimit", "reconciliationRunning": true
+            })
+        );
+    }
 
     #[test]
     fn typed_non_streaming_events_match_contract_fixture() {

@@ -95,11 +95,12 @@ acceptance and must not be inferred from it.
 
 The bundled application bootstrap is the only initial-session retrieval path.
 Editing remains unavailable until both its payload and every required backend
-listener are admitted; a failed attempt removes partial listeners and may be
-retried. Newer events and operations win over delayed bootstrap, Settings, and
-command results independently for each shared snapshot. Settings consumes the
-same running/next-launch vault and semantic snapshots rather than retaining a
-second copy. Editor asset paths always derive from the Running Vault, including
+listener are admitted. Listeners attach before the payload request; a failed
+attempt removes partial listeners and may be retried. Newer events and operations
+win over delayed bootstrap, Settings, and command results independently for each
+shared snapshot. Settings consumes the same running/next-launch vault, watcher
+health and semantic snapshots rather than retaining a second copy. Editor asset
+paths always derive from the Running Vault, including
 after a different Next-launch Vault Selection has been staged. Backend readiness
 does not itself mean the mounted editor has adopted the session, and obsolete
 mount work never applies to a later editor lifetime.
@@ -111,6 +112,24 @@ bounded slices through the existing serialized pane lifecycle; obsolete or
 disposed work cannot reveal a document.
 Already formatted, stable viewports need no repeated frame waits. The loading
 label appears only after 150 ms; its absence is not an editor readiness signal.
+
+### File-watching health describes the Running Vault
+
+Vault Settings consumes retained native health through AppStore, including
+failures that preceded opening Settings. Startup failure means watching and
+periodic reconciliation did not start; a callback error after successful startup
+keeps periodic scanning active but does not establish reliable OS notifications.
+Reasons are bounded, curated categories rather than filesystem paths or raw logs.
+Repeated errors do not flood health updates. A watch-capacity warning cannot be
+replaced by a less specific later error. Callback warnings remain until process
+restart; file events and successful scans do not prove watcher recovery.
+
+Health belongs to the immutable Running Vault even when a different next-launch
+vault is staged. Native revisions order retained snapshots and events; older
+delivery cannot replace newer state. Terminal shutdown retires health admission
+before watcher teardown, including when registration has not produced a handle,
+so late startup/callback work cannot revive it. This diagnostic slice introduces
+no watcher retry, registration-failure fallback scanning or new service lifecycle.
 
 ### New Idea changes only the invoking pane
 
