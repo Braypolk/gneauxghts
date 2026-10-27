@@ -84,7 +84,10 @@ describe('responsive layout interactions', () => {
     };
     await assertCalendar();
     await replaceBody('- [ ] Narrow calendar task');
-    await viewport(320, 560); await navigateAppTab('List');
+    await viewport(320, 560);
+    // Media-query admission follows the driver resize; wait for the compact nav.
+    await $('button[aria-label="Switch tab"]').waitForDisplayed();
+    await navigateAppTab('List');
     await $('button[aria-label="Add due date: Narrow calendar task"]').click();
     await expectInViewport('dialog.date-time-picker'); await assertCalendar();
     await $('button[aria-label^="Edit due date:"]').waitForDisplayed();
@@ -199,10 +202,10 @@ describe('responsive layout interactions', () => {
     await provider.waitForExist(); await provider.scrollIntoView(); await provider.selectByAttribute('value', 'local');
     const configure = await $('button[aria-label="Configure fixture-local"]');
     await configure.scrollIntoView(); await configure.click();
-    await expectInViewport('[role="dialog"]');
-    const save = await $('[role="dialog"]').$('button=Save changes');
+    await expectInViewport('dialog[aria-labelledby="local-model-editor-title"]');
+    const save = await $('dialog[aria-labelledby="local-model-editor-title"]').$('button=Save changes');
     await save.scrollIntoView(); await save.click();
-    await $('[role="dialog"]').waitForExist({ reverse: true });
+    await $('dialog[aria-labelledby="local-model-editor-title"]').waitForExist({ reverse: true });
     const calls = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(call => call.command === 'chat_set_local_model_capabilities'));
     expect(calls).toHaveLength(1);
   });

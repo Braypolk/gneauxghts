@@ -11,6 +11,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 - [Chat activity indicators](archive/chat-activity-indicators-2026-10-23.md): running and unread dots on the chat switcher, history button and conversation rows, with persistent read acknowledgement and browser regression coverage.
 
+- [Small-view audit](small-view-audit/report.md): six viewport sizes and 34 passing audit regressions. [Modal focus and touch targets are corrected](archive/small-view-focus-touch-2026-10-23.md), with 45 passing browser regressions and clean type checks. Three landscape/short-height findings remain deferred at the user’s request.
+
 - [Search filter native correction and result presentation](archive/search-filter-native-correction-2026-10-23.md): search preserves literal input after the trusted macOS click reproduction. The fixed-height popup retains results through typing and filters, then replaces them after a quiet period and complete retrieval; skeletons are removed. Records native and browser verification boundaries.
 
 - [Recovery into the original note](archive/draft-recovery-in-place-2026-10-22/README.md): unfinished edits now restore the original identity without duplication; changed or unknown bases require a conflict choice. Seven native cases, three browser cases, 61 frontend and three storage tests passed. Earlier separate-copy evidence is historical.

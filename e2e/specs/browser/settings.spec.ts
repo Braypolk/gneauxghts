@@ -193,8 +193,8 @@ describe('searchable settings workspace', () => {
     await $('button[aria-label="Add a model manually"]').click();
     await $('#manual-local-model').setValue('manual-model');
     await $('button=Add').click();
-    await $('[role="dialog"][aria-labelledby="local-model-editor-title"]').waitForDisplayed();
-    await $('[role="dialog"] button[aria-label="Close model editor"]').click();
+    await $('dialog[aria-labelledby="local-model-editor-title"]').waitForDisplayed();
+    await $('dialog[aria-labelledby="local-model-editor-title"] button[aria-label="Close model editor"]').click();
     await $('button[aria-label="Configure manual-model"]').waitForDisplayed();
     await refresh().click();
     await $('button[aria-label="Configure refreshed-model"]').waitForDisplayed();
@@ -262,19 +262,15 @@ describe('searchable settings workspace', () => {
     });
     await category('ai').click();
     await $('button[aria-label="Configure saved-local-model"]').click();
-    await $('[role="dialog"][aria-labelledby="local-model-editor-title"]').waitForDisplayed();
+    await $('dialog[aria-labelledby="local-model-editor-title"]').waitForDisplayed();
 
-    // The plain dialog leaves background controls keyboard-accessible. Switching
-    // provider unmounts LocalModelSettings while its parent still shows feedback.
+    // Dismiss the modal before changing its background provider. The capability
+    // request is still pending when LocalModelSettings unmounts.
+    await browser.keys('Escape');
     const provider = () => $('[data-settings-anchor="chat-provider"] select');
-    for (let attempts = 0; attempts < 8 && !await provider().isFocused(); attempts++) {
-      await browser.keys(['Shift', 'Tab']);
-    }
-    await expect(provider()).toBeFocused();
-    await browser.keys('OpenAI Responses API');
-    await browser.keys('Tab');
+    await provider().selectByAttribute('value', 'openai');
     await expect(provider()).toHaveValue('openai');
-    await expect($('[role="dialog"][aria-labelledby="local-model-editor-title"]')).not.toExist();
+    await expect($('dialog[aria-labelledby="local-model-editor-title"]')).not.toExist();
     await expect($('[role="alert"]')).not.toExist();
     await browser.execute(async (failure) => {
       await (window as unknown as { __delayedCapabilities: { settle: (failure: boolean) => Promise<void> } }).__delayedCapabilities.settle(failure);

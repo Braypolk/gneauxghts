@@ -56,6 +56,7 @@
   let draftCapabilities = $state<LocalModelCapabilitySelection>({ ...defaultCapabilities });
   let loadingCapabilitiesFor = $state<string | null>(null);
   let isSavingCapabilities = $state(false);
+  let editorOrigin: HTMLElement | null = null;
 
   let disposed = false;
   let discoveryGeneration = 0;
@@ -158,8 +159,12 @@
     }
   }
 
-  async function openEditor(model: string) {
+  async function openEditor(
+    model: string,
+    origin: HTMLElement | null = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  ) {
     if (disposed) return;
+    editorOrigin = origin;
     const endpoint = baseUrl;
     const generation = endpointGeneration;
     const current = () => !disposed && endpoint === baseUrl && generation === endpointGeneration && editingModel === model;
@@ -215,13 +220,32 @@
     await openEditor(model);
   }
 
-  function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && editingModel) closeEditor();
+  function mountEditorDialog(dialog: HTMLDialogElement) {
+    const origin = editorOrigin;
+    dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>('[data-model-editor-close]')?.focus({ preventScroll: true });
+    return {
+      destroy() {
+        dialog.close();
+        if (origin?.isConnected) origin.focus({ preventScroll: true });
+      }
+    };
+  }
+
+  function handleEditorKeydown(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (event.key !== 'Tab') return;
+    const dialog = event.currentTarget as HTMLDialogElement;
+    const controls = [...dialog.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]')]
+      .filter(control => control.tabIndex >= 0 && !control.matches(':disabled') &&
+        control.getClientRects().length > 0 && getComputedStyle(control).visibility === 'visible');
+    const boundary = event.shiftKey ? controls[0] : controls.at(-1);
+    if (document.activeElement !== boundary) return;
+    event.preventDefault();
+    (event.shiftKey ? controls.at(-1) : controls[0])?.focus();
   }
 
 </script>
-
-<svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="overflow-hidden rounded-lg border border-border/80 bg-background/60">
   <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
@@ -309,10 +333,10 @@
           </button>
           <button
             type="button"
-            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            class="coarse-touch-target inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             aria-label={`Configure ${model.id}`}
             title="Configure model capabilities"
-            onclick={() => void openEditor(model.id)}
+            onclick={(event) => void openEditor(model.id, event.currentTarget)}
           >
             <Pencil class="h-4 w-4" />
           </button>
@@ -338,18 +362,21 @@
 </div>
 
 {#if editingModel}
-  <div class="safe-area-overlay fixed z-50 flex items-center justify-center">
-    <button
-      type="button"
-      class="absolute inset-0 cursor-default bg-background/70 backdrop-blur-sm"
-      aria-label="Close model editor"
-      onclick={closeEditor}
-    ></button>
+  <dialog
+    use:mountEditorDialog
+    class="model-editor-dialog safe-area-overlay fixed z-50 bg-background/70 backdrop-blur-sm"
+    aria-labelledby="local-model-editor-title"
+    onkeydown={handleEditorKeydown}
+    oncancel={(event) => { event.preventDefault(); closeEditor(); }}
+    onpointerdown={(event) => {
+      if (event.target !== event.currentTarget) return;
+      // Keep the pointer's default focus change from undoing focus restoration.
+      event.preventDefault();
+      closeEditor();
+    }}
+  >
     <div
       class="relative z-10 max-h-full w-full max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="local-model-editor-title"
     >
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
@@ -358,7 +385,8 @@
         </div>
         <button
           type="button"
-          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+          class="coarse-touch-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+          data-model-editor-close
           aria-label="Close model editor"
           onclick={closeEditor}
         ><X class="h-4 w-4" /></button>
@@ -418,10 +446,12 @@
                   role="switch"
                   aria-checked={draftCapabilities[item.key as Capability]}
                   aria-label={`${item.label} capability`}
-                  class={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${draftCapabilities[item.key as Capability] ? 'bg-primary' : 'bg-muted'}`}
+                  class="coarse-touch-target inline-flex h-6 w-11 shrink-0 items-center justify-center rounded-full"
                   onclick={() => toggleCapability(item.key as Capability)}
                 >
-                  <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${draftCapabilities[item.key as Capability] ? 'translate-x-5' : 'translate-x-0'}`}></span>
+                  <span class={`relative h-6 w-11 rounded-full transition-colors ${draftCapabilities[item.key as Capability] ? 'bg-primary' : 'bg-muted'}`} aria-hidden="true">
+                    <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform ${draftCapabilities[item.key as Capability] ? 'translate-x-5' : 'translate-x-0'}`}></span>
+                  </span>
                 </button>
               </div>
             {/each}
@@ -430,14 +460,20 @@
       </div>
 
       <div class="mt-6 flex justify-end gap-2">
-        <button type="button" class="h-9 rounded-xl px-3 text-sm font-medium text-muted-foreground hover:bg-muted" onclick={closeEditor}>Cancel</button>
+        <button type="button" class="coarse-touch-target h-9 rounded-xl px-3 text-sm font-medium text-muted-foreground hover:bg-muted" onclick={closeEditor}>Cancel</button>
         <button
           type="button"
-          class="h-9 rounded-xl bg-foreground px-4 text-sm font-medium text-background disabled:opacity-50"
+          class="coarse-touch-target h-9 rounded-xl bg-foreground px-4 text-sm font-medium text-background disabled:opacity-50"
           disabled={loadingCapabilitiesFor === editingModel || isSavingCapabilities}
           onclick={() => void saveCapabilities()}
         >{isSavingCapabilities ? 'Saving…' : 'Save changes'}</button>
       </div>
     </div>
-  </div>
+  </dialog>
 {/if}
+
+<style>
+  .model-editor-dialog { width: 100%; max-width: none; max-height: none; margin: 0; border: 0; }
+  .model-editor-dialog[open] { display: flex; align-items: center; justify-content: center; }
+  .model-editor-dialog::backdrop { background: transparent; }
+</style>

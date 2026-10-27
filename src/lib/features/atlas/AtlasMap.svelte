@@ -559,5 +559,9 @@
   .region-name{font-size:18px;margin-top:16px}
   .region-examples{display:flex;flex-direction:column}.region-examples button{padding:12px 0;border-bottom:1px solid var(--color-border);text-align:left}
   .region-examples strong{display:block;font-size:13px;font-weight:550}.region-examples span{display:block;font-size:12px;line-height:1.6;color:var(--color-muted-foreground);margin-top:6px}
+  @media(any-pointer:coarse){
+    .strength-heading button,.browse button,.reader-footer button,.guide-heading button,
+    .region-name-actions button,.region-naming button,.region-children button{min-width:44px;min-height:44px}
+  }
   @container(max-width:450px){.dock{right:12px;top:12px}.dock-open{width:calc(100% - 24px);height:min(560px,calc(100% - 124px));border-radius:14px}.reader,.region-guide{padding:14px}.reader h2{font-size:17px;margin:5px 0}.activity-detail{margin-bottom:7px}.browse{padding:6px 0}.reader-excerpt,.full-source{margin:8px 0}.reader-footer{padding-top:8px}}
 </style>
