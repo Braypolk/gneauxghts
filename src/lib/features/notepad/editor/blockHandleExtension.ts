@@ -11,6 +11,9 @@ import { getEditorContentSurface } from './editorDom';
 import { mountBlockHandle } from './blockHandleMount';
 import { setSlashMenuFloatingReference } from './slashMenu';
 
+const BLOCK_EXTENT_INSET = 9;
+const HANDLE_EXTENT_GAP = 5;
+
 interface VisualLineAnchor {
   block: BlockDescriptor;
   docTop: number;
@@ -641,7 +644,7 @@ export function createBlockHandleExtension(
           blockBottom: this.#view.documentTop + anchor.docBottom,
           viewportTop: viewport.top,
           viewportBottom: viewport.bottom,
-          left: textLeft - 9
+          left: textLeft - BLOCK_EXTENT_INSET
         });
       }
 
@@ -750,7 +753,12 @@ export function createBlockHandleExtension(
           left:
             surfaceRect.left -
             rootRect.left +
-            Math.max(8, paddingLeft - handleRect.width - 8),
+            // Reserve space for the extent indicator as well as its gap. The
+            // narrow lane needs the full inset, without an extra 8px minimum.
+            Math.max(
+              0,
+              paddingLeft - handleRect.width - BLOCK_EXTENT_INSET - HANDLE_EXTENT_GAP
+            ),
           textLeft: surfaceRect.left + paddingLeft,
           paddingLeft,
           surfaceWidth: surfaceRect.width,
