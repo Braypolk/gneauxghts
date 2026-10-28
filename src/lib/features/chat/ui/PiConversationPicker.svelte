@@ -57,7 +57,7 @@
   }
 </script>
 
-<div class="pi-conversation-picker" role="menu" aria-label="Conversations" bind:this={root}>
+<div class="pi-conversation-picker menu-caption" role="menu" aria-label="Conversations" bind:this={root}>
   <button type="button" role="menuitem" data-new-conversation onclick={() => onSelect(null)}>New conversation</button>
   {#each snapshot.conversations as item (item.id)}
     {@const selected = item.id === snapshot.conversation?.id}
@@ -85,20 +85,20 @@
 
 <style>
   .pi-conversation-picker { position: absolute; top: var(--pane-header-block-size, 4rem); left: 1rem; z-index: 30; width: min(24rem, calc(100% - 2rem)); max-height: 60%; overflow: auto; overflow-anchor: none; padding: .375rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--card); box-shadow: 0 8px 30px #0002; }
-  button { display: flex; align-items: center; gap: .4rem; min-height: 36px; padding: .375rem .625rem; text-align: left; border-radius: .4rem; }
+  button { font-size: var(--menu-text-size); line-height: 1.25rem; font-weight: var(--menu-label-weight); display: flex; align-items: center; gap: .4rem; min-height: 36px; padding: .375rem .625rem; text-align: left; border-radius: .4rem; }
   button:hover:not(:disabled) { background: var(--accent); }
   button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
   button:disabled { opacity: .4; }
   .conversation-row { display: flex; align-items: center; border-radius: .4rem; }
   .conversation-row:hover, .conversation-row:focus-within, .conversation-row--selected { background: var(--accent); }
   .conversation-title { flex: 1; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .conversation-forget, .conversation-cancel, .conversation-undo { flex-shrink: 0; font-size: .8rem; }
+  .conversation-forget, .conversation-cancel, .conversation-undo { flex-shrink: 0; }
   .conversation-forget { color: var(--destructive); }
   .conversation-forget-icon { justify-content: center; width: 32px; min-height: 32px; padding: 0; margin-inline: .125rem; color: var(--muted-foreground); }
   .conversation-forget-icon:hover:not(:disabled), .conversation-forget-icon:focus-visible { color: var(--destructive); }
   .conversation-cancel { color: var(--muted-foreground); }
-  .conversation-notice { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); margin-top: .25rem; padding: .25rem .75rem 0; color: var(--muted-foreground); font-size: .8rem; }
-  .conversation-error { padding: .5rem .75rem; color: var(--destructive); font-size: .8rem; }
+  .conversation-notice { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); margin-top: .25rem; padding: .25rem .75rem 0; color: var(--muted-foreground); font-size: var(--menu-caption-size); line-height: 1rem; font-weight: 400; }
+  .conversation-error { padding: .5rem .75rem; color: var(--destructive); font-size: var(--menu-caption-size); line-height: 1rem; font-weight: 400; }
   @media (hover: hover) and (pointer: fine) and (min-width: 640px) {
     .conversation-forget-icon { opacity: 0; }
     .conversation-row:hover .conversation-forget-icon, .conversation-row:focus-within .conversation-forget-icon { opacity: 1; }

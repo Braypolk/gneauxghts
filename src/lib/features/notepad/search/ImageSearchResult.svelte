@@ -11,14 +11,14 @@
 </script>
 
 <button type="button" class="image-search-result" class:bg-accent={active} data-search-result-active={active ? "true" : "false"} onmousedown={(event) => event.preventDefault()} onpointerenter={onPointerEnter} onfocus={onFocus} onclick={onSelect} aria-label={`Open ${item.assetName} in ${item.noteTitle}`}>
-  {#if thumbnail}<img src={thumbnail} alt="" loading="lazy" />{:else}<span class="image-search-placeholder" aria-hidden="true">Image</span>{/if}
-  <span><strong>{item.noteTitle}</strong><small>{item.assetName}</small></span>
+  {#if thumbnail}<img src={thumbnail} alt="" loading="lazy" />{:else}<span class="menu-caption image-search-placeholder" aria-hidden="true">Image</span>{/if}
+  <span><strong class="menu-label">{item.noteTitle}</strong><small class="menu-caption">{item.assetName}</small></span>
 </button>
 
 <style>
   .image-search-result { display:flex; gap:12px; width:100%; text-align:left; padding:10px; border-radius:8px; }
   .image-search-result:hover { background:var(--accent); }
   .image-search-result img, .image-search-placeholder { width:60px; height:48px; object-fit:contain; flex-shrink:0; background:var(--muted); border-radius:4px; }
-  .image-search-result strong { display:block; font-size:13px; font-weight:500; }
-  .image-search-result small { display:block; font-size:11px; color:var(--muted-foreground); overflow-wrap:anywhere; }
+  .image-search-result strong { display:block; }
+  .image-search-result small { display:block; color:var(--muted-foreground); overflow-wrap:anywhere; }
 </style>

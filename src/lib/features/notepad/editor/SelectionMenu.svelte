@@ -302,8 +302,9 @@
   }
 
   .selection-turn-into-label {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
     color: var(--foreground);
     white-space: nowrap;
   }
@@ -345,8 +346,9 @@
     border-radius: 9999px;
     background: transparent;
     font: inherit;
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
     color: var(--muted-foreground);
     cursor: pointer;
   }
@@ -373,10 +375,9 @@
   .selection-group-title {
     margin: 0 0 0.3rem;
     padding: 0 0.3rem;
-    font-size: 0.625rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    font-size: var(--menu-caption-size);
+    line-height: 1rem;
+    font-weight: var(--menu-label-weight);
     color: var(--muted-foreground);
   }
 
@@ -410,7 +411,9 @@
   .selection-item-label {
     flex: 1;
     min-width: 0;
-    font-size: 0.8125rem;
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
   }
 
   @media (prefers-reduced-motion: reduce) {

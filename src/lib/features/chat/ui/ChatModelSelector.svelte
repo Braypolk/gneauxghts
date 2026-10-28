@@ -120,7 +120,7 @@
   <div class="relative min-w-0" data-chat-menu>
     <button
       type="button"
-      class="chat-model-control chat-model-name"
+      class="menu-heading chat-model-control chat-model-name"
       {disabled}
       aria-label="AI model"
       title={`${provider === 'local' ? 'Server' : 'ChatGPT'} · ${selectedModelLabel || 'Choose model'}`}
@@ -138,7 +138,7 @@
           {#each providers as option (option.value)}
             <button
               type="button"
-              class="chat-model-provider-option"
+              class="menu-label chat-model-provider-option"
               aria-pressed={option.value === menuProvider}
               {disabled}
               onclick={() => {
@@ -152,14 +152,14 @@
           {#each providerModels as option (option.model)}
             <button
               type="button"
-              class="chat-menu-item w-full"
+              class="menu-label chat-menu-item w-full"
               class:chat-menu-item--active={option.provider === provider && option.model === model}
               role="menuitem"
               onclick={() => void onSelectModel(option)}
             >
               <span class="min-w-0 flex-1">
-                <span class="block truncate font-medium">{option.displayName}</span>
-                <span class="block truncate text-[11px] font-normal text-muted-foreground">
+                <span class="menu-label block truncate">{option.displayName}</span>
+                <span class="menu-caption block truncate text-muted-foreground">
                   {option.description || option.model}
                 </span>
               </span>
@@ -168,7 +168,7 @@
           {/each}
 
           {#if providerModels.length === 0}
-            <div class="px-2 py-1.5 text-xs text-muted-foreground">
+            <div class="menu-caption px-2 py-1.5 text-muted-foreground">
               No known models for {providerLabel}.
             </div>
           {/if}
@@ -176,7 +176,7 @@
           {#if menuProvider === 'local' && onDiscoverLocal}
             <button
               type="button"
-              class="chat-menu-item w-full text-muted-foreground"
+              class="menu-label chat-menu-item w-full text-muted-foreground"
               disabled={isDiscoveringLocal}
               role="menuitem"
               onclick={() => void onDiscoverLocal?.()}
@@ -193,7 +193,7 @@
           {#if menuProvider === 'openai' && onDiscoverOpenAi}
             <button
               type="button"
-              class="chat-menu-item w-full text-muted-foreground"
+              class="menu-label chat-menu-item w-full text-muted-foreground"
               disabled={isDiscoveringOpenAi}
               role="menuitem"
               onclick={() => void onDiscoverOpenAi?.()}
@@ -210,12 +210,12 @@
         </div>
 
         <form class="mt-1 space-y-2 border-t border-border/70 px-2 pb-1 pt-2" onsubmit={useCustomModel}>
-          <div class="text-[11px] font-medium text-muted-foreground">
+          <div class="menu-heading text-muted-foreground">
             Use a model ID
           </div>
           <div class="flex gap-1.5">
             <input
-              class="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground"
+              class="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 menu-caption outline-none placeholder:text-muted-foreground"
               bind:value={customModel}
               placeholder="Model ID"
               spellcheck="false"
@@ -223,7 +223,7 @@
             />
             <button
               type="submit"
-              class="rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background disabled:opacity-40"
+              class="rounded-md bg-foreground px-2.5 py-1.5 menu-label text-background disabled:opacity-40"
               disabled={!customModel.trim()}
             >Use</button>
           </div>
@@ -236,7 +236,7 @@
     <div class="relative" data-chat-menu>
       <button
         type="button"
-        class="chat-model-control chat-model-effort"
+        class="menu-heading chat-model-control chat-model-effort"
         {disabled}
         aria-label="Reasoning effort"
         aria-expanded={reasoningOpen}
@@ -253,10 +253,10 @@
       </button>
       {#if reasoningOpen}
         <div class="chat-menu chat-menu--up chat-menu--right chat-effort-menu" role="dialog" aria-label="Reasoning effort picker">
-          <div class="chat-effort-heading">
+          <div class="menu-label chat-effort-heading">
             <span>{selectedReasoningLabel}</span>
           </div>
-          <p class="chat-effort-model">{selectedModelLabel}</p>
+          <p class="menu-caption chat-effort-model">{selectedModelLabel}</p>
           {#if reasoningOptions.length > 1}
             <input
               class="chat-effort-slider"
@@ -282,7 +282,7 @@
             {#each reasoningOptions as option (option.value)}
               <button
                 type="button"
-                class="chat-effort-option"
+                class="menu-label chat-effort-option"
                 class:chat-effort-option--active={option.value === (previewReasoningEffort ?? committedReasoningEffort)}
                 role="menuitem"
                 onclick={() => void selectReasoning(option.value)}

@@ -176,7 +176,7 @@
 
           <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             <label class="flex items-center gap-2">Due date
-              <select aria-label="Due date filter" bind:value={taskList.dateFilter} class="rounded-lg border border-border bg-background px-2 py-1 text-foreground">
+              <select aria-label="Due date filter" bind:value={taskList.dateFilter} class="menu-label rounded-lg border border-border bg-background px-2 py-1 text-foreground">
                 <option value="all">All dates</option><option value="overdue">Overdue</option><option value="today">Today</option><option value="upcoming">Upcoming</option><option value="undated">No due date</option>
               </select>
             </label>
@@ -192,7 +192,7 @@
               {#each filterOptions as option (option.id)}
                 <button
                   type="button"
-                  class={`min-h-10 shrink-0 rounded-full px-3 py-2 text-sm font-medium transition-colors touch-manipulation sm:min-h-0 sm:px-4 ${
+                  class={`min-h-10 shrink-0 rounded-full px-3 py-2 menu-label transition-colors touch-manipulation sm:min-h-0 sm:px-4 ${
                     taskList.filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   onclick={() => taskList.setActiveFilter(option.id)}
@@ -208,7 +208,7 @@
             <div class="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <button
                 type="button"
-                class={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors touch-manipulation sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 sm:text-sm sm:font-medium ${
+                class={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors touch-manipulation sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 menu-label ${
                   taskList.showHidden
                     ? 'border-border bg-card text-foreground'
                     : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
@@ -227,7 +227,7 @@
 
               <button
                 type="button"
-                class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 sm:text-sm sm:font-medium"
+                class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 menu-label"
                 onclick={() => taskList.refresh()}
                 aria-label="Refresh task list"
                 title="Refresh"
@@ -345,7 +345,7 @@
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
                       <DropdownMenu.Content align="end" sideOffset={6} collisionPadding={12}
-                        class="z-50 min-w-40 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg outline-none">
+                        class="z-50 min-w-40 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-1.5 menu-label text-popover-foreground shadow-lg outline-none">
                         <DropdownMenu.Item disabled={taskList.isReordering || groupIndex === 0 || !!taskList.mutatingNoteIds[group.noteId] || !!taskList.mutatingNoteIds[visibleTaskGroups[groupIndex - 1]?.noteId]}
                           onSelect={() => void moveGroup(group.noteId, -1)}
                           class="flex min-h-11 cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40">

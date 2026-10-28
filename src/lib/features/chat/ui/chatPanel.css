@@ -156,7 +156,6 @@
 }
 .chat-composer-toolbar .chat-composer-chip {
   padding: 0.25rem 0.4rem;
-  font-size: 0.65rem;
 }
 .chat-model-selector {
   display: flex;
@@ -174,7 +173,6 @@
   border-radius: 9999px;
   padding: 0.2rem 0.3rem;
   color: var(--muted-foreground);
-  font-size: 0.7rem;
   white-space: nowrap;
   transition: background-color 160ms ease, color 160ms ease;
 }
@@ -237,7 +235,6 @@
   flex: 1;
   border-radius: 0.5rem;
   padding: 0.4rem;
-  font-size: 0.75rem;
   color: var(--muted-foreground);
 }
 .chat-model-provider-option:hover,
@@ -260,13 +257,10 @@
   align-items: center;
   gap: 0.5rem;
   color: var(--foreground);
-  font-size: 1rem;
-  font-weight: 500;
 }
 .chat-effort-model {
   margin: 0.2rem 0 0.85rem;
   color: var(--muted-foreground);
-  font-size: 0.75rem;
 }
 .chat-effort-slider {
   width: 100%;
@@ -303,16 +297,16 @@
 }
 .chat-effort-options {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.15rem;
   margin-top: 0.5rem;
 }
 .chat-effort-option {
-  flex: 1;
+  flex: 1 0 4rem;
   border-radius: 0.5rem;
   padding: 0.4rem 0.15rem;
   color: var(--muted-foreground);
-  font-size: 0.65rem;
 }
 .chat-effort-option:hover,
 .chat-effort-option--active {
@@ -370,8 +364,9 @@
   border-radius: 9999px;
   background: transparent;
   padding: 0.3rem 0.55rem;
-  font-size: 0.7rem;
-  font-weight: 500;
+  font-size: var(--menu-caption-size);
+  line-height: 1rem;
+  font-weight: var(--menu-label-weight);
   color: var(--muted-foreground);
   transition: background-color 160ms ease, color 160ms ease;
 }
@@ -418,7 +413,6 @@
   border-radius: 0.5rem;
   padding: 0.45rem 0.55rem;
   text-align: left;
-  font-size: 0.78rem;
   color: var(--foreground);
 }
 .chat-menu-item:hover {

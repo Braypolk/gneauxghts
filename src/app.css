@@ -41,8 +41,41 @@
   @apply h-10 rounded-lg border border-border bg-background px-3 text-sm;
 }
 
+/* Shared type roles for menus, pickers, and navigation choices. */
+@utility menu-label {
+  font-size: var(--menu-text-size);
+  line-height: 1.25rem;
+  font-weight: var(--menu-label-weight);
+}
+
+@utility menu-heading {
+  font-size: var(--menu-caption-size);
+  line-height: 1rem;
+  font-weight: var(--menu-label-weight);
+}
+
+@utility menu-caption {
+  font-size: var(--menu-caption-size);
+  line-height: 1rem;
+  font-weight: 400;
+}
+
+@utility menu-preview {
+  font-size: var(--menu-caption-size);
+  line-height: 1.125rem;
+  font-weight: 400;
+}
+
+/* Native dropdowns share the custom menus' primary label style. */
+select {
+  @apply menu-label;
+}
+
 
 :root {
+  --menu-text-size: 0.875rem;
+  --menu-caption-size: 0.75rem;
+  --menu-label-weight: 500;
   --background: oklch(0.9900 0 0);
   --foreground: oklch(0 0 0);
   --card: oklch(1 0 0);

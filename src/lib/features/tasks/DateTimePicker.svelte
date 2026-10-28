@@ -87,20 +87,20 @@
 <div class="date-time-picker-root fixed inset-0 z-50" style:pointer-events={saving ? 'auto' : 'none'}>
   <dialog open bind:this={dialog} style={panelStyle} class={`date-time-picker pointer-events-auto m-0 overflow-y-auto rounded-xl border border-border bg-popover text-popover-foreground shadow-xl ${options.editInNote ? 'w-[min(20rem,calc(100vw-2rem))] p-3' : 'w-[min(23rem,calc(100vw-2rem))] p-5'}`} oncancel={(event) => { event.preventDefault(); dismiss(); }} aria-label={options.editInNote ? options.title : undefined} aria-labelledby={options.editInNote ? undefined : `${id}-title`} aria-describedby={options.editInNote ? undefined : `${id}-description`}>
     {#if !options.editInNote}
-      <h2 id={`${id}-title`} class="text-base font-medium">{options.title}</h2>
-      <p id={`${id}-description`} class="mt-1 text-xs text-muted-foreground">{hasDate ? 'Type a date or select one below.' : 'Type a time or use the time control.'}</p>
+      <h2 id={`${id}-title`} class="menu-label">{options.title}</h2>
+      <p id={`${id}-description`} class="menu-caption mt-1 text-muted-foreground">{hasDate ? 'Type a date or select one below.' : 'Type a time or use the time control.'}</p>
     {/if}
     <form class={options.editInNote ? 'space-y-3' : 'mt-4 space-y-3'} onsubmit={(event) => { event.preventDefault(); void commit(); }}>
       {#if hasDate}
         {#if !options.editInNote}
-          <label class="block text-sm" for={`${id}-date`}>Date</label>
+          <label class="menu-label block" for={`${id}-date`}>Date</label>
           <input id={`${id}-date`} aria-label="Date or shortcut" class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" value={dateText} oninput={(event) => updateDate(event.currentTarget.value)} placeholder="YYYY-MM-DD, Friday, in 3 days" autocomplete="off" disabled={saving} />
-          <p aria-live="polite" class="text-xs text-muted-foreground">{resolved ? `Selected: ${resolved}` : 'Use YYYY-MM-DD, today, tomorrow, next week, a weekday, or in N days.'}</p>
+          <p aria-live="polite" class="menu-caption text-muted-foreground">{resolved ? `Selected: ${resolved}` : 'Use YYYY-MM-DD, today, tomorrow, next week, a weekday, or in N days.'}</p>
         {/if}
         {#if options.mode === 'due'}
           <div class="flex flex-wrap gap-1">
             {#each ['Today', 'Tomorrow', 'Next week'] as preset}
-              <Button variant="ghost" size="sm" disabled={saving} onclick={() => updateDate(preset)} title={resolveDateShortcut(preset, today) ?? ''}>{preset} <span class="text-[10px] text-muted-foreground">{resolveDateShortcut(preset, today)}</span></Button>
+              <Button class="menu-label" variant="ghost" size="sm" disabled={saving} onclick={() => updateDate(preset)} title={resolveDateShortcut(preset, today) ?? ''}>{preset} <span class="menu-caption text-muted-foreground">{resolveDateShortcut(preset, today)}</span></Button>
             {/each}
           </div>
         {/if}
@@ -111,11 +111,11 @@
               <Calendar.Heading class="sr-only" />
               <div class="flex min-w-0 flex-1 items-center gap-2">
                 <div class="relative min-w-0 flex-1">
-                  <Calendar.MonthSelect aria-label="Calendar month" monthFormat="short" disabled={saving} class="h-9 w-full min-w-0 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
+                  <Calendar.MonthSelect aria-label="Calendar month" monthFormat="short" disabled={saving} class="h-9 w-full min-w-0 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 menu-label outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
                   <ChevronDown class="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 </div>
                 <div class="relative min-w-0 flex-1">
-                  <Calendar.YearSelect aria-label="Calendar year" {years} disabled={saving} class="h-9 w-full min-w-0 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 text-sm tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
+                  <Calendar.YearSelect aria-label="Calendar year" {years} disabled={saving} class="h-9 w-full min-w-0 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 menu-label tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
                   <ChevronDown class="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 </div>
               </div>
@@ -123,11 +123,11 @@
             </Calendar.Header>
             {#each months as month}
               <Calendar.Grid class="w-full table-fixed border-collapse">
-                <Calendar.GridHead><Calendar.GridRow>{#each weekdays as day}<Calendar.HeadCell class="h-8 p-0 text-center text-xs font-normal text-muted-foreground">{day.slice(0, 2)}</Calendar.HeadCell>{/each}</Calendar.GridRow></Calendar.GridHead>
+                <Calendar.GridHead><Calendar.GridRow>{#each weekdays as day}<Calendar.HeadCell class="h-8 p-0 text-center menu-caption text-muted-foreground">{day.slice(0, 2)}</Calendar.HeadCell>{/each}</Calendar.GridRow></Calendar.GridHead>
                 <Calendar.GridBody>
                   {#each month.weeks as week}<Calendar.GridRow>
                     {#each week as date}<Calendar.Cell {date} month={month.value} class="h-11 p-0 text-center">
-                      <Calendar.Day class="mx-auto flex size-9 max-w-full items-center justify-center rounded-xl p-0 text-sm leading-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-selected:bg-accent data-selected:text-foreground data-outside-month:text-muted-foreground data-today:font-medium">{date.day}</Calendar.Day>
+                      <Calendar.Day class="mx-auto flex size-9 max-w-full items-center justify-center rounded-xl p-0 menu-label hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-selected:bg-accent data-selected:text-foreground data-outside-month:text-muted-foreground">{date.day}</Calendar.Day>
                     </Calendar.Cell>{/each}
                   </Calendar.GridRow>{/each}
                 </Calendar.GridBody>
@@ -137,20 +137,27 @@
         </Calendar.Root>
       {/if}
       {#if hasTime}
-        <label class="block text-sm" for={`${id}-time`}>Time</label>
+        <label class="menu-label block" for={`${id}-time`}>Time</label>
         <input id={`${id}-time`} aria-label="Time" type="time" step="60" bind:value={timeText} disabled={saving} class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
       {/if}
-      {#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
+      {#if error}<p role="alert" class="menu-caption text-destructive">{error}</p>{/if}
       <div class="flex flex-wrap justify-end gap-2 pt-1">
-        {#if options.mode === 'due' && options.date}<Button variant="ghost" size="sm" disabled={saving} onclick={() => void commit(true)}>Remove due date</Button>{/if}
-        <Button variant="outline" size="sm" disabled={saving} onclick={() => close()}>Cancel</Button>
-        <Button type="submit" size="sm" disabled={saving || (hasDate && !resolved) || (hasTime && !validTime)}>{saving ? 'Saving…' : 'Apply'}</Button>
+        {#if options.mode === 'due' && options.date}<Button class="menu-label" variant="ghost" size="sm" disabled={saving} onclick={() => void commit(true)}>Remove due date</Button>{/if}
+        <Button class="menu-label" variant="outline" size="sm" disabled={saving} onclick={() => close()}>Cancel</Button>
+        <Button class="menu-label" type="submit" size="sm" disabled={saving || (hasDate && !resolved) || (hasTime && !validTime)}>{saving ? 'Saving…' : 'Apply'}</Button>
       </div>
     </form>
   </dialog>
 </div>
 
 <style>
+  /* Keep compact button geometry without the generic small-button type size. */
+  .date-time-picker :global([data-slot='button']) {
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
+  }
+
   @media (any-pointer: coarse) {
     .date-time-picker { width: min(24rem, calc(100vw - 2rem)); padding: .75rem; }
     .date-time-picker :global(button), .date-time-picker :global(input), .date-time-picker :global(select) { min-height: 44px; }

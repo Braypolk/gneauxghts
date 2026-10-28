@@ -210,38 +210,38 @@
       <textarea bind:this={input} bind:value={draft} class="chat-composer-input" aria-label="Message" placeholder="What are you thinking about?" rows="1" enterkeyhint="enter" disabled={runtimeUnavailable || !snapshot.initialized || snapshot.loading || snapshot.authority?.retired} onfocus={() => composerDock?.onExpand()} onkeydown={onComposerKeydown}></textarea>
       <div class="chat-composer-toolbar">
         <div class="relative" data-chat-menu>
-          <button bind:this={accessButton} type="button" class="chat-composer-chip chat-composer-access" aria-label="Vault access" aria-haspopup="menu" aria-expanded={menu === 'access'} disabled={runtimeUnavailable || !snapshot.initialized || snapshot.authority?.retired} onclick={() => menu = menu === 'access' ? null : 'access'}>
+          <button bind:this={accessButton} type="button" class="menu-heading chat-composer-chip chat-composer-access" aria-label="Vault access" aria-haspopup="menu" aria-expanded={menu === 'access'} disabled={runtimeUnavailable || !snapshot.initialized || snapshot.authority?.retired} onclick={() => menu = menu === 'access' ? null : 'access'}>
             {#if snapshot.read.mode === 'fullVault'}<ShieldCheck class="h-3.5 w-3.5 shrink-0" />{:else}<ShieldOff class="h-3.5 w-3.5 shrink-0" />{/if}
             <span class="chat-composer-access-label">{snapshot.read.mode === 'fullVault' ? 'Full vault' : snapshot.read.attachedNoteIds.length ? 'Limited vault' : 'No notes'}</span><ChevronDown class="h-3 w-3 shrink-0 opacity-60" />
           </button>
           {#if menu === 'access'}<div class="chat-menu chat-menu--up" role="menu" aria-label="Vault access choices">
             {#each [{ mode: 'fullVault' as const, label: 'Full vault' }, { mode: 'attachedNotesOnly' as const, label: 'No notes' }] as option}
-              <button type="button" class="chat-menu-item w-full" role="menuitemradio" aria-checked={snapshot.read.mode === option.mode} onclick={() => { menu = null; void action(() => binding.changeRead({ mode: option.mode, attachedNoteIds: [] })); }}><span class="flex-1">{option.label}</span>{#if snapshot.read.mode === option.mode}<Check size={14} />{/if}</button>
+              <button type="button" class="menu-label chat-menu-item w-full" role="menuitemradio" aria-checked={snapshot.read.mode === option.mode} onclick={() => { menu = null; void action(() => binding.changeRead({ mode: option.mode, attachedNoteIds: [] })); }}><span class="flex-1">{option.label}</span>{#if snapshot.read.mode === option.mode}<Check size={14} />{/if}</button>
             {/each}
-            <div class="px-3 py-2 text-xs text-muted-foreground">Write notes in the vault</div>
-            <p class="px-3 pb-2 text-xs text-muted-foreground">Changes include note content, properties and filenames. Always and review settings apply to all chats. Choosing this chat turns off Always.</p>
+            <div class="menu-heading px-3 py-2 text-muted-foreground">Write notes in the vault</div>
+            <p class="menu-preview px-3 pb-2 text-muted-foreground">Changes include note content, properties and filenames. Always and review settings apply to all chats. Choosing this chat turns off Always.</p>
             {#each [{ duration: 'off' as const, label: 'Editing off' }, { duration: 'temporary' as const, label: 'Allow edits in this chat' }, { duration: 'always' as const, label: 'Always allow edits' }] as option}
-              <button type="button" class="chat-menu-item w-full" role="menuitemradio" aria-checked={(snapshot.authority?.write.grant.duration ?? 'off') === option.duration} onclick={() => { menu = null; void action(() => binding.changeWrite({ grant: writeGrantForDuration(snapshot.authority?.write, option.duration, snapshot.conversation?.id ?? 0), reviewBeforeApplying: snapshot.authority?.write.reviewBeforeApplying ?? true })); }}><span class="flex-1">{option.label}</span>{#if (snapshot.authority?.write.grant.duration ?? 'off') === option.duration}<Check size={14} />{/if}</button>
+              <button type="button" class="menu-label chat-menu-item w-full" role="menuitemradio" aria-checked={(snapshot.authority?.write.grant.duration ?? 'off') === option.duration} onclick={() => { menu = null; void action(() => binding.changeWrite({ grant: writeGrantForDuration(snapshot.authority?.write, option.duration, snapshot.conversation?.id ?? 0), reviewBeforeApplying: snapshot.authority?.write.reviewBeforeApplying ?? true })); }}><span class="flex-1">{option.label}</span>{#if (snapshot.authority?.write.grant.duration ?? 'off') === option.duration}<Check size={14} />{/if}</button>
             {/each}
-            <button type="button" class="chat-menu-item w-full" role="menuitemcheckbox"
+            <button type="button" class="menu-label chat-menu-item w-full" role="menuitemcheckbox"
               aria-checked={snapshot.authority && snapshot.authority.write.grant.duration !== 'off' && snapshot.authority.write.grant.operations.includes('create') || false}
               disabled={!snapshot.authority || snapshot.authority.write.grant.duration === 'off'}
               onclick={() => { const write = snapshot.authority?.write; if (write && write.grant.duration !== 'off') { const next = withCreationPermission(write, !write.grant.operations.includes('create')); menu = null; void action(() => binding.changeWrite(next)); } }}>
               <span class="flex-1">Allow creating new notes</span>{#if snapshot.authority && snapshot.authority.write.grant.duration !== 'off' && snapshot.authority.write.grant.operations.includes('create')}<Check size={14} />{/if}
             </button>
-            <button type="button" class="chat-menu-item w-full" role="menuitem" disabled={folderSaving || !snapshot.authority || snapshot.authority.write.grant.duration === 'off'} onclick={openWriteFolders}>
+            <button type="button" class="menu-label chat-menu-item w-full" role="menuitem" disabled={folderSaving || !snapshot.authority || snapshot.authority.write.grant.duration === 'off'} onclick={openWriteFolders}>
               Allowed write folders…
             </button>
-            <button type="button" class="chat-menu-item w-full" role="menuitemcheckbox" aria-checked={snapshot.authority?.write.reviewBeforeApplying ?? true} disabled={!snapshot.authority} onclick={() => { const write = snapshot.authority?.write; if (write) { menu = null; void action(() => binding.changeWrite({ ...write, reviewBeforeApplying: !write.reviewBeforeApplying })); } }}><span class="flex-1">Review before applying edits</span>{#if snapshot.authority?.write.reviewBeforeApplying ?? true}<Check size={14} />{/if}</button>
+            <button type="button" class="menu-label chat-menu-item w-full" role="menuitemcheckbox" aria-checked={snapshot.authority?.write.reviewBeforeApplying ?? true} disabled={!snapshot.authority} onclick={() => { const write = snapshot.authority?.write; if (write) { menu = null; void action(() => binding.changeWrite({ ...write, reviewBeforeApplying: !write.reviewBeforeApplying })); } }}><span class="flex-1">Review before applying edits</span>{#if snapshot.authority?.write.reviewBeforeApplying ?? true}<Check size={14} />{/if}</button>
           </div>{/if}
           {#if menu === 'writeFolders'}<div bind:this={folderPanel} use:mountInSlot={document.body} data-chat-menu style={folderPanelStyle} class="chat-menu chat-write-folders p-3" role="dialog" aria-label="Write folder permissions">
             <fieldset disabled={folderSaving || runtimeUnavailable} class="grid gap-3">
               <legend class="sr-only">Write folder permissions</legend>
               <WriteFoldersField bind:value={folderDraft} />
-              {#if folderError}<p role="alert" class="text-xs text-destructive">{folderError}</p>{/if}
+              {#if folderError}<p role="alert" class="menu-caption text-destructive">{folderError}</p>{/if}
               <div class="flex justify-end gap-3">
-                <button type="button" class="text-xs" onclick={() => menu = 'access'}>Cancel</button>
-                <button type="button" class="rounded-lg bg-foreground px-3 py-2 text-xs text-background" onclick={() => void saveWriteFolders()}>{folderSaving ? 'Saving…' : 'Save folders'}</button>
+                <button type="button" class="menu-label" onclick={() => menu = 'access'}>Cancel</button>
+                <button type="button" class="rounded-lg bg-foreground px-3 py-2 menu-label text-background" onclick={() => void saveWriteFolders()}>{folderSaving ? 'Saving…' : 'Save folders'}</button>
               </div>
             </fieldset>
           </div>{/if}

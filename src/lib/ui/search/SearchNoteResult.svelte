@@ -21,7 +21,7 @@
 <div class="flex min-w-0 w-full items-center gap-1" data-search-result-index={resultIndex} data-search-result-row>
   <button
     type="button"
-    class={`search-result-item flex min-w-0 w-full flex-1 gap-2 rounded-[1.1rem] px-4 text-left transition-colors ${detail ? 'flex-col py-3' : 'h-[2.75rem] items-center py-1.5'}`}
+    class={`search-result-item flex min-w-0 w-full flex-1 rounded-[1.1rem] px-4 text-left transition-colors ${detail ? 'flex-col gap-1 py-3' : 'h-[2.75rem] items-center gap-2 py-1.5'}`}
     class:bg-accent={active}
     data-search-result-active={active ? 'true' : 'false'}
     aria-label={label}
@@ -41,7 +41,7 @@
     onclick={(event) => hasSplitModifiers(event) && onOpenInSplit ? onOpenInSplit() : onSelect()}
   >
     {#if icon}{@render icon()}{/if}
-    <span class="block min-w-0 max-w-full truncate text-sm font-semibold text-popover-foreground">{title}</span>
+    <span class="menu-label block min-w-0 max-w-full truncate text-popover-foreground">{title}</span>
     {#if detail}{@render detail()}{/if}
   </button>
   {#if onOpenInSplit}<SplitSearchResultAction {title} onSelect={onOpenInSplit} {onFocus} />{/if}

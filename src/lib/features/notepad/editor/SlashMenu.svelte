@@ -182,8 +182,9 @@
     border-radius: 999px;
     background: transparent;
     font: inherit;
-    font-size: 0.8rem;
-    font-weight: 600;
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
     color: var(--muted-foreground);
     cursor: pointer;
   }
@@ -210,10 +211,9 @@
   .slash-group-title {
     margin: 0 0 0.35rem;
     padding: 0 0.35rem;
-    font-size: 0.65rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    font-size: var(--menu-caption-size);
+    line-height: 1rem;
+    font-weight: var(--menu-label-weight);
     color: var(--muted-foreground);
   }
 
@@ -254,5 +254,8 @@
   .slash-item-label {
     flex: 1;
     min-width: 0;
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
   }
 </style>

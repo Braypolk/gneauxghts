@@ -74,7 +74,7 @@
     const active = highlightedIndex === index;
     if (isEmbedded) {
       return [
-        'pointer-events-auto flex w-full cursor-pointer select-none items-start gap-3 rounded-xl px-2 py-2 text-left text-sm transition-colors outline-none',
+        'pointer-events-auto flex w-full cursor-pointer select-none items-start gap-3 rounded-xl px-2 py-2 text-left transition-colors outline-none',
         enabled
           ? active
             ? 'bg-accent text-accent-foreground'
@@ -84,7 +84,7 @@
     }
 
     return [
-      'flex w-full cursor-pointer select-none items-start gap-3 rounded-2xl border px-4 py-3 text-left text-sm transition-colors outline-none',
+      'flex w-full cursor-pointer select-none items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-colors outline-none',
       enabled
         ? active
           ? 'border-primary/55 bg-accent text-accent-foreground shadow-sm'
@@ -101,8 +101,8 @@
 
   const optionKeyClass = $derived(
     isEmbedded
-      ? 'mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium text-muted-foreground/70'
-      : 'mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground'
+      ? 'mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 menu-heading text-muted-foreground/70'
+      : 'mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 menu-heading text-muted-foreground'
   );
 
   const currentShortcutLabel = $derived(
@@ -146,8 +146,8 @@
   <div class={isEmbedded ? 'mx-auto w-full max-w-md space-y-2' : 'w-full max-w-md space-y-3'}>
     {#if !isEmbedded}
       <div class="mb-4 text-center">
-        <div class="text-sm font-semibold text-foreground">{heading}</div>
-        <p class="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">{description}</p>
+        <div class="menu-label text-foreground">{heading}</div>
+        <p class="mx-auto mt-1 max-w-sm menu-preview text-muted-foreground">{description}</p>
       </div>
     {/if}
 
@@ -168,8 +168,8 @@
           {getPaneCommandShortcutLabel(PANE_COMMAND_SPLIT_INDEX.current, mode)}
         </span>
         <span>
-          <span class="font-medium">{PANE_COMMAND_OPTIONS.current.label}</span>
-          <span class="mt-0.5 block text-xs text-muted-foreground/82">{currentNoteLabel}</span>
+          <span class="menu-label">{PANE_COMMAND_OPTIONS.current.label}</span>
+          <span class="mt-0.5 menu-caption block text-muted-foreground/82">{currentNoteLabel}</span>
         </span>
       </button>
     {/if}
@@ -191,13 +191,13 @@
         {getPaneCommandShortcutLabel(previousIndex, mode)}
       </span>
       <span>
-        <span class="font-medium">
+        <span class="menu-label">
           {PANE_COMMAND_OPTIONS.previous.label}
           {#if previousNoteShortcutLabel}
-            <span class="font-normal text-muted-foreground/70">({previousNoteShortcutLabel})</span>
+            <span class="menu-caption text-muted-foreground/70">({previousNoteShortcutLabel})</span>
           {/if}
         </span>
-        <span class="mt-0.5 block text-xs text-muted-foreground/82">
+        <span class="mt-0.5 menu-caption block text-muted-foreground/82">
           {hasPrevious ? previousNoteLabel : 'No other recent location yet'}
         </span>
       </span>
@@ -219,8 +219,8 @@
         {getPaneCommandShortcutLabel(thoughtPartnerIndex, mode)}
       </span>
       <span>
-        <span class="font-medium">{PANE_COMMAND_OPTIONS.thoughtPartner.label}</span>
-        <span class="mt-0.5 block text-xs text-muted-foreground/82">
+        <span class="menu-label">{PANE_COMMAND_OPTIONS.thoughtPartner.label}</span>
+        <span class="mt-0.5 menu-caption block text-muted-foreground/82">
           {PANE_COMMAND_OPTIONS.thoughtPartner.description}
         </span>
       </span>

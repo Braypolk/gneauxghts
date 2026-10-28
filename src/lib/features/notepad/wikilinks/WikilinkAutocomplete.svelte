@@ -133,9 +133,9 @@
     style={popupStyle}
   >
     {#if suggestions.length === 0}
-      <div class="px-4 py-3 text-sm text-muted-foreground">No matching notes or sections.</div>
+      <div class="menu-caption px-4 py-3 text-muted-foreground">No matching notes or sections.</div>
     {:else}
-      <div class="border-b border-border/70 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+      <div class="menu-heading border-b border-border/70 px-4 py-2 text-muted-foreground">
         Wikilinks
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto py-1.5">
@@ -149,14 +149,14 @@
             onmousedown={(event) => event.preventDefault()}
             onclick={() => onSelect(suggestion)}
           >
-            <span class="mt-0.5 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            <span class="menu-caption mt-0.5 rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
               {suggestion.kind}
             </span>
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-semibold text-popover-foreground">
+              <span class="menu-label block truncate text-popover-foreground">
                 {suggestion.label}
               </span>
-              <span class="block truncate pt-0.5 text-xs text-muted-foreground">{suggestion.detail}</span>
+              <span class="menu-caption block truncate pt-0.5 text-muted-foreground">{suggestion.detail}</span>
             </span>
           </button>
         {/each}

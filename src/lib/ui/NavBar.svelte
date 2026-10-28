@@ -342,7 +342,9 @@
     min-height: 2.75rem;
     padding: 0.5rem 0.75rem;
     border-radius: 0.625rem;
-    font-size: 0.875rem;
+    font-size: var(--menu-text-size);
+    line-height: 1.25rem;
+    font-weight: var(--menu-label-weight);
     outline: none;
     user-select: none;
     touch-action: none;

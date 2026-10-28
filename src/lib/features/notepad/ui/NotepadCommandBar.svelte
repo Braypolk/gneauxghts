@@ -577,7 +577,7 @@
   }
 
   function getSearchResultTitleClass() {
-    return 'block truncate text-sm font-semibold text-popover-foreground';
+    return 'menu-label block truncate text-popover-foreground';
   }
 
   function getSearchResultHeaderClass() {
@@ -585,7 +585,7 @@
   }
 
   function getExcerptClass() {
-    return 'line-clamp-3 text-sm leading-relaxed text-muted-foreground';
+    return 'menu-preview line-clamp-3 text-muted-foreground';
   }
 
   function getCurrentSearchLocationLabel(item: SearchItem) {
@@ -789,8 +789,8 @@
                 <Eraser class="h-4 w-4" />
               </div>
               <div class="min-w-0 flex-1">
-                <p id="forget-confirm-title" class="text-sm font-semibold">Forget this {forgetItemLabel}?</p>
-                <p id="forget-confirm-description" class="mt-1 text-xs leading-5 text-muted-foreground">
+                <p id="forget-confirm-title" class="menu-label">Forget this {forgetItemLabel}?</p>
+                <p id="forget-confirm-description" class="menu-preview mt-1 text-muted-foreground">
                   You can also hold Forget (or its shortcut) to skip this confirmation.
                 </p>
               </div>
@@ -799,7 +799,7 @@
               <button
                 bind:this={forgetCancelButton}
                 type="button"
-                class="inline-flex h-8 items-center rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                class="inline-flex h-8 items-center rounded-full px-3 menu-label text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 onclick={() => closeForgetConfirm(true)}
                 title="Keep this note"
               >
@@ -807,7 +807,7 @@
               </button>
               <button
                 type="button"
-                class="inline-flex h-8 items-center rounded-full bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive"
+                class="inline-flex h-8 items-center rounded-full bg-destructive px-3 menu-label text-destructive-foreground transition-colors hover:bg-destructive/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive"
                 onclick={commandBarState.confirmForget}
                 title={`Forget this ${forgetItemLabel}`}
               >
@@ -873,7 +873,7 @@
                     <button type="button" aria-pressed={relatedView === choice.id}
                       data-related-view={choice.id} data-search-focus-independent
                       onkeydown={handleRelatedViewKeydown}
-                      class={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${relatedView === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                      class={`menu-label rounded-full border px-4 py-1.5 transition-colors ${relatedView === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                       onmousedown={(event) => event.preventDefault()}
                       onclick={() => selectRelatedView(choice.id as RelatedView)}>{choice.label}</button>
                   {/each}
@@ -888,7 +888,7 @@
               <div class="flex items-center gap-1" role="group" aria-label="Result type">
                 {#each resultTypeChoices as choice}
                   <button type="button" data-search-focus-independent data-search-result-type={choice.id}
-                    class="search-retrieval-cue rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                    class="search-retrieval-cue rounded-full border px-3 py-1 menu-heading transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
                     aria-label={`Show ${choice.id === 'all' ? 'all result types' : choice.id}`}
                     aria-pressed={resultType === choice.id}
                     onkeydown={handleSearchCueKeydown}
@@ -897,10 +897,10 @@
                 {/each}
               </div>
               <div class="search-retrieval-edited flex flex-wrap items-center gap-1" role="group" aria-label="Edited">
-                <span class="search-edited-label mr-1 text-xs text-muted-foreground">Edited</span>
+                <span class="menu-caption search-edited-label mr-1 text-muted-foreground">Edited</span>
                 {#each editedWindowChoices as choice}
                   <button type="button" data-search-focus-independent data-search-edited-window={choice.id}
-                    class="search-retrieval-cue rounded-full border px-3 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                    class="search-retrieval-cue rounded-full border px-3 py-1 menu-heading transition-colors hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
                     aria-label={choice.description} title={choice.id === 'any' ? choice.description : `${choice.description}, by file modification time`}
                     aria-pressed={editedWindow === choice.id}
                     onkeydown={handleSearchCueKeydown}
@@ -911,10 +911,10 @@
             </div>
           {/if}
           {#if presentedSearchError || presentedMediaError}
-            <div class="flex items-center justify-between gap-2 px-4 py-2 text-sm text-muted-foreground" role="status">
+            <div class="flex items-center justify-between menu-caption gap-2 px-4 py-2 text-muted-foreground" role="status">
               <span>{presentedSearchError ?? presentedMediaError}{#if retainedSearchItems}{' '}Previous matches shown. Retry to update results.{:else if visibleItems.length > 0}{' '}Showing available matches.{/if}</span>
               {#if search.onSearchRetry}
-                <button type="button" class="rounded px-2 py-1 text-foreground hover:bg-accent disabled:opacity-50" data-search-focus-independent disabled={isSearching} onclick={() => void search.onSearchRetry?.()}>Retry</button>
+                <button type="button" class="menu-heading rounded px-2 py-1 text-foreground hover:bg-accent disabled:opacity-50" data-search-focus-independent disabled={isSearching} onclick={() => void search.onSearchRetry?.()}>Retry</button>
               {/if}
             </div>
           {/if}
@@ -928,7 +928,7 @@
                   <button type="button" aria-pressed={browseMode === choice.id}
                     data-browse-mode={choice.id}
                     onkeydown={handleBrowseModeKeydown}
-                    class={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${browseMode === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                    class={`menu-label rounded-full border px-4 py-1.5 transition-colors ${browseMode === choice.id ? 'border-foreground/15 bg-card text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                     data-search-focus-independent
                     onmousedown={(event) => event.preventDefault()}
                     onclick={() => selectBrowseMode(choice.id as 'recent' | 'edited')}>{choice.label}</button>
@@ -936,9 +936,9 @@
               </div>
             </div>
             {#if browseMode === 'edited' && search.lastEditedError}
-              <div class="flex items-center justify-between gap-2 px-4 py-2 text-sm text-muted-foreground" role="status">
+              <div class="flex items-center justify-between menu-caption gap-2 px-4 py-2 text-muted-foreground" role="status">
                 <span>{search.lastEditedError}</span>
-                <button type="button" class="rounded px-2 py-1 text-foreground hover:bg-accent" data-search-focus-independent onclick={() => void search.onLoadLastEdited?.()}>Retry</button>
+                <button type="button" class="menu-heading rounded px-2 py-1 text-foreground hover:bg-accent" data-search-focus-independent onclick={() => void search.onLoadLastEdited?.()}>Retry</button>
               </div>
             {/if}
           {/if}
@@ -946,11 +946,11 @@
           {#if presentationPending && retainedSearchItems === null && displayedItems.length === 0 && (displayedQuery.trim() !== '' || imageQueryUrl)}
             <div class="min-h-0 flex-1"></div>
           {:else if imageQueryUrl && displayedItems.length === 0 && !presentedMediaError}
-            {#if !presentationPending}<p class="px-3 py-2 text-sm text-muted-foreground">{resultType !== 'all' || editedWindow !== 'any' ? 'No matches with these filters. Try All or Any time.' : 'No matching images or text passages yet.'}</p>{/if}
+            {#if !presentationPending}<p class="menu-caption px-3 py-2 text-muted-foreground">{resultType !== 'all' || editedWindow !== 'any' ? 'No matches with these filters. Try All or Any time.' : 'No matching images or text passages yet.'}</p>{/if}
           {:else if displayedQuery.trim() === '' && !imageQueryUrl && browseMode === 'edited' && search.isLoadingLastEdited && lastEditedNotes.length === 0}
-            <div class="px-4 py-3 text-sm text-muted-foreground" role="status">Loading last edited notes…</div>
+            <div class="menu-caption px-4 py-3 text-muted-foreground" role="status">Loading last edited notes…</div>
           {:else if !hasVisibleSearchContent && !presentedSearchError && !presentedMediaError}
-            <div class="px-4 py-3 text-sm text-muted-foreground">
+            <div class="menu-caption px-4 py-3 text-muted-foreground">
               {#if displayedQuery.trim() === ''}
                 {browseMode === 'edited' ? 'No saved notes yet.' : `Start typing to search ${searchMode === 'current' ? 'this note' : 'all notes'}.`}
               {:else if searchMode === 'all' && (resultType !== 'all' || editedWindow !== 'any')}
@@ -1065,7 +1065,7 @@
                   onclick={(event) => commandBarState.selectItem({ kind: 'search', item }, event)}
                 >
                   {#if searchMode === 'current'}
-                    <p class="min-w-0 truncate text-sm leading-5 text-muted-foreground">
+                    <p class="menu-preview min-w-0 truncate text-muted-foreground">
                       {#each getCurrentSearchPreviewSegments(item) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
                         {#if segment.highlighted}
                           <mark class="rounded-[0.3rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
@@ -1074,7 +1074,7 @@
                         {/if}
                       {/each}
                     </p>
-                    <span class="min-w-0 max-w-36 truncate text-right text-xs font-semibold text-popover-foreground">
+                    <span class="menu-heading min-w-0 max-w-36 truncate text-right text-popover-foreground">
                       {getCurrentSearchLocationLabel(item)}
                     </span>
                   {:else}
@@ -1086,7 +1086,7 @@
                         {#if item.reasonLabels && item.reasonLabels.length > 0}
                           <div class="mt-1 flex flex-wrap gap-1.5">
                             {#each item.reasonLabels as label, labelIndex (`${label}-${labelIndex}`)}
-                              <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                              <span class="menu-caption rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
                                 {label}
                               </span>
                             {/each}
@@ -1094,7 +1094,7 @@
                         {/if}
                       </div>
                       {#if item.sectionLabel !== 'Title'}
-                        <span class="min-w-0 max-w-[45%] truncate text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground" title={item.sectionLabel}>
+                        <span class="menu-caption min-w-0 max-w-[45%] truncate text-muted-foreground" title={item.sectionLabel}>
                           {item.sectionLabel}
                         </span>
                       {/if}
