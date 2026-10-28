@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorkspaceShortcutHandler, type WorkspaceShortcutDeps } from './shortcuts';
+import { resetAllKeyboardShortcuts, setKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
 
 type PaneId = 'primary' | 'secondary';
 
@@ -42,6 +43,34 @@ function createDeps() {
 describe('workspace shortcuts', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetAllKeyboardShortcuts();
+  });
+
+  it.each([
+    ['openThoughtPartner', 'openThoughtPartner'],
+    ['showHistory', 'showHistory'],
+    ['openSplitPaneOptions', 'openSplitPaneOptions'],
+    ['openNewChatInSplit', 'openNewChatInSplit'],
+    ['openPreviousNoteInSplit', 'openPreviousNoteInSplit'],
+    ['closePane', 'closePane'],
+    ['switchPane', 'switchActivePane'],
+    ['rememberCurrentNote', 'startNewNoteFlow'],
+    ['toggleRelatedPanel', 'toggleRelatedPanel'],
+    ['togglePinCurrentNote', 'togglePinCurrentNote'],
+    ['goToPreviousNote', 'goToPreviousLocation'],
+  ] as const)('dispatches alternatives and disables %s without rebuilding the handler', async (id, action) => {
+    vi.stubGlobal('document', { activeElement: null });
+    const deps = createDeps();
+    if (id === 'closePane' || id === 'switchPane') deps.getPaneOrder = () => ['primary', 'secondary'];
+    const handle = createWorkspaceShortcutHandler(deps);
+    setKeyboardShortcutBindings(id, ['F10', 'F11']);
+    for (const key of ['F10', 'F11']) {
+      await handle({ key, code: key, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    }
+    expect(deps[action]).toHaveBeenCalledTimes(2);
+    setKeyboardShortcutBindings(id, []);
+    await handle({ key: 'F10', code: 'F10', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    expect(deps[action]).toHaveBeenCalledTimes(2);
   });
 
   it('opens the thought partner in the current pane with Cmd+T', async () => {

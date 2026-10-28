@@ -38,7 +38,7 @@
     <input
       bind:this={input}
       onkeydown={(event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
           event.preventDefault();
           event.stopImmediatePropagation();
           onCancel();

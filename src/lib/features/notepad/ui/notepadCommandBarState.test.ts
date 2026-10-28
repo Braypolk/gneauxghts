@@ -5,6 +5,7 @@ import {
 } from './notepadCommandBarState.svelte';
 import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
+import { resetAllKeyboardShortcuts, setKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
 
 function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
   return {
@@ -51,6 +52,7 @@ describe('deriveNotepadCommandBarVisibleItems', () => {
 });
 
 describe('createNotepadCommandBarState', () => {
+  afterEach(resetAllKeyboardShortcuts);
   function createState(
     overrides: Partial<Parameters<typeof createNotepadCommandBarState>[0]> = {}
   ) {
@@ -75,6 +77,29 @@ describe('createNotepadCommandBarState', () => {
       ...overrides
     });
   }
+
+  it('does not execute a second action after a captured shortcut was handled', () => {
+    const onSearchSelect = vi.fn();
+    const onSearchInput = vi.fn();
+    const state = createState({ getVisibleItems: () => [{ kind: 'search', item: searchItem() }], onSearchSelect, onSearchInput });
+    for (const key of ['Enter', 'Escape', 'ArrowDown']) {
+      state.handleSearchKeydown({ key, defaultPrevented: true, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    }
+    expect(onSearchSelect).not.toHaveBeenCalled();
+    expect(onSearchInput).not.toHaveBeenCalled();
+    expect(state.activeIndex).toBe(0);
+  });
+
+  it('uses an assigned Escape combination for splitting before dismissal', () => {
+    const item = searchItem({ notePath: '/vault/Note.md' });
+    const openInSplit = vi.fn();
+    const onSearchInput = vi.fn();
+    const state = createState({ getSearchQuery: () => 'query', getVisibleItems: () => [{ kind: 'search', item }], getOpenInSplit: () => openInSplit, onSearchInput });
+    setKeyboardShortcutBindings('searchOpenInSplit', ['Shift+Escape']);
+    state.handleSearchKeydown({ key: 'Escape', code: 'Escape', shiftKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    expect(openInSplit).toHaveBeenCalledWith(item);
+    expect(onSearchInput).not.toHaveBeenCalled();
+  });
 
   it('selects an image with arrows and Enter through the shared result navigation', () => {
     const image: ImageSearchItem = { kind: 'image', noteId: 'image-note', notePath: '/vault/Pictures.md', noteTitle: 'Pictures', noteHash: 'note', assetName: 'chart.png', assetHash: 'asset', sourceStart: 2, sourceEnd: 20, score: .85 };

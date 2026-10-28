@@ -143,6 +143,15 @@ describe('native input selection formatting', () => {
     expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
   });
 
+  it('lets a modified Escape reach the assigned command instead of dismissing the popup', () => {
+    const h = harness();
+    selectionMenuSetNativeTarget(h.view, h.target);
+    const event = { key: 'Escape', shiftKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent;
+    selectionMenuHandleKeydownFromUi(h.view, event);
+    expect(h.latest()).toMatchObject({ open: true });
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
   it('continues consuming Escape when dismissing the source selection popup', () => {
     const h = harness();
     Object.defineProperty(h.view, 'hasFocus', { value: true });

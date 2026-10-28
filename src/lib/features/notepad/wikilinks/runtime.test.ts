@@ -21,6 +21,12 @@ it('keeps replacement, dismissal, alias and keyboard insertion on the current au
   await runtime.handleActiveWikilinkChange({ ...target, rawTarget: 'Current' });
   release([suggestion('Old')]); await old; expect(state.suggestions[0].value).toBe('Current');
   runtime.selectWikilinkSuggestion('Old'); expect(view.state.doc.toString()).toBe('[[]]');
+  for (const [key, modifiers] of [['Enter', { ctrlKey: true }], ['ArrowDown', { altKey: true }], ['Escape', { shiftKey: true }]] as const) {
+    const event = { key, ...modifiers, preventDefault: vi.fn() } as unknown as KeyboardEvent;
+    expect(runtime.handleAutocompleteKeydown(event)).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(state.active).toBe(true);
+  }
   expect(runtime.handleAutocompleteKeydown({ key: 'Enter', preventDefault: vi.fn() } as unknown as KeyboardEvent)).toBe(true);
   expect(view.state.doc.toString()).toBe('[[Current]]'); expect(state.active).toBe(false);
   invoke.mockReturnValueOnce(new Promise<NoteLinkSuggestion[]>(yes => { release = yes; }));

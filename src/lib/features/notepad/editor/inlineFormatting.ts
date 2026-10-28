@@ -11,8 +11,7 @@ import {
   type WrapFormatId
 } from '#lib/features/notepad/markdown/inlineFormatSpec.js';
 import {
-  formatShortcutBinding,
-  getEffectiveKeyboardShortcutBinding,
+  formatKeyboardShortcutBindings,
   type KeyboardShortcutId
 } from '#lib/keyboardShortcuts.svelte.js';
 
@@ -547,12 +546,12 @@ export function getInlineFormatShortcutLabel(id: InlineFormatId): string | undef
     return undefined;
   }
 
-  const binding = getEffectiveKeyboardShortcutBinding(shortcutId);
+  const binding = formatKeyboardShortcutBindings(shortcutId);
   if (!binding) {
     return undefined;
   }
 
-  return formatShortcutBinding(binding);
+  return binding;
 }
 
 export const inlineFormatIcons: Record<InlineFormatId, string> = {

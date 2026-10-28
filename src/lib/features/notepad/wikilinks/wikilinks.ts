@@ -1,3 +1,4 @@
+import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
 import { isMarkdownCode } from '../markdown/codeContext';
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
@@ -163,8 +164,8 @@ export function createWikilinksExtension(config: WikilinkConfig) {
     ),
     keymap.of([
       {
-        key: 'Mod-Enter',
-        run: (view) => {
+        any: (view, event) => {
+          if (!keyboardShortcutMatchesEvent(event, 'editorOpenWikilink')) return false;
           const selection = view.state.selection.main;
           return selection.empty && openWikilinkAtPosition(view, selection.head, config);
         }

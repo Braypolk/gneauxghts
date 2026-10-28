@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent, formatKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
+
   import { tick } from 'svelte';
   import { Pencil } from '@lucide/svelte';
   import type { HistoryRevisionRecord } from './historyModeMachine';
@@ -60,12 +62,12 @@
       aria-pressed={selected}
       aria-disabled={busy}
       data-revision-id={revision.revisionId}
-      title="Double-click or right-click to rename revision. Keyboard: F2."
+      title={`Double-click or right-click to rename revision. ${formatKeyboardShortcutBindings('historyRename')}`}
       onclick={() => { if (!busy) void onSelect(revision.revisionId); }}
       ondblclick={() => (renamingRevisionId = revision.revisionId)}
       oncontextmenu={(event) => { event.preventDefault(); renamingRevisionId = revision.revisionId; }}
       onkeydown={(event) => {
-        if (event.key === 'F2') {
+        if (!busy && keyboardShortcutMatchesEvent(event, 'historyRename')) {
           event.preventDefault();
           renamingRevisionId = revision.revisionId;
         }

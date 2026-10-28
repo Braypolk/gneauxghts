@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+
   import { noteFileLabel } from '#lib/noteLabels.js';
   import { ArrowLeft, Clock3, LoaderCircle, Pencil, RotateCcw } from '@lucide/svelte';
   import type {
@@ -126,7 +128,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Escape') return;
+    if (!keyboardShortcutMatchesEvent(event, 'historyExit')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (canExitHistoryMode(historyState)) void onExit();

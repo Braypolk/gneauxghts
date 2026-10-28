@@ -1,7 +1,6 @@
 import { tick } from 'svelte';
 import {
-  formatShortcutBinding,
-  getKeyboardShortcutBinding,
+  formatKeyboardShortcutBindings,
   keyboardShortcutMatchesEvent,
   type KeyboardShortcutId
 } from '#lib/keyboardShortcuts.svelte.js';
@@ -13,7 +12,7 @@ import {
 import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
 import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 import type { SearchMode } from '#lib/features/notepad/search/search.js';
-import { hasSplitNoteDestination } from '../navigation/splitNoteDestination';
+import { hasSplitModifiers, hasSplitNoteDestination } from '../navigation/splitNoteDestination';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
@@ -160,8 +159,8 @@ class NotepadCommandBarController {
     return true;
   };
 
-  selectItem = (item: NotepadCommandBarVisibleItem, event?: Pick<MouseEvent, 'altKey'>) => {
-    if (event?.altKey && this.openItemInSplit(item)) return;
+  selectItem = (item: NotepadCommandBarVisibleItem, event?: Partial<Pick<MouseEvent, 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>>) => {
+    if (event && hasSplitModifiers(event) && this.openItemInSplit(item)) return;
     this.#deps.onSearchCommit?.();
     this.#closeSearchPanel();
 
@@ -243,11 +242,17 @@ class NotepadCommandBarController {
   };
 
   handleSearchKeydown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
     if (this.#handleRecentItemShortcut(event)) {
       return;
     }
 
     const items = this.#deps.getVisibleItems();
+
+    if (keyboardShortcutMatchesEvent(event, 'searchOpenInSplit')) {
+      const item = items[this.activeIndex] ?? items[0];
+      if (item && this.openItemInSplit(item)) { event.preventDefault(); return; }
+    }
 
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -314,7 +319,6 @@ class NotepadCommandBarController {
     if (event.key === 'Enter') {
       event.preventDefault();
       const item = items[this.activeIndex] ?? items[0];
-      if (event.altKey && this.openItemInSplit(item)) return;
       if (this.#deps.getSearchMode() === 'current' && this.#deps.getSearchQuery().trim() !== '') {
         this.#previewSearchResult(event.shiftKey ? -1 : 1, !event.shiftKey);
         return;
@@ -520,8 +524,8 @@ class NotepadCommandBarController {
   };
 
   getForgetButtonAriaLabel = () => {
-    const binding = getKeyboardShortcutBinding('forgetCurrentNote');
-    const shortcutSuffix = binding ? ` (${formatShortcutBinding(binding)})` : '';
+    const binding = formatKeyboardShortcutBindings('forgetCurrentNote');
+    const shortcutSuffix = binding ? ` (${binding})` : '';
     const itemLabel = this.#deps.getForgetItemLabel?.() ?? 'note';
 
     return this.#deps.isForgetHoldEnabled()

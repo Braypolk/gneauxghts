@@ -99,6 +99,7 @@ export function createWikilinkRuntime({
   }
 
   function handleAutocompleteKeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
     const state = getState();
     if (!state.active) {
       return false;

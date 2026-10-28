@@ -196,7 +196,7 @@ class SelectionMenuController {
   }
 
   handleKeydown(event: KeyboardEvent) {
-    if (!this.#visible) {
+    if (!this.#visible || event.defaultPrevented || event.isComposing) {
       return;
     }
 
@@ -211,6 +211,8 @@ class SelectionMenuController {
         }
       }
     }
+
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
 
     if (event.key === 'Escape') {
       if (this.#nativeTarget) {

@@ -4,6 +4,7 @@ import { changeTable, editTableCell, type TableOperation } from './tableCommands
 import { tableSourceEffect, type MarkdownTable, type TableCellLocation } from './tableModel';
 import { selectionMenuSetNativeTarget, selectionMenuClearNativeTarget } from '../../editor/selectionMenu';
 import type { NativeSelectionMenuTarget } from '../../editor/selectionMenuTarget';
+import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
 
 const inline = new MarkdownIt({ html: false, linkify: false, breaks: false });
 // Cell activation edits its Markdown. Keep previews passive, including images:
@@ -142,12 +143,12 @@ function makeCell(view: EditorView, container: HTMLElement, data: MountedTable, 
   input.onkeydown = event => {
     if (mounted.get(container) !== data || !input.isConnected) return;
     if (event.isComposing || data.composing === input) return;
-    if ((event.metaKey || event.ctrlKey) && ['z', 'y'].includes(event.key.toLowerCase())) {
+    if (keyboardShortcutMatchesEvent(event, 'editorUndo') || keyboardShortcutMatchesEvent(event, 'editorRedo')) {
       // Existing pane shortcuts route Undo/Redo to the shared document root.
       // A native input undo would change only this disposable projection.
       event.preventDefault(); event.stopPropagation();
       view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: event.key, code: event.code,
-        metaKey: event.metaKey, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, bubbles: true, cancelable: true }));
+        metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, bubbles: true, cancelable: true }));
       return;
     }
     if (event.key === 'Escape') {

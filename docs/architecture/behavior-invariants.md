@@ -8,6 +8,24 @@ here remain open.
 
 ## Workspace and navigation
 
+### Keyboard assignments come from one command catalog
+
+`keyboardShortcuts.svelte.ts` owns app commands and explicit editor shortcuts.
+Settings and command dispatch consume the same arrays of bindings; an empty
+array disables the command. Adding an alternative retains existing bindings,
+and removing one does not revive its default. Legacy single-binding preferences
+and both former Redo entries migrate without losing remaps or disabled bindings.
+Basic text movement and standard control navigation retain their native behavior.
+
+Recording a binding suppresses app shortcuts until it is saved or cancelled.
+Search-result split keys and modifier-click alternatives share one configured
+action. Show Split Options separately owns the editor's held-modifier cue;
+its modifier-only bindings can be recorded, removed and reset in Settings.
+Settings shows one row per command, grouping its editable bindings together.
+A customized command has User as its source; otherwise it has Default. Search
+matches any one binding and keeps every alternative visible. Reset is available
+per command or globally.
+
 ### Vault selection applies on the next launch
 
 Settings Apply validates and atomically stages a next-launch vault selection.

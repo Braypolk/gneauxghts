@@ -6,8 +6,7 @@
   import ChatActivityDot from '#lib/features/chat/ui/ChatActivityDot.svelte';
   import { documentHasUnresolvedConflict, getDocumentNoteId } from './document/documentState';
   import {
-    formatShortcutBinding,
-    getEffectiveKeyboardShortcutBinding
+    formatKeyboardShortcutBindings
   } from '#lib/keyboardShortcuts.svelte.js';
   import { MediaQuery } from 'svelte/reactivity';
   import { DropdownMenu } from 'bits-ui';
@@ -139,10 +138,10 @@
     getPaneTopActions(viewModel.paneKind, 'split')
   );
   const pinShortcutLabel = $derived(
-    formatShortcutBinding(getEffectiveKeyboardShortcutBinding('togglePinCurrentNote'))
+    formatKeyboardShortcutBindings('togglePinCurrentNote')
   );
   const historyShortcutLabel = $derived(
-    formatShortcutBinding(getEffectiveKeyboardShortcutBinding('showHistory'))
+    formatKeyboardShortcutBindings('showHistory')
   );
 
   const splitPaneActionIcons = {
@@ -195,7 +194,12 @@
   {#if viewModel.showCloseButton}
     {@render splitPaneButtons()}
   {:else}
-    <SplitPaneButton paneKind={viewModel.paneKind} onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+    <SplitPaneButton
+      paneKind={viewModel.paneKind}
+      shortcutPreviewEnabled={viewModel.paneKind === 'editor' && workspaceVisible}
+      onSplit={actions.onSplit}
+      onOpenCurrent={actions.onOpenPaneChoice}
+    />
     {#if fullWidth.current}
       <div class="compact-pane-switch flex items-center gap-1 sm:hidden">
         {#if viewModel.paneKind === 'editor'}

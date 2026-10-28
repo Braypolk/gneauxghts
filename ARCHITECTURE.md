@@ -52,6 +52,7 @@ concrete state references, independently of Tauri dispatch.
 | Running/unread chat indicators and read acknowledgement | Vault-lifetime `features/chat/pi/activity.ts` projects Pi live/inbox/submission state; `ChatReadDoc` retains only the greatest viewed completion submission ID |
 | Read/write authority, source identity and exact external-effect proof | Native `pi_chat/authority.rs`, `notes.rs`, `citations.rs` and `publication.rs`; NoteTimeline remains canonical publication owner |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
+| App command catalog, multiple keyboard assignments, preference migration and event matching | `keyboardShortcuts.svelte.ts`; Settings owns the recording draft and uses the store's recording guard to suppress dispatch |
 | Semantic indexing work | The backend semantic work queue and worker context |
 | Device-local search runtime and model setup | `GemmaLiteRtEmbeddingProvider`; desktop setup verifies pinned native LiteRT/model bytes; iOS loads the build-verified, signed framework from the app bundle and setup installs model data only. Explicit Settings setup uses semantic work admission; shared snapshots expose setup phases and byte progress independently of inference |
 | Compatible semantic generation and query admission | `SemanticGeneration` gates the vault-lifetime provider/database/ANN bundle; the semantic worker publishes after source/recall reconciliation through NoteTimeline source admission |

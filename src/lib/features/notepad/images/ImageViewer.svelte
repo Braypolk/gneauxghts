@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent, formatKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
+
   import { onMount, untrack } from 'svelte';
   import { boundedPan, viewerFit, type ImageViewerSession } from './imageViewerModel';
   let { session, onClose }: { session: ImageViewerSession; onClose: () => void } = $props();
@@ -47,12 +49,11 @@
   }
   function onKey(event: KeyboardEvent) {
     event.stopPropagation();
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key === 'Escape') { event.preventDefault(); close(); }
-    else if (event.key === 'ArrowRight') { event.preventDefault(); step(1); }
-    else if (event.key === 'ArrowLeft') { event.preventDefault(); step(-1); }
-    else if (['=', '+', '-', '0'].includes(event.key)) {
-      event.preventDefault(); if (event.key === '0') reset(); else zoom(event.key === '-' ? 1 / 1.2 : 1.2);
+    if (keyboardShortcutMatchesEvent(event, 'imageViewerClose')) { event.preventDefault(); close(); }
+    else if (keyboardShortcutMatchesEvent(event, 'imageViewerNext')) { event.preventDefault(); step(1); }
+    else if (keyboardShortcutMatchesEvent(event, 'imageViewerPrevious')) { event.preventDefault(); step(-1); }
+    else if ((['imageViewerZoomIn', 'imageViewerZoomOut', 'imageViewerReset'] as const).some(id => keyboardShortcutMatchesEvent(event, id))) {
+      event.preventDefault(); if (keyboardShortcutMatchesEvent(event, 'imageViewerReset')) reset(); else zoom(keyboardShortcutMatchesEvent(event, 'imageViewerZoomOut') ? 1 / 1.2 : 1.2);
     }
   }
   function pointerDown(event: PointerEvent) {
@@ -116,7 +117,8 @@
   onMount(() => {
     // Props belong to the parent conditional; capture the origin for teardown.
     const origin = session;
-    const cancel = (event: Event) => { event.preventDefault(); close(); };
+    // Native Escape must not restore a removed or reassigned Close binding.
+    const cancel = (event: Event) => { event.preventDefault(); };
     dialog.addEventListener('keydown', onKey);
     dialog.addEventListener('cancel', cancel);
     dialog.showModal();
@@ -165,7 +167,7 @@
   </div>
   <footer>
     <button type="button" aria-label="Previous image" disabled={index === 0} onclick={() => step(-1)}>←</button>
-    <span class="keyboard-help">Arrow keys to browse · + / − to zoom · 0 to fit · Esc to close</span>
+    <span class="keyboard-help">{formatKeyboardShortcutBindings('imageViewerPrevious')} / {formatKeyboardShortcutBindings('imageViewerNext')} to browse · {formatKeyboardShortcutBindings('imageViewerZoomIn')} / {formatKeyboardShortcutBindings('imageViewerZoomOut')} to zoom · {formatKeyboardShortcutBindings('imageViewerReset')} to fit · {formatKeyboardShortcutBindings('imageViewerClose')} to close</span>
     <span class="touch-help">Pinch to zoom · Drag to pan · Swipe at fit to browse</span>
     <button type="button" aria-label="Next image" disabled={index === session.images.length - 1} onclick={() => step(1)}>→</button>
   </footer>

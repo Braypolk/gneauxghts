@@ -1,3 +1,4 @@
+import { formatKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
 import { getNextListSelectionIndex } from '#lib/ui/listSelection.js';
 
 export type PaneCommandChoice = 'typing' | 'current' | 'previous' | 'thoughtPartner';
@@ -141,7 +142,7 @@ export function getPaneCommandShortcutLabel(
           ? 2
           : null;
 
-  return shortcutIndex === null ? null : String(shortcutIndex);
+  return shortcutIndex === null ? null : formatKeyboardShortcutBindings(`paneChoice${shortcutIndex}` as 'paneChoice1' | 'paneChoice2' | 'paneChoice3') || null;
 }
 
 export function getPaneCommandForShortcut(

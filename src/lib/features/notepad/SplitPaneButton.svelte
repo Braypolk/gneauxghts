@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Columns2, CornerUpLeft, FileText, MessagesSquare } from '@lucide/svelte';
   import { PANE_COMMAND_OPTIONS, type PaneCommandChoice } from '#lib/features/notepad/paneCommandPicker.js';
+  import { keyboardShortcutModifiersMatchEvent } from '#lib/keyboardShortcuts.svelte.js';
   import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
   import { chatActivity, activityDescription } from '#lib/features/chat/pi/activity.js';
   import ChatActivityDot from '#lib/features/chat/ui/ChatActivityDot.svelte';
@@ -11,13 +12,24 @@
 
   interface Props {
     paneKind: PaneKind;
+    shortcutPreviewEnabled?: boolean;
     onSplit: (choice?: PaneCommandChoice) => void | Promise<void>;
     onOpenCurrent: (choice: PaneCommandChoice) => void | Promise<void>;
   }
 
-  let { paneKind, onSplit, onOpenCurrent }: Props = $props();
-  let splitMode = $state(false);
+  let { paneKind, shortcutPreviewEnabled = false, onSplit, onOpenCurrent }: Props = $props();
+  let interactionSplitMode = $state(false);
+  let shortcutSplitMode = $state(false);
+  const splitMode = $derived(interactionSplitMode || (shortcutPreviewEnabled && shortcutSplitMode));
   let controlElement = $state<HTMLDivElement | null>(null);
+
+  $effect(() => {
+    if (!shortcutPreviewEnabled) shortcutSplitMode = false;
+  });
+
+  function updateShortcutPreview(event: KeyboardEvent) {
+    shortcutSplitMode = shortcutPreviewEnabled && keyboardShortcutModifiersMatchEvent(event, 'showSplitOptions');
+  }
 
   const splitChoiceByAction: Partial<Record<PaneTopAction, PaneCommandChoice>> = {
     'split-with-chat': 'thoughtPartner',
@@ -64,10 +76,19 @@
   function handleFocusOut(event: FocusEvent) {
     const next = event.relatedTarget;
     if (!(next instanceof Node) || !controlElement?.contains(next)) {
-      splitMode = false;
+      interactionSplitMode = false;
     }
   }
 </script>
+
+<svelte:window
+  onkeydowncapture={updateShortcutPreview}
+  onkeyupcapture={updateShortcutPreview}
+  onblur={() => (shortcutSplitMode = false)}
+/>
+<svelte:document onvisibilitychange={() => {
+  if (document.hidden) shortcutSplitMode = false;
+}} />
 
 <div
   bind:this={controlElement}
@@ -76,7 +97,7 @@
   role="group"
   aria-label="Pane actions"
   onpointerleave={() => {
-    if (!controlElement?.contains(document.activeElement)) splitMode = false;
+    if (!controlElement?.contains(document.activeElement)) interactionSplitMode = false;
   }}
   onfocusout={handleFocusOut}
 >
@@ -107,8 +128,8 @@
     class="relative z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
     onclick={() => void onSplit()}
     onmousedown={(event) => event.preventDefault()}
-    onpointerenter={() => (splitMode = true)}
-    onfocus={() => (splitMode = true)}
+    onpointerenter={() => (interactionSplitMode = true)}
+    onfocus={() => (interactionSplitMode = true)}
     aria-label={optionLabels.typing}
     title={optionLabels.typing}
   >

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+
   import { noteFileLabel } from '#lib/noteLabels.js';
   // Topic geography with spaced dots and zoom-faded filenames.
   import { onMount, untrack, type Snippet } from 'svelte';
@@ -259,18 +261,26 @@
     if (performance.now() - wheelTime < 135 || Math.abs(event.deltaY) < 3) return;
     wheelTime = performance.now(); cycle(event.deltaY > 0 ? 1 : -1);
   }
+  function keyNode(event: KeyboardEvent, node: AtlasNode) {
+    if (event.defaultPrevented) return;
+    if (keyboardShortcutMatchesEvent(event, 'mapOpen')) {
+      event.preventDefault(); event.stopPropagation(); void openNode(node);
+    } else if (keyboardShortcutMatchesEvent(event, 'mapPreview')) {
+      event.preventDefault(); event.stopPropagation(); pin(node);
+    }
+  }
   function keyBrowse(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
     const element = event.target as HTMLElement;
     if (element.closest('input,textarea,select,[contenteditable="true"]')) return;
-    if (event.key === 'Escape') { closeCard(); return; }
+    if (keyboardShortcutMatchesEvent(event, 'mapDismiss')) { closeCard(); return; }
     if (element.closest('.full-source')) return;
     if (element !== document.body && !workbenchElement?.contains(element)) return;
     if (element.closest('button')) return;
-    if (event.key === 'Enter' && active) { event.preventDefault(); void openNode(active.node); return; }
-    if (event.key === '0') { event.preventDefault(); reset(); return; }
-    if (['+', '=', '-'].includes(event.key)) { event.preventDefault(); setZoomAt(zoom * Math.exp(event.key === '-' ? -0.2 : 0.2), { x: width / 2, y: height / 2 }); return; }
-    if (active && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); cycle(event.key === 'ArrowDown' ? 1 : -1); }
+    if (keyboardShortcutMatchesEvent(event, 'mapOpen') && active) { event.preventDefault(); void openNode(active.node); return; }
+    if (keyboardShortcutMatchesEvent(event, 'mapReset')) { event.preventDefault(); reset(); return; }
+    if (keyboardShortcutMatchesEvent(event, 'mapZoomIn') || keyboardShortcutMatchesEvent(event, 'mapZoomOut')) { event.preventDefault(); setZoomAt(zoom * Math.exp(keyboardShortcutMatchesEvent(event, 'mapZoomOut') ? -0.2 : 0.2), { x: width / 2, y: height / 2 }); return; }
+    if (active && (keyboardShortcutMatchesEvent(event, 'mapNext') || keyboardShortcutMatchesEvent(event, 'mapPrevious'))) { event.preventDefault(); cycle(keyboardShortcutMatchesEvent(event, 'mapNext') ? 1 : -1); }
   }
   async function loadSource() {
     if (!active || !readSource) return;
@@ -422,7 +432,7 @@
             {#each visibleNodes as mark (mark.node.id)}
               <g class="note-dot" role="button" tabindex="0" data-node-id={mark.node.id} data-root-id={mark.rootId} aria-label={`Pin ${noteFileLabel(mark.node.fileName || mark.node.title, mark.node.noteId)}`}
                 onmouseenter={() => hoveredId = mark.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = mark.node.id} onblur={() => hoveredId = null}
-                onclick={() => clickNode(mark.node)} ondblclick={() => void openNode(mark.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); if (event.key === 'Enter') void openNode(mark.node); else pin(mark.node); } }}>
+                onclick={() => clickNode(mark.node)} ondblclick={() => void openNode(mark.node)} onkeydown={(event) => keyNode(event, mark.node)}>
                 <circle class="dot-hit" cx={mark.x} cy={mark.y} r={Math.max(visibleRadius(mark.node.id), 8) / cameraScale} fill="transparent"/>
                 <circle class="dot-body" cx={mark.x} cy={mark.y} r={visibleRadius(mark.node.id) / cameraScale} fill={mark.color} fill-opacity={dotOpacity(mark.node)} data-connectedness={nodeConnectedness(mark.node)} data-attention={attention(mark.node)} stroke={focusId === mark.node.id ? 'var(--color-foreground)' : 'none'} stroke-width="1.5" vector-effect="non-scaling-stroke"/>
               </g>
@@ -437,7 +447,7 @@
             {#each filenameLabels as label (label.node.id)}
               <g class="note-name" role="button" tabindex={labelsInteractive ? 0 : -1} data-filename-id={label.node.id} aria-label={`Read ${noteFileLabel(label.node.fileName || label.node.title, label.node.noteId)}`}
                 onmouseenter={() => hoveredId = label.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = label.node.id} onblur={() => hoveredId = null}
-                onclick={() => clickNode(label.node)} ondblclick={() => void openNode(label.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); if (event.key === 'Enter') void openNode(label.node); else pin(label.node); } }}>
+                onclick={() => clickNode(label.node)} ondblclick={() => void openNode(label.node)} onkeydown={(event) => keyNode(event, label.node)}>
                 <text x={label.x} y={label.labelY} text-anchor="middle" font-size={labelWorldSize} font-weight={activeId === label.node.id ? '600' : '400'} fill="var(--color-foreground)" stroke="var(--color-background)" stroke-width="0.8" stroke-linejoin="round" paint-order="stroke">{label.title}</text>
               </g>
             {/each}

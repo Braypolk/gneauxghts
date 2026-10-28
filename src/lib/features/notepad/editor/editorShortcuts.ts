@@ -4,6 +4,24 @@ import {
   cursorLineBoundaryLeft,
   cursorLineBoundaryRight,
   defaultKeymap,
+  standardKeymap,
+  copyLineUp,
+  copyLineDown,
+  addCursorAbove,
+  addCursorBelow,
+  selectLine,
+  indentLess,
+  indentMore,
+  indentSelection,
+  deleteLine,
+  cursorMatchingBracket,
+  toggleComment,
+  toggleBlockComment,
+  toggleTabFocusMode,
+  simplifySelection,
+  transposeChars,
+  splitLine,
+  deleteToLineEnd,
   insertNewlineAndIndent,
   redo,
   selectGroupLeft,
@@ -76,8 +94,15 @@ export function createMarkdownBaseExtensions(): Extension[] {
       keymap.of([
         {
           key: 'Tab',
-          run: (view) => moveThroughLink(view) || indentEditorSelection(view),
-          shift: (view) => moveThroughLink(view, 'backward') || outdentEditorSelection(view)
+          run: (view) => moveThroughLink(view),
+          shift: (view) => moveThroughLink(view, 'backward')
+        },
+        {
+          any: (view, event) => {
+            if (keyboardShortcutMatchesEvent(event, 'editorStructuralIndent')) return indentEditorSelection(view);
+            if (keyboardShortcutMatchesEvent(event, 'editorStructuralOutdent')) return outdentEditorSelection(view);
+            return false;
+          }
         }
       ])
     )
@@ -87,7 +112,8 @@ export function createMarkdownBaseExtensions(): Extension[] {
 export function createEditorShortcuts(
   controller: () => EditorController | null
 ) {
-  return EditorView.domEventHandlers({
+  // Assigned commands must run before CodeMirror's native keymap handler.
+  return Prec.high(EditorView.domEventHandlers({
     keydown: (event, view) => {
       const current = controller();
       const runtime = current?.sharedResources?.runtime ?? null;
@@ -98,8 +124,7 @@ export function createEditorShortcuts(
       }
 
       if (
-        keyboardShortcutMatchesEvent(event, 'editorRedo') ||
-        keyboardShortcutMatchesEvent(event, 'editorRedoAlternate')
+        keyboardShortcutMatchesEvent(event, 'editorRedo')
       ) {
         event.preventDefault();
         return runtime ? runtime.redo(current?.paneKey ?? null) : redo(view);
@@ -122,7 +147,7 @@ export function createEditorShortcuts(
 
       if (keyboardShortcutMatchesEvent(event, 'editorCutLine')) {
         if (
-          usesNativeCutShortcut('editorCutLine') ||
+          usesNativeCutShortcut('editorCutLine', event) ||
           !view.state.selection.main.empty
         ) {
           return false;
@@ -176,7 +201,7 @@ export function createEditorShortcuts(
 
       return false;
     }
-  });
+  }));
 }
 
 export function createPlatformNavigationKeymap() {
@@ -208,12 +233,41 @@ export function createPlatformNavigationKeymap() {
   ]);
 }
 
+const explicitEditorCommands = {
+  editorSplitLine: splitLine,
+  editorDeleteToLineEnd: deleteToLineEnd,
+  editorCopyLineUp: copyLineUp,
+  editorCopyLineDown: copyLineDown,
+  editorAddCursorAbove: addCursorAbove,
+  editorAddCursorBelow: addCursorBelow,
+  editorSelectLine: selectLine,
+  editorIndentLess: indentLess,
+  editorIndentMore: indentMore,
+  editorIndentSelection: indentSelection,
+  editorDeleteLine: deleteLine,
+  editorMatchingBracket: cursorMatchingBracket,
+  editorToggleComment: toggleComment,
+  editorToggleBlockComment: toggleBlockComment,
+  editorToggleTabFocus: toggleTabFocusMode,
+  editorSimplifySelection: simplifySelection,
+} as const;
+
 export function createFilteredDefaultKeymap() {
-  return keymap.of(
-    defaultKeymap.filter(
-      (binding) => !['Enter', 'Mod-Enter', 'Mod-i'].includes(binding.key ?? '')
-    )
-  );
+  return [
+    // Keep remaps ahead of Markdown Enter and platform cursor navigation.
+    Prec.high(keymap.of([{ any: (view, event) => {
+      for (const id of Object.keys(explicitEditorCommands) as (keyof typeof explicitEditorCommands)[]) {
+        if (keyboardShortcutMatchesEvent(event, id) && explicitEditorCommands[id](view)) return true;
+      }
+      return false;
+    } }])),
+    keymap.of([
+      // Keep native syntax navigation alongside ordinary text movement.
+      ...defaultKeymap.filter(binding => binding.key === 'Alt-ArrowLeft' || binding.key === 'Alt-ArrowRight'),
+      ...standardKeymap.filter(binding => binding.key !== 'Enter' && binding.run !== transposeChars
+        && binding.run !== splitLine && binding.run !== deleteToLineEnd)
+    ])
+  ];
 }
 
 /** Copy completes before deletion, but only the captured document/selection may be cut. */

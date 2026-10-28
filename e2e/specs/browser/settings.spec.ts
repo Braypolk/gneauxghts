@@ -389,16 +389,18 @@ describe('searchable settings workspace', () => {
     await search().setValue('undo');
     await $('[data-settings-result="shortcut-editorUndo"]').click();
     await expectDestination('shortcut-editorUndo');
-    await $('input[placeholder="Filter shortcuts"]').setValue('does not exist');
+    await $('input[aria-label="Filter shortcuts"]').setValue('does not exist');
     await search().setValue('redo');
     await $('[data-settings-result="shortcut-editorRedo"]').click();
     await expectDestination('shortcut-editorRedo');
     const shortcut = await $('[data-settings-anchor="shortcut-editorRedo"]');
-    await shortcut.$('button=Clear').click();
-    await shortcut.$('span.rounded-full=Disabled').waitForDisplayed();
-    await shortcut.$('button=Reset').click();
-    expect(await shortcut.$('button=Clear').isDisplayed()).toBe(true);
-    expect(await shortcut.$('button=Reset').isExisting()).toBe(false);
+    await $('button[aria-label="Remove Cmd + Y from Redo"]').click();
+    await $('button[aria-label="Remove Cmd + Shift + Z from Redo"]').click();
+    await shortcut.$('button=Unassigned').waitForDisplayed();
+    await shortcut.$('button[title="Reset command to default"]').click();
+    await expect($$('tr[data-shortcut-id="editorRedo"]')).toBeElementsArrayOfSize(1);
+    await expect($$('tr[data-shortcut-id="editorRedo"] .binding-button')).toBeElementsArrayOfSize(2);
+    expect(await shortcut.$('button[title="Reset command to default"]').isExisting()).toBe(false);
   });
 
   it('opens recovery and diagnostic destinations without invoking their actions', async () => {

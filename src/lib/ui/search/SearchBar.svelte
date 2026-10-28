@@ -218,6 +218,7 @@
   });
 
   function handleInputKeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented) return;
     onInputKeydown?.(event);
     if (event.defaultPrevented || event.key !== 'Escape' || !blurOnEscape) {
       return;

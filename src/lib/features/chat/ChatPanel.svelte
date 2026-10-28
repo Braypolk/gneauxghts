@@ -2,6 +2,8 @@
   export interface ComposerDock { slot: HTMLElement | null; expanded: boolean; onExpand: () => void; }
 </script>
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+
   import { onMount, tick, untrack, type Snippet } from 'svelte';
   import { PI_CONTEXT } from './pi/runtime';
   import { invoke } from '@tauri-apps/api/core';
@@ -130,7 +132,7 @@
   }
   function onComposerKeydown(event: KeyboardEvent) {
     // Touch Return edits the draft; Safari may report composition through keyCode.
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || window.matchMedia('(any-pointer: coarse)').matches) return;
+    if (!keyboardShortcutMatchesEvent(event, 'chatSend') || event.isComposing || event.keyCode === 229 || window.matchMedia('(any-pointer: coarse)').matches) return;
     event.preventDefault();
     void submit();
   }

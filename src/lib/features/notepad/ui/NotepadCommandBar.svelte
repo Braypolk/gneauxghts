@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+
   import { noteFileLabel } from '#lib/noteLabels.js';
   import RelatedResults from '../related/RelatedResults.svelte';
   import type { RelatedView } from '../related/store.svelte';
@@ -127,6 +129,13 @@
     commandBarState.handleForgetShortcutKeyDown(event);
   }
   function handleRelatedKeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented) return;
+    if (event.target === relatedHeader && keyboardShortcutMatchesEvent(event, 'searchOpenInSplit')) {
+      const item = related?.result?.items[relatedIndex];
+      if (item && related?.onOpenInSplit && hasSplitNoteDestination(item)) {
+        event.preventDefault(); chooseSplit(() => related?.onOpenInSplit?.(item)); return;
+      }
+    }
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopPropagation(); closeRelated(true);
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -152,9 +161,7 @@
       event.preventDefault();
       const item = related?.result?.items[relatedIndex];
       if (item) {
-        if (event.altKey && related?.onOpenInSplit && hasSplitNoteDestination(item)) {
-          chooseSplit(() => related?.onOpenInSplit?.(item));
-        } else selectRelated(item);
+        selectRelated(item);
       }
     }
   }
@@ -292,6 +299,10 @@
     if (relatedMode || event.defaultPrevented || !(event.target instanceof Element)) return;
     const row = event.target.closest<HTMLElement>('[data-search-result-index]');
     if (!row || !event.target.matches('.search-result-item, .image-search-result, [data-search-split-action]')) return;
+    if (keyboardShortcutMatchesEvent(event, 'searchOpenInSplit') && !retainedSearchItems) {
+      const item = visibleItems[Number(row.dataset.searchResultIndex)];
+      if (item && commandBarState.openItemInSplit(item)) { event.preventDefault(); return; }
+    }
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.key === 'ArrowRight') {
       const split = row.querySelector<HTMLButtonElement>('[data-search-split-action]');

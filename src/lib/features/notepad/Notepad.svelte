@@ -129,8 +129,7 @@
   import { createPaneViewModelFactory } from "#lib/features/notepad/pane/paneViewModelFactory.js";
   import { createPaneEditorLifecycle } from "#lib/features/notepad/pane/paneEditorLifecycle.js";
   import {
-    formatShortcutBinding,
-    keyboardShortcuts,
+    formatKeyboardShortcutBindings,
   } from "#lib/keyboardShortcuts.svelte.js";
   import "#lib/features/notepad/editor/editor.css";
   import "#lib/features/notepad/editor/editorTypography.css";
@@ -1062,7 +1061,7 @@
     return commands.paneCommandPreviousLocationLabel(paneCommandPaneId);
   });
   let paneCommandPreviousNoteShortcutLabel = $derived(
-    formatShortcutBinding(keyboardShortcuts.bindings.goToPreviousNote),
+    formatKeyboardShortcutBindings('goToPreviousNote'),
   );
 
   let locationHistoryRequestId = 0;

@@ -2,7 +2,7 @@ import { logDevError } from '#lib/logDevError.js';
 import { restartLifecycle } from '#lib/app/restartLifecycle.svelte.js';
 
 type ModifierToken = 'Meta' | 'Ctrl' | 'Alt' | 'Shift';
-type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor';
+type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor' | 'chat' | 'history' | 'images' | 'map';
 
 export type KeyboardShortcutId =
   | 'navNote'
@@ -12,6 +12,7 @@ export type KeyboardShortcutId =
   | 'openThoughtPartner'
   | 'showHistory'
   | 'openSplitPaneOptions'
+  | 'showSplitOptions'
   | 'openNewChatInSplit'
   | 'openPreviousNoteInSplit'
   | 'closePane'
@@ -34,15 +35,63 @@ export type KeyboardShortcutId =
   | 'recentNote9'
   | 'editorUndo'
   | 'editorRedo'
-  | 'editorRedoAlternate'
   | 'editorInsertBelow'
   | 'editorMoveLineUp'
   | 'editorMoveLineDown'
   | 'editorCutLine'
   | 'editorHardBreak'
+  | 'editorSplitLine'
+  | 'editorDeleteToLineEnd'
+  | 'editorStructuralIndent'
+  | 'editorStructuralOutdent'
   | 'editorBold'
   | 'editorItalic'
-  | 'editorLink';
+  | 'editorLink'
+  | 'searchOpenInSplit'
+  | 'editorOpenWikilink'
+  | 'chatSend'
+  | 'historyExit'
+  | 'historyRename'
+  | 'paneChoice1'
+  | 'paneChoice2'
+  | 'paneChoice3'
+  | 'imageViewerClose'
+  | 'imageViewerNext'
+  | 'imageViewerPrevious'
+  | 'imageViewerZoomIn'
+  | 'imageViewerZoomOut'
+  | 'imageViewerReset'
+  | 'imageOpen'
+  | 'imageSource'
+  | 'imageWidth'
+  | 'imageGrow'
+  | 'imageShrink'
+  | 'imageReset'
+  | 'imageDelete'
+  | 'imageCopySource'
+  | 'imageCutSource'
+  | 'mapOpen'
+  | 'mapPreview'
+  | 'mapDismiss'
+  | 'mapNext'
+  | 'mapPrevious'
+  | 'mapZoomIn'
+  | 'mapZoomOut'
+  | 'mapReset'
+  | 'editorCopyLineUp'
+  | 'editorCopyLineDown'
+  | 'editorAddCursorAbove'
+  | 'editorAddCursorBelow'
+  | 'editorSelectLine'
+  | 'editorIndentLess'
+  | 'editorIndentMore'
+  | 'editorIndentSelection'
+  | 'editorDeleteLine'
+  | 'editorMatchingBracket'
+  | 'editorToggleComment'
+  | 'editorToggleBlockComment'
+  | 'editorToggleTabFocus'
+  | 'editorSimplifySelection';
 
 export interface KeyboardShortcutDefinition {
   id: KeyboardShortcutId;
@@ -50,6 +99,9 @@ export interface KeyboardShortcutDefinition {
   description: string;
   group: ShortcutGroupId;
   defaultBinding: string;
+  additionalBindings?: readonly string[];
+  nonMacBindings?: readonly string[];
+  activation?: 'holdModifiers';
 }
 
 export interface KeyboardShortcutGroup {
@@ -58,9 +110,10 @@ export interface KeyboardShortcutGroup {
   description: string;
 }
 
-export type KeyboardShortcutBindings = Record<KeyboardShortcutId, string>;
+export type KeyboardShortcutBindings = Record<KeyboardShortcutId, string[]>;
 
 interface ParsedShortcutBinding {
+  /** Empty for a modifier-only hold. */
   key: string;
   metaKey: boolean;
   ctrlKey: boolean;
@@ -80,7 +133,13 @@ const NAMED_KEY_TOKENS = new Set([
   'ArrowUp',
   'ArrowDown',
   'ArrowLeft',
-  'ArrowRight'
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Insert',
+  'ContextMenu'
 ]);
 const MODIFIER_ONLY_CODES = new Set(['MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight']);
 
@@ -104,7 +163,23 @@ export const keyboardShortcutGroups = [
     id: 'editor',
     label: 'Editor',
     description: 'Editing commands inside note body.'
-  }
+  },
+  {
+    id: 'chat',
+    label: 'Chat',
+    description: 'Chat composer commands.',
+  },
+  {
+    id: 'history',
+    label: 'History',
+    description: 'Browse and name Note Revisions.',
+  },
+  {
+    id: 'images',
+    label: 'Image Viewer',
+    description: 'Browse and zoom images.',
+  },
+  { id: 'map', label: 'Map', description: 'Browse notes and adjust the map.' }
 ] as const satisfies readonly KeyboardShortcutGroup[];
 
 const shortcutDefinitionsBase = [
@@ -156,6 +231,15 @@ const shortcutDefinitionsBase = [
     description: 'Open a new split pane and choose its contents.',
     group: 'workspace',
     defaultBinding: 'Meta+Shift+n'
+  },
+  {
+    id: 'showSplitOptions',
+    label: 'Show Split Options',
+    description: 'Hold the assigned modifiers to reveal the editor’s split pane controls.',
+    group: 'workspace',
+    defaultBinding: 'Alt',
+    additionalBindings: ['Meta+Shift'],
+    activation: 'holdModifiers'
   },
   {
     id: 'openNewChatInSplit',
@@ -246,14 +330,8 @@ const shortcutDefinitionsBase = [
     label: 'Redo',
     description: 'Redo editor change.',
     group: 'editor',
-    defaultBinding: 'Meta+y'
-  },
-  {
-    id: 'editorRedoAlternate',
-    label: 'Redo (Alternate)',
-    description: 'Alternate redo binding.',
-    group: 'editor',
-    defaultBinding: 'Meta+Shift+z'
+    defaultBinding: 'Meta+y',
+    additionalBindings: ['Meta+Shift+z']
   },
   {
     id: 'editorInsertBelow',
@@ -291,6 +369,36 @@ const shortcutDefinitionsBase = [
     defaultBinding: 'Shift+Enter'
   },
   {
+    id: 'editorSplitLine',
+    label: 'Split Line Without Moving Cursor',
+    description: 'Insert a newline while keeping the cursor before the break.',
+    group: 'editor',
+    defaultBinding: 'Ctrl+o',
+    nonMacBindings: [],
+  },
+  {
+    id: 'editorDeleteToLineEnd',
+    label: 'Delete to End of Line',
+    description: 'Delete from the cursor to the end of the line.',
+    group: 'editor',
+    defaultBinding: 'Ctrl+k',
+    nonMacBindings: [],
+  },
+  {
+    id: 'editorStructuralIndent',
+    label: 'Indent Block or Selection',
+    description: 'Indent the current block or selected lines.',
+    group: 'editor',
+    defaultBinding: 'Tab',
+  },
+  {
+    id: 'editorStructuralOutdent',
+    label: 'Outdent Block or Selection',
+    description: 'Outdent the current block or selected lines.',
+    group: 'editor',
+    defaultBinding: 'Shift+Tab',
+  },
+  {
     id: 'editorBold',
     label: 'Bold Text',
     description: 'Wrap selected text in bold markers.',
@@ -310,7 +418,342 @@ const shortcutDefinitionsBase = [
     description: 'Wrap selected text in a markdown link.',
     group: 'editor',
     defaultBinding: 'Meta+k'
-  }
+  },
+  {
+    id: 'searchOpenInSplit',
+    label: 'Open Result in Split',
+    description: 'Open the selected saved result in a split. For clicks, hold the modifiers of a binding.',
+    group: 'search',
+    defaultBinding: 'Alt+Enter',
+    additionalBindings: ['Meta+Shift+Enter'],
+  },
+  {
+    id: 'editorOpenWikilink',
+    label: 'Follow Wikilink',
+    description: 'Open the note linked at the editor cursor.',
+    group: 'editor',
+    defaultBinding: 'Meta+Enter',
+    nonMacBindings: ['Ctrl+Enter'],
+  },
+  {
+    id: 'chatSend',
+    label: 'Send Chat Message',
+    description: 'Send the current chat draft. Shift+Enter inserts a line break.',
+    group: 'chat',
+    defaultBinding: 'Enter',
+    additionalBindings: ['Meta+Enter', 'Ctrl+Enter', 'Alt+Enter'],
+  },
+  {
+    id: 'historyExit',
+    label: 'Exit History',
+    description: 'Return from History Mode to the editing workspace.',
+    group: 'history',
+    defaultBinding: 'Escape',
+  },
+  {
+    id: 'historyRename',
+    label: 'Rename Revision',
+    description: 'Name the focused Note Revision.',
+    group: 'history',
+    defaultBinding: 'F2',
+  },
+  {
+    id: 'paneChoice1',
+    label: 'Pane Picker: First Choice',
+    description: 'Choose the first numbered option in the pane picker.',
+    group: 'workspace',
+    defaultBinding: '1',
+  },
+  {
+    id: 'paneChoice2',
+    label: 'Pane Picker: Second Choice',
+    description: 'Choose the second numbered option in the pane picker.',
+    group: 'workspace',
+    defaultBinding: '2',
+  },
+  {
+    id: 'paneChoice3',
+    label: 'Pane Picker: Third Choice',
+    description: 'Choose the third numbered option in the split pane picker.',
+    group: 'workspace',
+    defaultBinding: '3',
+  },
+  {
+    id: 'imageViewerClose',
+    label: 'Image Viewer: Close',
+    description: 'Close the image viewer.',
+    group: 'images',
+    defaultBinding: 'Escape',
+  },
+  {
+    id: 'imageViewerNext',
+    label: 'Image Viewer: Next Image',
+    description: 'Show the next image in the viewer.',
+    group: 'images',
+    defaultBinding: 'ArrowRight',
+  },
+  {
+    id: 'imageViewerPrevious',
+    label: 'Image Viewer: Previous Image',
+    description: 'Show the previous image in the viewer.',
+    group: 'images',
+    defaultBinding: 'ArrowLeft',
+  },
+  {
+    id: 'imageViewerZoomIn',
+    label: 'Image Viewer: Zoom In',
+    description: 'Zoom into the viewed image.',
+    group: 'images',
+    defaultBinding: '=',
+    additionalBindings: ['Shift+Plus', 'Plus'],
+  },
+  {
+    id: 'imageViewerZoomOut',
+    label: 'Image Viewer: Zoom Out',
+    description: 'Zoom out of the viewed image.',
+    group: 'images',
+    defaultBinding: '-',
+  },
+  {
+    id: 'imageViewerReset',
+    label: 'Image Viewer: Reset Zoom',
+    description: 'Fit the viewed image to the window.',
+    group: 'images',
+    defaultBinding: '0',
+  },
+  {
+    id: 'imageOpen',
+    label: 'Editor Image: Open Viewer',
+    description: 'Open the selected image in the viewer.',
+    group: 'editor',
+    defaultBinding: 'Space',
+  },
+  {
+    id: 'imageSource',
+    label: 'Editor Image: Edit Source',
+    description: 'Edit the source of the selected image.',
+    group: 'editor',
+    defaultBinding: 'Enter',
+  },
+  {
+    id: 'imageWidth',
+    label: 'Editor Image: Edit Width',
+    description: 'Move to the width of the selected image.',
+    group: 'editor',
+    defaultBinding: 'Tab',
+  },
+  {
+    id: 'imageGrow',
+    label: 'Editor Image: Increase Size',
+    description: 'Increase the selected image size.',
+    group: 'editor',
+    defaultBinding: '=',
+    additionalBindings: ['Shift+Plus', 'Plus'],
+  },
+  {
+    id: 'imageShrink',
+    label: 'Editor Image: Decrease Size',
+    description: 'Decrease the selected image size.',
+    group: 'editor',
+    defaultBinding: '-',
+  },
+  {
+    id: 'imageReset',
+    label: 'Editor Image: Reset Size',
+    description: 'Restore the selected image to its natural size.',
+    group: 'editor',
+    defaultBinding: '0',
+  },
+  {
+    id: 'imageDelete',
+    label: 'Editor Image: Delete',
+    description: 'Delete the selected image.',
+    group: 'editor',
+    defaultBinding: 'Backspace',
+    additionalBindings: ['Delete'],
+  },
+  {
+    id: 'imageCopySource',
+    label: 'Editor Image: Copy Markdown Source',
+    description: 'Copy the selected image’s Markdown source.',
+    group: 'editor',
+    defaultBinding: 'Meta+c',
+    additionalBindings: ['Ctrl+c'],
+  },
+  {
+    id: 'imageCutSource',
+    label: 'Editor Image: Cut Markdown Source',
+    description: 'Cut the selected image’s Markdown source.',
+    group: 'editor',
+    defaultBinding: 'Meta+x',
+    additionalBindings: ['Ctrl+x'],
+  },
+  {
+    id: 'mapOpen',
+    label: 'Map: Open Note',
+    description: 'Open the active map note.',
+    group: 'map',
+    defaultBinding: 'Enter',
+  },
+  {
+    id: 'mapPreview',
+    label: 'Map: Preview Note',
+    description: 'Preview the focused map note in the reader.',
+    group: 'map',
+    defaultBinding: 'Space',
+  },
+  {
+    id: 'mapDismiss',
+    label: 'Map: Dismiss Note',
+    description: 'Close the active map card.',
+    group: 'map',
+    defaultBinding: 'Escape',
+  },
+  {
+    id: 'mapNext',
+    label: 'Map: Next Note',
+    description: 'Browse to the next map note.',
+    group: 'map',
+    defaultBinding: 'ArrowDown',
+  },
+  {
+    id: 'mapPrevious',
+    label: 'Map: Previous Note',
+    description: 'Browse to the previous map note.',
+    group: 'map',
+    defaultBinding: 'ArrowUp',
+  },
+  {
+    id: 'mapZoomIn',
+    label: 'Map: Zoom In',
+    description: 'Zoom into the map.',
+    group: 'map',
+    defaultBinding: '=',
+    additionalBindings: ['Shift+Plus', 'Plus'],
+  },
+  {
+    id: 'mapZoomOut',
+    label: 'Map: Zoom Out',
+    description: 'Zoom out of the map.',
+    group: 'map',
+    defaultBinding: '-',
+  },
+  {
+    id: 'mapReset',
+    label: 'Map: Reset View',
+    description: 'Reset the map view.',
+    group: 'map',
+    defaultBinding: '0',
+  },
+  {
+    id: 'editorCopyLineUp',
+    label: 'Copy Line Up',
+    description: 'Copy Line Up in the note body.',
+    group: 'editor',
+    defaultBinding: 'Alt+Shift+ArrowUp',
+  },
+  {
+    id: 'editorCopyLineDown',
+    label: 'Copy Line Down',
+    description: 'Copy Line Down in the note body.',
+    group: 'editor',
+    defaultBinding: 'Alt+Shift+ArrowDown',
+  },
+  {
+    id: 'editorAddCursorAbove',
+    label: 'Add Cursor Above',
+    description: 'Add Cursor Above in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+Alt+ArrowUp',
+    nonMacBindings: ['Ctrl+Alt+ArrowUp'],
+  },
+  {
+    id: 'editorAddCursorBelow',
+    label: 'Add Cursor Below',
+    description: 'Add Cursor Below in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+Alt+ArrowDown',
+    nonMacBindings: ['Ctrl+Alt+ArrowDown'],
+  },
+  {
+    id: 'editorSelectLine',
+    label: 'Select Line',
+    description: 'Select Line in the note body.',
+    group: 'editor',
+    defaultBinding: 'Ctrl+l',
+    nonMacBindings: ['Alt+l'],
+  },
+  {
+    id: 'editorIndentLess',
+    label: 'Decrease Indent',
+    description: 'Decrease Indent in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+[',
+    nonMacBindings: ['Ctrl+['],
+  },
+  {
+    id: 'editorIndentMore',
+    label: 'Increase Indent',
+    description: 'Increase Indent in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+]',
+    nonMacBindings: ['Ctrl+]'],
+  },
+  {
+    id: 'editorIndentSelection',
+    label: 'Indent Selection',
+    description: 'Indent Selection in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+Alt+Backslash',
+    nonMacBindings: ['Ctrl+Alt+Backslash'],
+  },
+  {
+    id: 'editorDeleteLine',
+    label: 'Delete Line',
+    description: 'Delete Line in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+Shift+k',
+    nonMacBindings: ['Ctrl+Shift+k'],
+  },
+  {
+    id: 'editorMatchingBracket',
+    label: 'Go to Matching Bracket',
+    description: 'Go to Matching Bracket in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+Shift+Backslash',
+    nonMacBindings: ['Ctrl+Shift+Backslash'],
+  },
+  {
+    id: 'editorToggleComment',
+    label: 'Toggle Line Comment',
+    description: 'Toggle Line Comment in the note body.',
+    group: 'editor',
+    defaultBinding: 'Meta+/',
+    nonMacBindings: ['Ctrl+/'],
+  },
+  {
+    id: 'editorToggleBlockComment',
+    label: 'Toggle Block Comment',
+    description: 'Toggle Block Comment in the note body.',
+    group: 'editor',
+    defaultBinding: 'Ctrl+Shift+a',
+    nonMacBindings: ['Alt+Shift+a'],
+  },
+  {
+    id: 'editorToggleTabFocus',
+    label: 'Toggle Tab Focus Mode',
+    description: 'Toggle Tab Focus Mode in the note body.',
+    group: 'editor',
+    defaultBinding: 'Alt+Shift+m',
+    nonMacBindings: ['Ctrl+m'],
+  },
+  {
+    id: 'editorSimplifySelection',
+    label: 'Clear Extra Cursors',
+    description: 'Clear Extra Cursors in the note body.',
+    group: 'editor',
+    defaultBinding: 'Escape',
+  },
 ] as const satisfies readonly KeyboardShortcutDefinition[];
 
 const recentNoteDefinitions = Array.from({ length: 9 }, (_, index) => {
@@ -338,34 +781,60 @@ export const keyboardShortcutDefinitionsById = keyboardShortcutDefinitions.reduc
 );
 
 export const defaultKeyboardShortcutBindings = keyboardShortcutDefinitions.reduce(
-  (accumulator, definition) => {
-    accumulator[definition.id] = definition.defaultBinding;
-    return accumulator;
-  },
-  {} as KeyboardShortcutBindings
+  (bindings, definition: KeyboardShortcutDefinition) => {
+    bindings[definition.id] = normalizeCommandBindings(definition.id, [definition.defaultBinding, ...(definition.additionalBindings ?? [])]);
+    return bindings;
+  }, {} as KeyboardShortcutBindings
 );
+
+function cloneDefaults(): KeyboardShortcutBindings {
+  return Object.fromEntries(Object.entries(defaultKeyboardShortcutBindings).map(([id, bindings]) => [id, [...bindings]])) as KeyboardShortcutBindings;
+}
+
+/** Read the old single-binding format without losing remaps or disabled actions. */
+export function resolveStoredKeyboardShortcutBindings(value: unknown): KeyboardShortcutBindings {
+  const next = cloneDefaults();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return next;
+  const stored = value as Record<string, unknown>;
+  for (const definition of keyboardShortcutDefinitions) {
+    const raw = stored[definition.id];
+    if (typeof raw === 'string') next[definition.id] = normalizeCommandBindings(definition.id, [raw]);
+    else if (Array.isArray(raw) && raw.every(binding => typeof binding === 'string')) {
+      next[definition.id] = normalizeCommandBindings(definition.id, raw);
+    }
+  }
+  if (!Array.isArray(stored.editorRedo) && (typeof stored.editorRedo === 'string' || typeof stored.editorRedoAlternate === 'string')) {
+    next.editorRedo = normalizeCommandBindings('editorRedo', [
+      typeof stored.editorRedo === 'string' ? stored.editorRedo : 'Meta+y',
+      typeof stored.editorRedoAlternate === 'string' ? stored.editorRedoAlternate : 'Meta+Shift+z'
+    ]);
+  }
+  return next;
+}
+
+function normalizeBindings(bindings: readonly string[]): string[] {
+  return [...new Set(bindings.map(normalizeShortcutBinding).filter(Boolean))];
+}
+
+function normalizeCommandBindings(id: KeyboardShortcutId, bindings: readonly string[]): string[] {
+  const modifiersOnly = getShortcutDefinition(id).activation === 'holdModifiers';
+  return normalizeBindings(bindings).filter(binding => (parseShortcutBinding(binding)!.key === '') === modifiersOnly);
+}
 
 class KeyboardShortcutsStore {
   bindings = $state<KeyboardShortcutBindings>(readStoredKeyboardShortcutBindings());
+  recording = $state(false);
 
-  setBinding = (id: KeyboardShortcutId, binding: string) => {
-    const normalizedBinding = normalizeShortcutBinding(binding);
-    const next = {
-      ...this.bindings,
-      [id]: normalizedBinding
-    };
+  setBindings = (id: KeyboardShortcutId, bindings: readonly string[]) => {
+    const next = { ...this.bindings, [id]: normalizeCommandBindings(id, bindings) };
     this.bindings = next;
     persistKeyboardShortcutBindings(next);
   };
 
-  resetBinding = (id: KeyboardShortcutId) => {
-    this.setBinding(id, defaultKeyboardShortcutBindings[id]);
-  };
-
+  resetBinding = (id: KeyboardShortcutId) => this.setBindings(id, defaultKeyboardShortcutBindings[id]);
   resetAll = () => {
-    const next = { ...defaultKeyboardShortcutBindings };
-    this.bindings = next;
-    persistKeyboardShortcutBindings(next);
+    this.bindings = cloneDefaults();
+    persistKeyboardShortcutBindings(this.bindings);
   };
 }
 
@@ -375,45 +844,50 @@ export function getShortcutDefinition(id: KeyboardShortcutId) {
   return keyboardShortcutDefinitionsById[id];
 }
 
-export function getDefaultKeyboardShortcutBinding(id: KeyboardShortcutId) {
-  return defaultKeyboardShortcutBindings[id];
-}
-
-export function getKeyboardShortcutBinding(id: KeyboardShortcutId) {
-  return keyboardShortcuts.bindings[id];
-}
-
 function currentPlatform() {
   return typeof navigator === 'undefined' ? '' : navigator.platform;
 }
 
+export function getEffectiveKeyboardShortcutBindings(
+  id: KeyboardShortcutId,
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
+  platform = currentPlatform()
+): string[] {
+  const definition = getShortcutDefinition(id);
+  if (definition.nonMacBindings && !/Mac|iPhone|iPad|iPod/i.test(platform) && !isKeyboardShortcutCustomized(id, bindings)) return normalizeBindings(definition.nonMacBindings);
+  return bindings[id].map(binding =>
+    id === 'editorLink' && binding === 'Meta+k' && !/Mac|iPhone|iPad|iPod/i.test(platform)
+      && !isKeyboardShortcutCustomized(id, bindings) ? 'Ctrl+k' : binding
+  );
+}
+
+/** Primary binding for compact labels; dispatch always considers every binding. */
 export function getEffectiveKeyboardShortcutBinding(
   id: KeyboardShortcutId,
   bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
   platform = currentPlatform()
 ) {
-  const binding = bindings[id];
-  // Keep the persisted/default registry stable while presenting the familiar
-  // primary modifier on each platform. Any actual remapping still wins.
-  if (
-    id === 'editorLink' &&
-    binding === defaultKeyboardShortcutBindings.editorLink &&
-    !/Mac|iPhone|iPad|iPod/i.test(platform)
-  ) {
-    return 'Ctrl+k';
-  }
-  return binding;
+  return getEffectiveKeyboardShortcutBindings(id, bindings, platform)[0] ?? '';
 }
 
-export function getEffectiveDefaultKeyboardShortcutBinding(
-  id: KeyboardShortcutId,
-  platform = currentPlatform()
-) {
+export function getEffectiveDefaultKeyboardShortcutBinding(id: KeyboardShortcutId, platform = currentPlatform()) {
   return getEffectiveKeyboardShortcutBinding(id, defaultKeyboardShortcutBindings, platform);
 }
 
+export function getKeyboardShortcutBinding(id: KeyboardShortcutId) {
+  return keyboardShortcuts.bindings[id][0] ?? '';
+}
+
+export function formatKeyboardShortcutBindings(id: KeyboardShortcutId): string {
+  return getEffectiveKeyboardShortcutBindings(id).map(formatShortcutBinding).join(' or ');
+}
+
+export function setKeyboardShortcutBindings(id: KeyboardShortcutId, bindings: readonly string[]) {
+  keyboardShortcuts.setBindings(id, bindings);
+}
+
 export function setKeyboardShortcutBinding(id: KeyboardShortcutId, binding: string) {
-  keyboardShortcuts.setBinding(id, binding);
+  keyboardShortcuts.setBindings(id, [binding]);
 }
 
 export function resetKeyboardShortcutBinding(id: KeyboardShortcutId) {
@@ -424,11 +898,8 @@ export function resetAllKeyboardShortcuts() {
   keyboardShortcuts.resetAll();
 }
 
-export function isKeyboardShortcutCustomized(
-  id: KeyboardShortcutId,
-  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
-) {
-  return bindings[id] !== defaultKeyboardShortcutBindings[id];
+export function isKeyboardShortcutCustomized(id: KeyboardShortcutId, bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings) {
+  return JSON.stringify(bindings[id]) !== JSON.stringify(defaultKeyboardShortcutBindings[id]);
 }
 
 export function getShortcutBindingParts(binding: string): string[] {
@@ -440,7 +911,7 @@ export function getShortcutBindingParts(binding: string): string[] {
   if (parsed.ctrlKey) parts.push('Ctrl');
   if (parsed.altKey) parts.push('Option');
   if (parsed.shiftKey) parts.push('Shift');
-  parts.push(formatShortcutKey(parsed.key));
+  if (parsed.key) parts.push(formatShortcutKey(parsed.key));
   return parts;
 }
 
@@ -448,7 +919,11 @@ export function formatShortcutBinding(binding: string) {
   return getShortcutBindingParts(binding).join(' + ');
 }
 
-export function recordShortcutBindingFromEvent(event: KeyboardEvent) {
+export function recordShortcutBindingFromEvent(event: KeyboardEvent, options: { modifiersOnly?: boolean } = {}) {
+  if (options.modifiersOnly) {
+    if (!MODIFIER_ONLY_CODES.has(event.code) && !['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return null;
+    return normalizeShortcutBinding(buildModifierTokens(event).join('+')) || null;
+  }
   const key = getEventKeyToken(event);
   if (!key) {
     return null;
@@ -465,18 +940,27 @@ export function keyboardShortcutMatchesEvent(
   bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
   platform = currentPlatform()
 ) {
-  if (restartLifecycle.workspaceMutationsBlocked) {
-    return false;
-  }
-  return shortcutBindingMatchesEvent(
-    event,
-    getEffectiveKeyboardShortcutBinding(id, bindings, platform)
-  );
+  if (restartLifecycle.workspaceMutationsBlocked || keyboardShortcuts.recording || event.isComposing) return false;
+  return getEffectiveKeyboardShortcutBindings(id, bindings, platform).some(binding => shortcutBindingMatchesEvent(event, binding));
+}
+
+/** Match held modifiers for a preview action or a pointer alternative. */
+export function keyboardShortcutModifiersMatchEvent(
+  event: Partial<Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>>,
+  id: KeyboardShortcutId
+) {
+  if (keyboardShortcuts.recording || restartLifecycle.workspaceMutationsBlocked) return false;
+  return getEffectiveKeyboardShortcutBindings(id).some(binding => {
+    const parsed = parseShortcutBinding(binding);
+    return parsed && (parsed.metaKey || parsed.ctrlKey || parsed.altKey || parsed.shiftKey)
+      && (!parsed.metaKey || event.metaKey) && (!parsed.ctrlKey || event.ctrlKey)
+      && (!parsed.altKey || event.altKey) && (!parsed.shiftKey || event.shiftKey);
+  });
 }
 
 export function shortcutBindingMatchesEvent(event: KeyboardEvent, binding: string) {
   const parsed = parseShortcutBinding(binding);
-  if (!parsed) {
+  if (!parsed || !parsed.key) {
     return false;
   }
 
@@ -485,49 +969,49 @@ export function shortcutBindingMatchesEvent(event: KeyboardEvent, binding: strin
     return false;
   }
 
+  // Shift/Option can change punctuation (for example Shift+Backslash emits |).
+  // Match defaults expressed with the base key as well as recorded characters.
+  const punctuationCode = /^(Slash|Comma|Period|Semicolon|Quote|Minus|Equal|BracketLeft|BracketRight|Backslash|Backquote)$/.test(event.code ?? '');
+  const keyMatches = parsed.key === eventKey || (punctuationCode && parsed.key === normalizeKeyToken(event.code));
   return (
-    parsed.key === eventKey &&
-    parsed.metaKey === event.metaKey &&
-    parsed.ctrlKey === event.ctrlKey &&
-    parsed.altKey === event.altKey &&
-    parsed.shiftKey === event.shiftKey
+    keyMatches &&
+    parsed.metaKey === !!event.metaKey &&
+    parsed.ctrlKey === !!event.ctrlKey &&
+    parsed.altKey === !!event.altKey &&
+    parsed.shiftKey === !!event.shiftKey
   );
 }
 
-export function usesNativeCutShortcut(
-  id: KeyboardShortcutId,
-  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
-) {
-  const binding = bindings[id];
-  return binding === 'Meta+x' || binding === 'Ctrl+x';
+export function usesNativeCutShortcut(id: KeyboardShortcutId, event?: KeyboardEvent) {
+  return keyboardShortcuts.bindings[id].some(binding => (binding === 'Meta+x' || binding === 'Ctrl+x')
+    && (!event || shortcutBindingMatchesEvent(event, binding)));
 }
 
-export function getKeyboardShortcutConflicts(
-  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
-  platform = currentPlatform()
-) {
-  const idsByBinding = new Map<string, KeyboardShortcutId[]>();
+function shortcutContextsOverlap(a: KeyboardShortcutId, b: KeyboardShortcutId): boolean {
+  const groupA = getShortcutDefinition(a).group, groupB = getShortcutDefinition(b).group;
+  if (groupA === 'navigation' || groupB === 'navigation') return true;
+  // These pairs act on mutually exclusive editor selections.
+  const exclusivePairs: readonly (readonly KeyboardShortcutId[])[] = [
+    ['editorOpenWikilink', 'editorInsertBelow'],
+    ['imageWidth', 'editorStructuralIndent'],
+    ['imageCutSource', 'editorCutLine'],
+  ];
+  if (exclusivePairs.some(pair => pair.includes(a) && pair.includes(b))) return false;
+  if (groupA === groupB) return true;
+  const workspace = ['workspace', 'editor', 'search', 'chat'];
+  return (groupA === 'workspace' || groupB === 'workspace') && workspace.includes(groupA) && workspace.includes(groupB);
+}
 
-  for (const definition of keyboardShortcutDefinitions) {
-    const binding = getEffectiveKeyboardShortcutBinding(definition.id, bindings, platform);
-    if (!binding) {
-      continue;
-    }
+export function getShortcutBindingConflicts(id: KeyboardShortcutId, binding: string,
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings, platform = currentPlatform()) {
+  return keyboardShortcutDefinitions.filter(other => other.id !== id && shortcutContextsOverlap(id, other.id)
+    && getEffectiveKeyboardShortcutBindings(other.id, bindings, platform).includes(binding)).map(other => other.id);
+}
 
-    const ids = idsByBinding.get(binding) ?? [];
-    ids.push(definition.id);
-    idsByBinding.set(binding, ids);
-  }
-
-  return keyboardShortcutDefinitions.reduce(
-    (accumulator, definition) => {
-      const binding = getEffectiveKeyboardShortcutBinding(definition.id, bindings, platform);
-      const ids = idsByBinding.get(binding) ?? [];
-      accumulator[definition.id] = ids.filter((id) => id !== definition.id);
-      return accumulator;
-    },
-    {} as Record<KeyboardShortcutId, KeyboardShortcutId[]>
-  );
+export function getKeyboardShortcutConflicts(bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings, platform = currentPlatform()) {
+  return Object.fromEntries(keyboardShortcutDefinitions.map(definition => [definition.id,
+    [...new Set(getEffectiveKeyboardShortcutBindings(definition.id, bindings, platform)
+      .flatMap(binding => getShortcutBindingConflicts(definition.id, binding, bindings, platform)))]])) as Record<KeyboardShortcutId, KeyboardShortcutId[]>;
 }
 
 function normalizeShortcutBinding(binding: string) {
@@ -545,7 +1029,7 @@ function normalizeShortcutBinding(binding: string) {
   if (parsed.ctrlKey) parts.push('Ctrl');
   if (parsed.altKey) parts.push('Alt');
   if (parsed.shiftKey) parts.push('Shift');
-  parts.push(parsed.key);
+  if (parsed.key) parts.push(parsed.key);
   return parts.join('+');
 }
 
@@ -562,12 +1046,9 @@ export function parseShortcutBinding(binding: string): ParsedShortcutBinding | n
     return null;
   }
 
-  const key = tokens.at(-1);
-  if (!key || MODIFIER_ORDER.includes(key as ModifierToken)) {
-    return null;
-  }
-
-  const modifiers = new Set(tokens.slice(0, -1));
+  const modifiersOnly = tokens.every(token => MODIFIER_ORDER.includes(token as ModifierToken));
+  const key = modifiersOnly ? '' : tokens.at(-1)!;
+  const modifiers = new Set(modifiersOnly ? tokens : tokens.slice(0, -1));
   for (const modifier of modifiers) {
     if (!MODIFIER_ORDER.includes(modifier as ModifierToken)) {
       return null;
@@ -592,11 +1073,16 @@ function buildModifierTokens(event: KeyboardEvent): ModifierToken[] {
   return modifiers;
 }
 
-function getEventKeyToken(event: Pick<KeyboardEvent, 'code' | 'key'>) {
+function getEventKeyToken(event: Pick<KeyboardEvent, 'code' | 'key'> & Partial<Pick<KeyboardEvent, 'altKey'>>) {
+  // Option can produce a printable alternate character on macOS. Keep the
+  // physical letter stable for recording and dispatch.
+  if (event.altKey && /^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
   if ('code' in event && MODIFIER_ONLY_CODES.has(event.code)) {
     return null;
   }
 
+  if (/^F(?:[1-9]|1[0-9]|2[0-4])$/.test(event.key)) return event.key;
+  if (event.key === '+') return 'Plus';
   if (NAMED_KEY_TOKENS.has(event.key)) {
     return event.key;
   }
@@ -628,6 +1114,8 @@ export function formatShortcutKey(key: string) {
       return 'Right';
     case 'Space':
       return 'Space';
+    case 'Plus':
+      return '+';
     default:
       return key;
   }
@@ -682,32 +1170,13 @@ function normalizePrintableKey(key: string) {
 }
 
 function readStoredKeyboardShortcutBindings(): KeyboardShortcutBindings {
-  if (!isBrowser()) {
-    return { ...defaultKeyboardShortcutBindings };
-  }
-
-  const raw = window.localStorage.getItem(KEYBOARD_SHORTCUTS_STORAGE_KEY);
-  if (!raw) {
-    return { ...defaultKeyboardShortcutBindings };
-  }
-
+  if (!isBrowser()) return cloneDefaults();
   try {
-    const parsed = JSON.parse(raw) as Partial<Record<KeyboardShortcutId, string>>;
-    const next = { ...defaultKeyboardShortcutBindings };
-
-    for (const definition of keyboardShortcutDefinitions) {
-      const value = parsed[definition.id];
-      if (typeof value !== 'string') {
-        continue;
-      }
-
-      next[definition.id] = normalizeShortcutBinding(value);
-    }
-
-    return next;
+    const raw = window.localStorage.getItem(KEYBOARD_SHORTCUTS_STORAGE_KEY);
+    return raw ? resolveStoredKeyboardShortcutBindings(JSON.parse(raw)) : cloneDefaults();
   } catch (error) {
     logDevError('Failed to parse stored keyboard shortcuts; using defaults', error);
-    return { ...defaultKeyboardShortcutBindings };
+    return cloneDefaults();
   }
 }
 

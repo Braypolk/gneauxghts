@@ -1,3 +1,4 @@
+import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
 import { EditorSelection, Prec, StateEffect, StateField, Transaction } from '@codemirror/state';
 import { isolateHistory } from '@codemirror/commands';
 import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
@@ -149,32 +150,42 @@ export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (vie
           effects: sizeEntry.of(null), annotations: Transaction.userEvent.of('input.type') }); return true;
       },
       keydown(event, view) {
-        if (view.composing || event.isComposing || view.state.selection.ranges.length !== 1 || event.altKey) return false;
+        if (view.composing || event.isComposing || view.state.selection.ranges.length !== 1) return false;
         const selected = selectedImage(view.state), range = view.state.selection.main;
-        const modified = event.metaKey || event.ctrlKey;
-        if (modified) {
-          if (!selected || event.shiftKey || !['c', 'x'].includes(event.key.toLowerCase())) return false;
-          const cut = event.key.toLowerCase() === 'x';
-          if (cut && view.state.readOnly) return false;
-          const doc = view.state.doc, lifetime = view.state.field(imageState).lifetime;
-          void navigator.clipboard.writeText(selected.source).then(() => {
-            if (cut && !view.state.readOnly && view.state.doc === doc && view.state.field(imageState, false)?.lifetime === lifetime) {
-              removeImage(view, selected, 'delete.cut');
-            }
-          }).catch(error => console.error('Cannot copy image source:', error));
-          return true;
-        }
-        if (event.shiftKey && event.key !== '+') return false;
         if (selected) {
-          if (event.key === ' ' ) { actions.open(view, selected); return true; }
-          if (event.key === 'Enter' || event.key === 'Tab') { editImageSource(view, selected, event.key === 'Tab'); return true; }
-          if (['-', '=', '+', '0', 'Backspace', 'Delete'].includes(event.key)) {
-            if (view.state.readOnly) return false;
-            if (event.key === 'Backspace' || event.key === 'Delete') removeImage(view, selected, 'delete.image');
-            else if (event.key === '0') resizeRenderedImage(view, selected, null);
-            else stepRenderedImageSize(view, selected, event.key === '-' ? -1 : 1, true);
+          const copy = keyboardShortcutMatchesEvent(event, 'imageCopySource');
+          const cut = keyboardShortcutMatchesEvent(event, 'imageCutSource');
+          if (copy || cut) {
+            if (cut && view.state.readOnly) return false;
+            event.preventDefault();
+            const doc = view.state.doc, lifetime = view.state.field(imageState).lifetime;
+            void navigator.clipboard.writeText(selected.source).then(() => {
+              if (cut && !view.state.readOnly && view.state.doc === doc && view.state.field(imageState, false)?.lifetime === lifetime) {
+                removeImage(view, selected, 'delete.cut');
+              }
+            }).catch(error => console.error('Cannot copy image source:', error));
             return true;
           }
+          if (keyboardShortcutMatchesEvent(event, 'imageOpen')) { event.preventDefault(); actions.open(view, selected); return true; }
+          if (keyboardShortcutMatchesEvent(event, 'imageSource') || keyboardShortcutMatchesEvent(event, 'imageWidth')) {
+            event.preventDefault(); editImageSource(view, selected, keyboardShortcutMatchesEvent(event, 'imageWidth')); return true;
+          }
+          const grow = keyboardShortcutMatchesEvent(event, 'imageGrow');
+          const shrink = keyboardShortcutMatchesEvent(event, 'imageShrink');
+          const reset = keyboardShortcutMatchesEvent(event, 'imageReset');
+          const remove = keyboardShortcutMatchesEvent(event, 'imageDelete');
+          if (grow || shrink || reset || remove) {
+            if (view.state.readOnly) return false;
+            event.preventDefault();
+            if (remove) removeImage(view, selected, 'delete.image');
+            else if (reset) resizeRenderedImage(view, selected, null);
+            else stepRenderedImageSize(view, selected, shrink ? -1 : 1, true);
+            return true;
+          }
+        }
+        if (event.altKey || event.metaKey || event.ctrlKey) return false;
+        if (event.shiftKey && event.key !== '+') return false;
+        if (selected) {
           if (event.key.startsWith('Arrow')) {
             const backwards = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
             const pos = backwards ? selected.from : selected.to;

@@ -212,7 +212,7 @@ class SlashMenuController {
   }
 
   handleKeydown(event: KeyboardEvent) {
-    if (!this.#visible) {
+    if (!this.#visible || event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
       return;
     }
 

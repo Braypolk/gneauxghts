@@ -1,3 +1,4 @@
+import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
 import { tick } from 'svelte';
 import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
 import type { ForgottenNoteRetentionPreference } from '#lib/appSettings.svelte.js';
@@ -1148,6 +1149,11 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         target.closest('[data-notepad-command-bar]'))) {
       return false;
     }
+    const slot = (['paneChoice1', 'paneChoice2', 'paneChoice3'] as const).findIndex(id => keyboardShortcutMatchesEvent(event, id));
+    if (slot >= 0) {
+      const choice = getPaneCommandForShortcut(String(slot + 1), peekPreviousLocationForPaneCommand(paneId) !== null, workspace.paneCommand.mode);
+      if (choice !== null) { event.preventDefault(); void resolvePaneCommandChoice(paneId, choice); return true; }
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) {
       return false;
     }
@@ -1161,18 +1167,8 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       void confirmPaneCommandChoiceByHighlight();
       return true;
     }
-    const choice = getPaneCommandForShortcut(event.key, peekPreviousLocationForPaneCommand(paneId) !== null, workspace.paneCommand.mode);
-    if (choice === null) {
-      if (event.key.length === 1 ||
-        event.key === 'Backspace' ||
-        event.key === 'Delete') {
-        workspace.resetPaneCommand();
-      }
-      return false;
-    }
-    event.preventDefault();
-    void resolvePaneCommandChoice(paneId, choice);
-    return true;
+    if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') workspace.resetPaneCommand();
+    return false;
   }
 
   async function clearNotepad(request: {

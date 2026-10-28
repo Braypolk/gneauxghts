@@ -1,5 +1,8 @@
 <script lang="ts">
+  import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+
   import type { Snippet } from 'svelte';
+  import { hasSplitModifiers } from '#lib/features/notepad/navigation/splitNoteDestination.js';
   import SplitSearchResultAction from './SplitSearchResultAction.svelte';
   let { title, label, active = false, resultIndex, icon, detail, onSelect, onPoint, onFocus, onOpenInSplit }: {
     title: string;
@@ -27,12 +30,15 @@
     onpointerenter={onPoint}
     onfocus={onFocus}
     onkeydown={(event) => {
+      if (onOpenInSplit && keyboardShortcutMatchesEvent(event, 'searchOpenInSplit')) {
+        event.preventDefault(); event.stopPropagation(); onOpenInSplit(); return;
+      }
       if (event.key !== 'ArrowRight' || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !onOpenInSplit) return;
       event.preventDefault();
       event.stopPropagation();
       (event.currentTarget.nextElementSibling as HTMLButtonElement | null)?.focus();
     }}
-    onclick={(event) => event.altKey && onOpenInSplit ? onOpenInSplit() : onSelect()}
+    onclick={(event) => hasSplitModifiers(event) && onOpenInSplit ? onOpenInSplit() : onSelect()}
   >
     {#if icon}{@render icon()}{/if}
     <span class="block min-w-0 max-w-full truncate text-sm font-semibold text-popover-foreground">{title}</span>
