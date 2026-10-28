@@ -42,6 +42,7 @@ export type KeyboardShortcutId =
   | 'editorHardBreak'
   | 'editorSplitLine'
   | 'editorDeleteToLineEnd'
+  | 'editorTransposeChars'
   | 'editorStructuralIndent'
   | 'editorStructuralOutdent'
   | 'editorBold'
@@ -110,7 +111,10 @@ export interface KeyboardShortcutGroup {
   description: string;
 }
 
-export type KeyboardShortcutBindings = Record<KeyboardShortcutId, string[]>;
+export type KeyboardShortcutBindings = Record<KeyboardShortcutId, string[]> & {
+  /** Explicit assignments that would otherwise be rewritten as platform defaults. */
+  explicitPlatformOverrides?: KeyboardShortcutId[];
+};
 
 interface ParsedShortcutBinding {
   /** Empty for a modifier-only hold. */
@@ -382,6 +386,14 @@ const shortcutDefinitionsBase = [
     description: 'Delete from the cursor to the end of the line.',
     group: 'editor',
     defaultBinding: 'Ctrl+k',
+    nonMacBindings: [],
+  },
+  {
+    id: 'editorTransposeChars',
+    label: 'Transpose Characters',
+    description: 'Swap the characters on either side of the cursor.',
+    group: 'editor',
+    defaultBinding: 'Ctrl+t',
     nonMacBindings: [],
   },
   {
@@ -784,7 +796,7 @@ export const defaultKeyboardShortcutBindings = keyboardShortcutDefinitions.reduc
   (bindings, definition: KeyboardShortcutDefinition) => {
     bindings[definition.id] = normalizeCommandBindings(definition.id, [definition.defaultBinding, ...(definition.additionalBindings ?? [])]);
     return bindings;
-  }, {} as KeyboardShortcutBindings
+  }, {} as Record<KeyboardShortcutId, string[]>
 );
 
 function cloneDefaults(): KeyboardShortcutBindings {
@@ -809,6 +821,17 @@ export function resolveStoredKeyboardShortcutBindings(value: unknown): KeyboardS
       typeof stored.editorRedoAlternate === 'string' ? stored.editorRedoAlternate : 'Meta+Shift+z'
     ]);
   }
+  const storedPlatformOverrides = stored.explicitPlatformOverrides;
+  if (Array.isArray(storedPlatformOverrides)) {
+    const overrides = keyboardShortcutDefinitions.filter(definition =>
+      storedPlatformOverrides.includes(definition.id)
+      && (definition.id === 'editorLink' || 'nonMacBindings' in definition)
+      && Array.isArray(stored[definition.id])
+      && (stored[definition.id] as unknown[]).every(binding => typeof binding === 'string')
+      && JSON.stringify(next[definition.id]) === JSON.stringify(defaultKeyboardShortcutBindings[definition.id])
+    ).map(definition => definition.id);
+    if (overrides.length) next.explicitPlatformOverrides = overrides;
+  }
   return next;
 }
 
@@ -826,12 +849,23 @@ class KeyboardShortcutsStore {
   recording = $state(false);
 
   setBindings = (id: KeyboardShortcutId, bindings: readonly string[]) => {
-    const next = { ...this.bindings, [id]: normalizeCommandBindings(id, bindings) };
-    this.bindings = next;
-    persistKeyboardShortcutBindings(next);
+    const normalized = normalizeCommandBindings(id, bindings);
+    const canonicalDefault = JSON.stringify(defaultKeyboardShortcutBindings[id]);
+    this.#replaceBindings(id, normalized, JSON.stringify(normalized) === canonicalDefault
+      && JSON.stringify(getPlatformDefaultBindings(id, currentPlatform())) !== canonicalDefault);
   };
 
-  resetBinding = (id: KeyboardShortcutId) => this.setBindings(id, defaultKeyboardShortcutBindings[id]);
+  #replaceBindings(id: KeyboardShortcutId, bindings: string[], explicitPlatformOverride = false) {
+    const { explicitPlatformOverrides = [], ...current } = this.bindings;
+    const overrides = explicitPlatformOverrides.filter(command => command !== id);
+    if (explicitPlatformOverride) overrides.push(id);
+    const next: KeyboardShortcutBindings = { ...current, [id]: bindings,
+      ...(overrides.length ? { explicitPlatformOverrides: overrides } : {}) };
+    this.bindings = next;
+    persistKeyboardShortcutBindings(next);
+  }
+
+  resetBinding = (id: KeyboardShortcutId) => this.#replaceBindings(id, [...defaultKeyboardShortcutBindings[id]]);
   resetAll = () => {
     this.bindings = cloneDefaults();
     persistKeyboardShortcutBindings(this.bindings);
@@ -853,11 +887,15 @@ export function getEffectiveKeyboardShortcutBindings(
   bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
   platform = currentPlatform()
 ): string[] {
+  return isKeyboardShortcutCustomized(id, bindings) ? [...bindings[id]] : getPlatformDefaultBindings(id, platform);
+}
+
+function getPlatformDefaultBindings(id: KeyboardShortcutId, platform: string): string[] {
   const definition = getShortcutDefinition(id);
-  if (definition.nonMacBindings && !/Mac|iPhone|iPad|iPod/i.test(platform) && !isKeyboardShortcutCustomized(id, bindings)) return normalizeBindings(definition.nonMacBindings);
-  return bindings[id].map(binding =>
+  if (definition.nonMacBindings && !/Mac|iPhone|iPad|iPod/i.test(platform)) return normalizeBindings(definition.nonMacBindings);
+  return defaultKeyboardShortcutBindings[id].map(binding =>
     id === 'editorLink' && binding === 'Meta+k' && !/Mac|iPhone|iPad|iPod/i.test(platform)
-      && !isKeyboardShortcutCustomized(id, bindings) ? 'Ctrl+k' : binding
+      ? 'Ctrl+k' : binding
   );
 }
 
@@ -899,7 +937,8 @@ export function resetAllKeyboardShortcuts() {
 }
 
 export function isKeyboardShortcutCustomized(id: KeyboardShortcutId, bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings) {
-  return JSON.stringify(bindings[id]) !== JSON.stringify(defaultKeyboardShortcutBindings[id]);
+  return !!bindings.explicitPlatformOverrides?.includes(id)
+    || JSON.stringify(bindings[id]) !== JSON.stringify(defaultKeyboardShortcutBindings[id]);
 }
 
 export function getShortcutBindingParts(binding: string): string[] {
@@ -920,6 +959,7 @@ export function formatShortcutBinding(binding: string) {
 }
 
 export function recordShortcutBindingFromEvent(event: KeyboardEvent, options: { modifiersOnly?: boolean } = {}) {
+  if (event.isComposing || event.keyCode === 229) return null;
   if (options.modifiersOnly) {
     if (!MODIFIER_ONLY_CODES.has(event.code) && !['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return null;
     return normalizeShortcutBinding(buildModifierTokens(event).join('+')) || null;
@@ -940,11 +980,11 @@ export function keyboardShortcutMatchesEvent(
   bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
   platform = currentPlatform()
 ) {
-  if (restartLifecycle.workspaceMutationsBlocked || keyboardShortcuts.recording || event.isComposing) return false;
+  if (restartLifecycle.workspaceMutationsBlocked || keyboardShortcuts.recording || event.isComposing || event.keyCode === 229) return false;
   return getEffectiveKeyboardShortcutBindings(id, bindings, platform).some(binding => shortcutBindingMatchesEvent(event, binding));
 }
 
-/** Match held modifiers for a preview action or a pointer alternative. */
+/** Match exactly the held modifiers for a preview action or pointer alternative. */
 export function keyboardShortcutModifiersMatchEvent(
   event: Partial<Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>>,
   id: KeyboardShortcutId
@@ -953,8 +993,8 @@ export function keyboardShortcutModifiersMatchEvent(
   return getEffectiveKeyboardShortcutBindings(id).some(binding => {
     const parsed = parseShortcutBinding(binding);
     return parsed && (parsed.metaKey || parsed.ctrlKey || parsed.altKey || parsed.shiftKey)
-      && (!parsed.metaKey || event.metaKey) && (!parsed.ctrlKey || event.ctrlKey)
-      && (!parsed.altKey || event.altKey) && (!parsed.shiftKey || event.shiftKey);
+      && (['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const).every(modifier =>
+        parsed[modifier] === !!event[modifier]);
   });
 }
 
@@ -987,9 +1027,16 @@ export function usesNativeCutShortcut(id: KeyboardShortcutId, event?: KeyboardEv
     && (!event || shortcutBindingMatchesEvent(event, binding)));
 }
 
+function shortcutContexts(id: KeyboardShortcutId): readonly string[] {
+  const group = getShortcutDefinition(id).group;
+  if (id === 'searchCurrent' || id === 'searchAll') return ['editor', 'search', 'chat', 'map'];
+  if (group === 'workspace') return ['editor', 'search', 'chat'];
+  if (group === 'images') return [id.startsWith('imageViewer') ? 'imageViewer' : 'editor'];
+  return [group];
+}
+
 function shortcutContextsOverlap(a: KeyboardShortcutId, b: KeyboardShortcutId): boolean {
-  const groupA = getShortcutDefinition(a).group, groupB = getShortcutDefinition(b).group;
-  if (groupA === 'navigation' || groupB === 'navigation') return true;
+  if (getShortcutDefinition(a).group === 'navigation' || getShortcutDefinition(b).group === 'navigation') return true;
   // These pairs act on mutually exclusive editor selections.
   const exclusivePairs: readonly (readonly KeyboardShortcutId[])[] = [
     ['editorOpenWikilink', 'editorInsertBelow'],
@@ -997,9 +1044,7 @@ function shortcutContextsOverlap(a: KeyboardShortcutId, b: KeyboardShortcutId): 
     ['imageCutSource', 'editorCutLine'],
   ];
   if (exclusivePairs.some(pair => pair.includes(a) && pair.includes(b))) return false;
-  if (groupA === groupB) return true;
-  const workspace = ['workspace', 'editor', 'search', 'chat'];
-  return (groupA === 'workspace' || groupB === 'workspace') && workspace.includes(groupA) && workspace.includes(groupB);
+  return shortcutContexts(a).some(context => shortcutContexts(b).includes(context));
 }
 
 export function getShortcutBindingConflicts(id: KeyboardShortcutId, binding: string,

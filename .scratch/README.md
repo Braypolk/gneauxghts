@@ -61,6 +61,8 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Keyboard shortcut review, 2026-10-27](archive/keyboard-shortcut-review-2026-10-27.md): completed catalog/Settings/dispatch review, exact modifier matching, Transpose restoration, Forget/scope guards, platform assignment persistence and regression coverage with explicit native verification limits.
+
 - [Pi filename editing, 2026-10-22](archive/pi-note-rename-2026-10-22/README.md): separate Rename permission, exact same-folder review, atomic no-replace movement, two-path durable proof/recovery and both-pane adoption. Includes native/browser acceptance, schema and platform limits, and a [manual guide](archive/pi-note-rename-2026-10-22/manual-testing.md) covering this tool and the earlier quality features.
 
 - [App quality follow-up, 2026-10-22](archive/app-quality-followup-2026-10-22/README.md): recoverable capture, retrieval cues, Atlas ranked opening, scoped chat ranking, predictable formatting and measured retrieval/task cleanup. Includes validation limits; its separately planned filename tool is now implemented by the rename slice above.

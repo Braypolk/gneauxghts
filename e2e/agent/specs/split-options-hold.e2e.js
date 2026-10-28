@@ -54,6 +54,14 @@ describe('held split options shortcut', () => {
     await send('keyup', 'Shift', 'ShiftLeft');
     await send('keydown', 'Shift', 'ShiftLeft', { ctrlKey: true, shiftKey: true });
     await expect(cue()).toHaveAttribute('class', expect.stringContaining(expanded));
+    await send('keydown', 'Meta', 'MetaLeft', { ctrlKey: true, shiftKey: true, metaKey: true });
+    await expect(cue()).not.toHaveAttribute('class', expect.stringContaining(expanded));
+    await send('keyup', 'Meta', 'MetaLeft', { ctrlKey: true, shiftKey: true });
+    await expect(cue()).toHaveAttribute('class', expect.stringContaining(expanded));
+    await send('keydown', 'Alt', 'AltLeft', { ctrlKey: true, shiftKey: true, altKey: true });
+    await expect(cue()).not.toHaveAttribute('class', expect.stringContaining(expanded));
+    await send('keyup', 'Alt', 'AltLeft', { ctrlKey: true, shiftKey: true });
+    await expect(cue()).toHaveAttribute('class', expect.stringContaining(expanded));
     await send('keyup', 'Shift', 'ShiftLeft');
     await expect(cue()).not.toHaveAttribute('class', expect.stringContaining(expanded));
     await browser.url('/settings');

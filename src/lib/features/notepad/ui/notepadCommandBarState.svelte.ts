@@ -129,7 +129,7 @@ class NotepadCommandBarController {
   #forgetHoldFrame: number | null = null;
   #forgetHoldTimeout: number | null = null;
   #suppressNextForgetClick = false;
-  #forgetShortcutCode: string | null = null;
+  #forgetShortcutEvent: KeyboardEvent | null = null;
 
   constructor(deps: NotepadCommandBarStateDeps) {
     this.#deps = deps;
@@ -373,7 +373,7 @@ class NotepadCommandBarController {
     this.#clearForgetHoldFrame();
     this.#clearForgetHoldTimeout();
     this.#forgetHoldStartedAt = 0;
-    this.#forgetShortcutCode = null;
+    this.#forgetShortcutEvent = null;
     this.isHoldingForget = false;
     this.forgetHoldProgress = 0;
   };
@@ -419,14 +419,27 @@ class NotepadCommandBarController {
     this.forgetHoldProgress = 0;
     this.#tickForgetHoldProgress();
     this.#forgetHoldTimeout = window.setTimeout(() => {
+      if (!this.#canCompleteForgetHold()) { this.resetForgetHold(); return; }
       this.#clearForgetHoldFrame();
       this.forgetHoldProgress = 1;
       this.#forgetHoldTimeout = window.setTimeout(() => {
+        if (!this.#canCompleteForgetHold()) { this.resetForgetHold(); return; }
         this.#suppressNextForgetClick = true;
         this.resetForgetHold();
         this.#deps.onForget();
       }, FORGET_HOLD_COMPLETION_DELAY_MS);
     }, this.#deps.getForgetHoldDurationMs());
+  };
+
+  #canCompleteForgetHold = () => this.#deps.isForgetActionAvailable() && this.#deps.isForgetHoldEnabled()
+    && (!this.#forgetShortcutEvent || keyboardShortcutMatchesEvent(this.#forgetShortcutEvent, 'forgetCurrentNote'));
+
+  #reconcileForgetShortcutModifiers = (event: KeyboardEvent) => {
+    const started = this.#forgetShortcutEvent;
+    if (started && (!this.#canCompleteForgetHold()
+      || (['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const).some(key => !!started[key] !== !!event[key]))) {
+      this.resetForgetHold();
+    }
   };
 
   cancelForgetHold = () => {
@@ -472,6 +485,7 @@ class NotepadCommandBarController {
   };
 
   handleForgetShortcutKeyDown = (event: KeyboardEvent) => {
+    this.#reconcileForgetShortcutModifiers(event);
     if (!this.#deps.isForgetActionAvailable() || event.defaultPrevented) {
       return false;
     }
@@ -492,19 +506,20 @@ class NotepadCommandBarController {
       return true;
     }
 
-    this.#forgetShortcutCode = event.code;
+    this.#forgetShortcutEvent = event;
     this.#beginForgetHold();
     return true;
   };
 
   handleForgetShortcutKeyUp = (event: KeyboardEvent) => {
-    if (this.#forgetShortcutCode === null || event.code !== this.#forgetShortcutCode) {
+    this.#reconcileForgetShortcutModifiers(event);
+    if (!this.#forgetShortcutEvent || event.code !== this.#forgetShortcutEvent.code) {
       return false;
     }
 
     event.preventDefault();
     const wasHolding = this.isHoldingForget;
-    this.#forgetShortcutCode = null;
+    this.#forgetShortcutEvent = null;
 
     if (!wasHolding) {
       return true;
@@ -515,11 +530,11 @@ class NotepadCommandBarController {
   };
 
   handleForgetShortcutBlur = () => {
-    if (this.#forgetShortcutCode === null) {
+    if (this.#forgetShortcutEvent === null) {
       return;
     }
 
-    this.#forgetShortcutCode = null;
+    this.#forgetShortcutEvent = null;
     this.cancelForgetHold();
   };
 

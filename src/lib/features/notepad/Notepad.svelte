@@ -1652,6 +1652,7 @@
       >
         <NotepadCommandBar
           bind:this={commandBar}
+          shortcutsEnabled={!historyMode.isActive && !agentPublicationActive && activeTransientUi.kind !== 'image-viewer'}
           related={{
             contextKey: relatedContextKey,
             pendingNoteReturn: collapsingPaneId === activePaneId && retainedPaneIds.some(paneId => getPaneKind(paneId) !== 'chat'),

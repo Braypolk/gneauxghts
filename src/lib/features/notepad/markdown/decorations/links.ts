@@ -75,7 +75,8 @@ class LinkTextWidget extends WidgetType {
 
     span.addEventListener('click', (event) => {
       if (event.ctrlKey || event.metaKey) {
-        // Let the capture-phase external-link handler in editor.ts open it.
+        // The capture-phase handler opens exact Cmd/Ctrl-clicks; ignore
+        // combinations with extra modifiers rather than editing the link.
         return;
       }
       event.preventDefault();

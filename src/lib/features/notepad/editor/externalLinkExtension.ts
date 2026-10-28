@@ -132,10 +132,11 @@ export function createExternalLinkClickExtension(
           return;
         }
 
-        const modifier = event.metaKey || event.ctrlKey;
+        const modifier = event.metaKey !== event.ctrlKey && !event.altKey && !event.shiftKey;
         const touch = (event instanceof PointerEvent && (event.pointerType === 'touch' || event.pointerType === 'pen')) ||
           window.matchMedia('(any-pointer: coarse)').matches;
-        if (!modifier && !touch) return;
+        const plainTouch = touch && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+        if (!modifier && !plainTouch) return;
 
         const rawUrl = findRenderedMarkdownLinkUrl(event.target);
         if (!rawUrl || !normalizeExternalLinkUrl(rawUrl)) {

@@ -15,12 +15,24 @@ Settings and command dispatch consume the same arrays of bindings; an empty
 array disables the command. Adding an alternative retains existing bindings,
 and removing one does not revive its default. Legacy single-binding preferences
 and both former Redo entries migrate without losing remaps or disabled bindings.
+Explicit assignments retain their exact keys across reload even when they equal
+a different platform's defaults; resetting restores the current platform's defaults.
 Basic text movement and standard control navigation retain their native behavior.
 
 Recording a binding suppresses app shortcuts until it is saved or cancelled.
+History Mode, image viewing and publication recovery suspend the retained dock's
+Search/Forget shortcuts and cancel any pending Forget hold or confirmation.
 Search-result split keys and modifier-click alternatives share one configured
 action. Show Split Options separately owns the editor's held-modifier cue;
 its modifier-only bindings can be recorded, removed and reset in Settings.
+Commands, held previews and modifier-click alternatives require exactly the
+assigned modifiers. Adding an unassigned modifier hides a held preview, and
+releasing it restores the matching preview. External links likewise open only
+with Cmd-click or Ctrl-click without extra modifiers; unmodified touch/pen taps
+retain their Open/Edit choices.
+Forget's keyboard hold cancels when its modifiers change and rechecks the
+assignment and action admission before completing; a normal short press still
+opens confirmation.
 Settings shows one row per command, grouping its editable bindings together.
 A customized command has User as its source; otherwise it has Default. Search
 matches any one binding and keeps every alternative visible. Reset is available

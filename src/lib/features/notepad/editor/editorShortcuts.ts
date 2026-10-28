@@ -236,6 +236,7 @@ export function createPlatformNavigationKeymap() {
 const explicitEditorCommands = {
   editorSplitLine: splitLine,
   editorDeleteToLineEnd: deleteToLineEnd,
+  editorTransposeChars: transposeChars,
   editorCopyLineUp: copyLineUp,
   editorCopyLineDown: copyLineDown,
   editorAddCursorAbove: addCursorAbove,

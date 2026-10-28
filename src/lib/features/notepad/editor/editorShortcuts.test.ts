@@ -53,6 +53,25 @@ describe('registered editor commands', () => {
     expect(run(view, { key: 'Q', ctrlKey: true, shiftKey: true } as KeyboardEvent)).toBe(true);
     expect(view.state.doc.toString()).toBe(doc);
   });
+
+  it('preserves transpose as an assignable command rather than removing its native binding', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    try {
+      const { view } = createCommandView({ doc: 'ab', selection: { anchor: 1 }, extensions: [createFilteredDefaultKeymap()] });
+      const press = (key: string) => runScopeHandlers(view, { key, code: `Key${key.toUpperCase()}`, ctrlKey: true } as KeyboardEvent, 'editor');
+      expect(press('t')).toBe(true);
+      expect(view.state.doc.toString()).toBe('ba');
+      setKeyboardShortcutBindings('editorTransposeChars', ['Ctrl+q']);
+      expect(press('t')).toBe(false);
+      view.dispatch({ selection: { anchor: 1 } });
+      expect(press('q')).toBe(true);
+      expect(view.state.doc.toString()).toBe('ab');
+      setKeyboardShortcutBindings('editorTransposeChars', []);
+      expect(press('q')).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('asynchronous block cut', () => {

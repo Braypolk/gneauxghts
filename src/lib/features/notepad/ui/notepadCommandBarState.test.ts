@@ -5,7 +5,7 @@ import {
 } from './notepadCommandBarState.svelte';
 import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
-import { resetAllKeyboardShortcuts, setKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
+import { keyboardShortcuts, resetAllKeyboardShortcuts, setKeyboardShortcutBindings } from '#lib/keyboardShortcuts.svelte.js';
 
 function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
   return {
@@ -290,6 +290,39 @@ describe('createNotepadCommandBarState', () => {
     state.handleSearchKeydown({ key: 'Enter', altKey: true, preventDefault: vi.fn() } as unknown as KeyboardEvent);
     expect(openInSplit.mock.calls).toEqual([[item], [item]]);
     expect(onSearchNavigate).not.toHaveBeenCalled();
+  });
+
+  it('requires exact split modifiers when selecting search, pinned and recent results', () => {
+    const note = searchItem({ notePath: '/vault/Note.md' });
+    for (const item of [
+      { kind: 'search' as const, item: note },
+      { kind: 'pinned' as const, item: note },
+      { kind: 'location' as const, item: locationEntry() }
+    ]) {
+      for (let mask = 0; mask < 16; mask++) {
+        const modifiers = { metaKey: !!(mask & 1), ctrlKey: !!(mask & 2), altKey: !!(mask & 4), shiftKey: !!(mask & 8) };
+        for (const gesture of ['click', 'Enter']) {
+          const openInSplit = vi.fn();
+          const selectNormally = vi.fn();
+          const state = createState({
+            getVisibleItems: () => [item],
+            getOpenInSplit: () => openInSplit,
+            onSearchSelect: selectNormally,
+            onPinnedNoteSelect: selectNormally,
+            onRecentLocationSelect: selectNormally
+          });
+          if (gesture === 'click') state.selectItem(item, modifiers);
+          else state.handleSearchKeydown({ key: 'Enter', ...modifiers, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+          if (mask === 4 || mask === 9) {
+            expect(openInSplit, `${item.kind} ${gesture} mask ${mask}`).toHaveBeenCalledWith(item.item);
+            expect(selectNormally).not.toHaveBeenCalled();
+          } else {
+            expect(openInSplit, `${item.kind} ${gesture} mask ${mask}`).not.toHaveBeenCalled();
+            expect(selectNormally).toHaveBeenCalledWith(item.item);
+          }
+        }
+      }
+    }
   });
 
   it('keeps ordinary selection when splitting is unavailable or the note is unsaved', () => {
@@ -592,6 +625,60 @@ describe('createNotepadCommandBarState', () => {
 
       expect(state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'))).toBe(false);
       expect(onForget).not.toHaveBeenCalled();
+    });
+
+    it('cancels a keyboard hold when modifiers change, including custom bindings', () => {
+      vi.useFakeTimers();
+      for (const change of [
+        { type: 'keydown' as const, key: 'Alt', code: 'AltLeft', altKey: true },
+        { type: 'keydown' as const, key: 'Control', code: 'ControlLeft', ctrlKey: true },
+        { type: 'keyup' as const, key: 'Shift', code: 'ShiftLeft', shiftKey: false },
+        { type: 'keyup' as const, key: 'Meta', code: 'MetaLeft', metaKey: false }
+      ]) {
+        const onForget = vi.fn();
+        const state = createState({ isForgetHoldEnabled: () => true, getForgetHoldDurationMs: () => 400, onForget });
+        state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'));
+        if (change.type === 'keydown') state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown', change));
+        else state.handleForgetShortcutKeyUp(forgetShortcutEvent('keyup', change));
+        vi.advanceTimersByTime(500);
+        expect(onForget, change.key).not.toHaveBeenCalled();
+        expect(state.getSnapshot()).toMatchObject({ isHoldingForget: false, isForgetConfirmOpen: false });
+        state.dispose();
+      }
+      setKeyboardShortcutBindings('forgetCurrentNote', ['Ctrl+g']);
+      const onForget = vi.fn();
+      const state = createState({ isForgetHoldEnabled: () => true, getForgetHoldDurationMs: () => 400, onForget });
+      const custom = forgetShortcutEvent('keydown', { key: 'g', code: 'KeyG', metaKey: false, shiftKey: false, ctrlKey: true });
+      state.handleForgetShortcutKeyDown(custom);
+      state.handleForgetShortcutKeyUp({ ...custom, key: 'Control', code: 'ControlLeft', ctrlKey: false });
+      vi.advanceTimersByTime(500);
+      expect(onForget).not.toHaveBeenCalled();
+      state.dispose();
+    });
+
+    it('revalidates a pending keyboard hold before either completion stage', () => {
+      vi.useFakeTimers();
+      try {
+        for (const elapsed of [0, 400]) {
+          for (const invalidation of ['disabled', 'recording', 'unavailable']) {
+            resetAllKeyboardShortcuts();
+            keyboardShortcuts.recording = false;
+            let available = true;
+            const onForget = vi.fn();
+            const state = createState({ isForgetActionAvailable: () => available, isForgetHoldEnabled: () => true,
+              getForgetHoldDurationMs: () => 400, onForget });
+            state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'));
+            vi.advanceTimersByTime(elapsed);
+            if (invalidation === 'disabled') setKeyboardShortcutBindings('forgetCurrentNote', []);
+            if (invalidation === 'recording') keyboardShortcuts.recording = true;
+            if (invalidation === 'unavailable') available = false;
+            vi.advanceTimersByTime(500);
+            expect(onForget, `${invalidation} after ${elapsed}ms`).not.toHaveBeenCalled();
+            expect(state.getSnapshot()).toMatchObject({ isHoldingForget: false, isForgetConfirmOpen: false });
+            state.dispose();
+          }
+        }
+      } finally { keyboardShortcuts.recording = false; }
     });
   });
 });

@@ -56,6 +56,7 @@
     search: NotepadCommandBarSearchProps;
     related?: NotepadCommandBarRelatedProps;
     chatAvailable?: boolean;
+    shortcutsEnabled?: boolean;
     dockMode?: 'search' | 'chat';
     chatSlot?: HTMLDivElement | null;
     onDockModeChange?: (mode: 'search' | 'chat') => void;
@@ -68,6 +69,7 @@
     search,
     related,
     chatAvailable = false,
+    shortcutsEnabled = true,
     dockMode = 'search',
     chatSlot = $bindable(null),
     onDockModeChange,
@@ -119,6 +121,7 @@
     if (relatedMode && key !== openedRelatedKey) closeRelated();
   });
   function handleWindowKeydown(event: KeyboardEvent) {
+    if (!shortcutsEnabled) return;
     // Related has no text input: Select All must not fall through to the page.
     if (relatedMode && (event.metaKey || event.ctrlKey)
       && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a') {
@@ -456,7 +459,7 @@
     getVisibleItems: () => retainedSearchItems ? [] : visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
-    isForgetActionAvailable: () => canForget && !canUnforget,
+    isForgetActionAvailable: () => shortcutsEnabled && canForget && !canUnforget,
     getForgetItemLabel: () => forgetItemLabel,
     onSearchInput: (value) => onSearchInput(value),
     onSearchClear,
@@ -520,6 +523,13 @@
   $effect(() => {
     appSettings.forgetButtonDurationPreference;
     commandBarState.resetForgetHold();
+  });
+
+  $effect(() => {
+    if (!shortcutsEnabled) {
+      commandBarState.resetForgetHold();
+      commandBarState.closeForgetConfirm();
+    }
   });
 
   $effect(() => {
@@ -1167,7 +1177,7 @@
           canNavigatePrevious={searchMode === 'current' && canNavigateCurrentSearchResults}
           canNavigateNext={searchMode === 'current' && canNavigateCurrentSearchResults}
           blurOnEscape={false}
-          shortcut={{ enabled: true, defaultScopeId: 'current', allScopeId: 'all' }}
+          shortcut={{ enabled: shortcutsEnabled, defaultScopeId: 'current', allScopeId: 'all' }}
           onValueChange={onSearchInput}
           onClear={onSearchClear}
           onOpen={handleSharedSearchOpen}

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { restartLifecycle } from '#lib/app/restartLifecycle.svelte.js';
 
 import {
@@ -6,13 +6,18 @@ import {
   formatShortcutBinding,
   getEffectiveDefaultKeyboardShortcutBinding,
   getEffectiveKeyboardShortcutBinding,
+  getEffectiveKeyboardShortcutBindings,
   getKeyboardShortcutConflicts,
   keyboardShortcutMatchesEvent,
   keyboardShortcutModifiersMatchEvent,
   keyboardShortcuts,
+  keyboardShortcutDefinitions,
+  parseShortcutBinding,
+  isKeyboardShortcutCustomized,
   recordShortcutBindingFromEvent,
   resolveStoredKeyboardShortcutBindings,
   resetAllKeyboardShortcuts,
+  resetKeyboardShortcutBinding,
   setKeyboardShortcutBindings
 } from './keyboardShortcuts.svelte';
 
@@ -81,6 +86,36 @@ describe('multiple keybindings', () => {
     expect(resolveStoredKeyboardShortcutBindings(JSON.parse(JSON.stringify(bindings)))).toEqual(bindings);
   });
 
+  it('preserves explicit bindings that differ from platform defaults even when they equal Mac defaults', () => {
+    vi.stubGlobal('navigator', { platform: 'Win32' });
+    try {
+      for (const [id, binding, defaults] of [
+        ['editorTransposeChars', 'Ctrl+t', []],
+        ['editorSplitLine', 'Ctrl+o', []],
+        ['editorLink', 'Meta+k', ['Ctrl+k']]
+      ] as const) {
+        expect(getEffectiveKeyboardShortcutBindings(id)).toEqual(defaults);
+        setKeyboardShortcutBindings(id, [binding]);
+        expect(isKeyboardShortcutCustomized(id)).toBe(true);
+        expect(getEffectiveKeyboardShortcutBindings(id)).toEqual([binding]);
+        const reloaded = resolveStoredKeyboardShortcutBindings(JSON.parse(JSON.stringify(keyboardShortcuts.bindings)));
+        expect(getEffectiveKeyboardShortcutBindings(id, reloaded, 'Win32')).toEqual([binding]);
+        resetKeyboardShortcutBinding(id);
+        expect(isKeyboardShortcutCustomized(id)).toBe(false);
+        expect(getEffectiveKeyboardShortcutBindings(id)).toEqual(defaults);
+      }
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('ignores platform override markers for malformed or missing assignments', () => {
+    for (const raw of [undefined, [7], ['Ctrl+t', null]]) {
+      const bindings = resolveStoredKeyboardShortcutBindings({ editorTransposeChars: raw,
+        explicitPlatformOverrides: ['editorTransposeChars', 'unknown'] });
+      expect(getEffectiveKeyboardShortcutBindings('editorTransposeChars', bindings, 'Win32')).toEqual([]);
+      expect(isKeyboardShortcutCustomized('editorTransposeChars', bindings)).toBe(false);
+    }
+  });
+
   it('dispatches all alternatives and honors replacement and disable', () => {
     setKeyboardShortcutBindings('showHistory', ['Alt+h', 'Ctrl+h']);
     expect(keyboardShortcutMatchesEvent(keyboardEvent('h', { altKey: true }), 'showHistory')).toBe(true);
@@ -132,10 +167,62 @@ describe('multiple keybindings', () => {
     expect(keyboardShortcuts.bindings.editorBold).toEqual(['Ctrl+b']);
   });
 
+  it('requires the exact modifier set for held previews, including custom bindings', () => {
+    for (let mask = 0; mask < 16; mask++) {
+      const event = { metaKey: !!(mask & 1), ctrlKey: !!(mask & 2), altKey: !!(mask & 4), shiftKey: !!(mask & 8) };
+      expect(keyboardShortcutModifiersMatchEvent(event, 'showSplitOptions'), `modifier mask ${mask}`).toBe(mask === 4 || mask === 9);
+    }
+    setKeyboardShortcutBindings('showSplitOptions', ['Ctrl+Shift']);
+    expect(keyboardShortcutModifiersMatchEvent({ ctrlKey: true, shiftKey: true }, 'showSplitOptions')).toBe(true);
+    expect(keyboardShortcutModifiersMatchEvent({ ctrlKey: true, shiftKey: true, metaKey: true }, 'showSplitOptions')).toBe(false);
+    expect(keyboardShortcutModifiersMatchEvent({ ctrlKey: true, shiftKey: true, altKey: true }, 'showSplitOptions')).toBe(false);
+  });
+
+  it('requires exact search split modifiers for clicks and keys, including custom bindings', () => {
+    for (const [bindings, allowed] of [
+      [['Alt+Enter', 'Meta+Shift+Enter'], [4, 9]],
+      [['Ctrl+Enter'], [2]]
+    ] as const) {
+      setKeyboardShortcutBindings('searchOpenInSplit', [...bindings]);
+      for (let mask = 0; mask < 16; mask++) {
+        const modifiers = { metaKey: !!(mask & 1), ctrlKey: !!(mask & 2), altKey: !!(mask & 4), shiftKey: !!(mask & 8) };
+        const matches = (allowed as readonly number[]).includes(mask);
+        expect(keyboardShortcutModifiersMatchEvent(modifiers, 'searchOpenInSplit'), `click mask ${mask}`).toBe(matches);
+        expect(keyboardShortcutMatchesEvent(keyboardEvent('Enter', modifiers), 'searchOpenInSplit'), `key mask ${mask}`).toBe(matches);
+      }
+    }
+  });
+
+  it('rejects extra modifiers on every registered keybinding', () => {
+    for (const { id } of keyboardShortcutDefinitions) {
+      const bindings = defaultKeyboardShortcutBindings[id];
+      for (const binding of bindings) {
+        const parsed = parseShortcutBinding(binding)!;
+        if (!parsed.key) continue;
+        const { key, ...modifiers } = parsed;
+        const event = keyboardEvent(key === 'Plus' ? '+' : key === 'Space' ? ' ' : key, modifiers);
+        const configured = { ...defaultKeyboardShortcutBindings, [id]: [binding] };
+        const command = id;
+        expect(keyboardShortcutMatchesEvent(event, command, configured, 'MacIntel'), binding).toBe(true);
+        for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const) {
+          if (parsed[modifier]) continue;
+          expect(keyboardShortcutMatchesEvent({ ...event, [modifier]: true }, command, configured, 'MacIntel'), `${binding} + ${modifier}`).toBe(false);
+        }
+      }
+    }
+  });
+
   it('suppresses every registered command and pointer alternative during recording', () => {
     keyboardShortcuts.recording = true;
     expect(keyboardShortcutMatchesEvent(keyboardEvent('2', { metaKey: true }), 'navNote')).toBe(false);
     expect(keyboardShortcutModifiersMatchEvent({ altKey: true }, 'searchOpenInSplit')).toBe(false);
+  });
+
+  it('ignores IME processing keys even before the browser marks composition active', () => {
+    setKeyboardShortcutBindings('navNote', ['Alt+n']);
+    const processing = { ...keyboardEvent('Process', { altKey: true }), code: 'KeyN', keyCode: 229 };
+    expect(keyboardShortcutMatchesEvent(processing, 'navNote')).toBe(false);
+    expect(recordShortcutBindingFromEvent(processing)).toBeNull();
   });
 
   it('records function keys and shifted plus and matches their runtime events', () => {
@@ -151,6 +238,12 @@ describe('multiple keybindings', () => {
     const bindings = { ...defaultKeyboardShortcutBindings, editorBold: ['Alt+b', 'Meta+Shift+z'] };
     expect(getKeyboardShortcutConflicts(bindings, 'MacIntel').editorRedo).toContain('editorBold');
     expect(getKeyboardShortcutConflicts(bindings, 'MacIntel').historyExit).not.toContain('imageViewerClose');
+  });
+
+  it('warns about global search and selected-image collisions without conflating the image viewer', () => {
+    const bindings = { ...defaultKeyboardShortcutBindings, editorBold: ['Meta+f', 'Meta+c'] };
+    expect(getKeyboardShortcutConflicts(bindings, 'MacIntel').editorBold).toEqual(expect.arrayContaining(['searchCurrent', 'imageCopySource']));
+    expect(getKeyboardShortcutConflicts(bindings, 'MacIntel').imageReset).not.toContain('imageViewerReset');
   });
 
   it('matches base punctuation defaults when Shift or Option changes the emitted character', () => {
