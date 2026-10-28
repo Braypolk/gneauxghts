@@ -12,3 +12,8 @@ export function hasSplitNoteDestination(item: { notePath: string | null } | Loca
   }
   return !!item.notePath?.trim();
 }
+
+/** Recent chat locations can split even before a conversation has been started. */
+export function hasSplitDiscoveryDestination(item: { notePath: string | null } | LocationHistoryEntry): boolean {
+  return ('location' in item && item.location.kind === 'chat') || hasSplitNoteDestination(item);
+}

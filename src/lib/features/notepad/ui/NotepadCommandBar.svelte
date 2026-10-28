@@ -9,7 +9,7 @@
   import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
   import SearchNoteResult from '#lib/ui/search/SearchNoteResult.svelte';
   import SplitSearchResultAction from '#lib/ui/search/SplitSearchResultAction.svelte';
-  import { hasSplitNoteDestination } from '../navigation/splitNoteDestination';
+  import { hasSplitDiscoveryDestination } from '../navigation/splitNoteDestination';
   import type { DockActionPresentation } from './workspaceDockPresentation';
   import { ramp as dockRamp } from '#lib/ui/morphing-containers/motion.js';
   import { onDestroy, tick, untrack } from 'svelte';
@@ -132,7 +132,7 @@
     if (event.defaultPrevented) return;
     if (event.target === relatedHeader && keyboardShortcutMatchesEvent(event, 'searchOpenInSplit')) {
       const item = related?.result?.items[relatedIndex];
-      if (item && related?.onOpenInSplit && hasSplitNoteDestination(item)) {
+      if (item && related?.onOpenInSplit && hasSplitDiscoveryDestination(item)) {
         event.preventDefault(); chooseSplit(() => related?.onOpenInSplit?.(item)); return;
       }
     }
@@ -979,7 +979,7 @@
                     {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
                       <div class="group flex items-center gap-1">
                         <SearchNoteResult title={noteFileLabel(item.fileName, item.noteId)} label={`Open pinned note: ${noteFileLabel(item.fileName, item.noteId)}`}
-                          onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'pinned', item }) : undefined}
+                          onOpenInSplit={search.onOpenInSplit && hasSplitDiscoveryDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'pinned', item }) : undefined}
                           active={index === commandBarState.activeIndex} resultIndex={index}
                           onFocus={() => commandBarState.handleSearchItemFocus(index)}
                           onPoint={() => commandBarState.handleSearchItemPointerEnter(index)}
@@ -1010,7 +1010,7 @@
                     {#each lastEditedNotes as item, index (`edited-${item.noteId ?? item.notePath}-${index}`)}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={noteFileLabel(item.fileName, item.noteId)} label={`Open last edited note: ${noteFileLabel(item.fileName, item.noteId)}`}
-                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'search', item }) : undefined}
+                        onOpenInSplit={search.onOpenInSplit && hasSplitDiscoveryDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'search', item }) : undefined}
                         active={globalIndex === commandBarState.activeIndex} resultIndex={globalIndex}
                         onFocus={() => commandBarState.handleSearchItemFocus(globalIndex)}
                         onPoint={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
@@ -1025,7 +1025,7 @@
                     {#each recentLocations as item, index (locationHistoryKey(item, index))}
                       {@const globalIndex = pinnedNotes.length + index}
                       <SearchNoteResult title={item.label}
-                        onOpenInSplit={search.onOpenInSplit && hasSplitNoteDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'location', item }) : undefined}
+                        onOpenInSplit={search.onOpenInSplit && hasSplitDiscoveryDestination(item) ? () => commandBarState.openItemInSplit({ kind: 'location', item }) : undefined}
                         label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
                         active={globalIndex === commandBarState.activeIndex} resultIndex={globalIndex}
                         onFocus={() => commandBarState.handleSearchItemFocus(globalIndex)}
@@ -1110,7 +1110,7 @@
                     </p>
                   {/if}
                 </button>
-                {#if search.onOpenInSplit && hasSplitNoteDestination(item)}
+                {#if search.onOpenInSplit && hasSplitDiscoveryDestination(item)}
                   <SplitSearchResultAction title={noteFileLabel(item.fileName, item.noteId)} onFocus={() => commandBarState.handleSearchItemFocus(index)} onSelect={() => commandBarState.openItemInSplit({ kind: 'search', item })} />
                 {/if}
                 </div>

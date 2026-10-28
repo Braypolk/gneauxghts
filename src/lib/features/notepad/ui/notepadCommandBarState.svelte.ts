@@ -12,7 +12,7 @@ import {
 import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
 import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 import type { SearchMode } from '#lib/features/notepad/search/search.js';
-import { hasSplitModifiers, hasSplitNoteDestination } from '../navigation/splitNoteDestination';
+import { hasSplitModifiers, hasSplitDiscoveryDestination } from '../navigation/splitNoteDestination';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
@@ -152,7 +152,7 @@ class NotepadCommandBarController {
 
   openItemInSplit = (item: NotepadCommandBarVisibleItem): boolean => {
     const openInSplit = this.#deps.getOpenInSplit?.();
-    if (!openInSplit || item.kind === 'image' || !hasSplitNoteDestination(item.item)) return false;
+    if (!openInSplit || item.kind === 'image' || !hasSplitDiscoveryDestination(item.item)) return false;
     this.#deps.onSearchCommit?.();
     this.#closeSearchPanel();
     openInSplit(item.item);
@@ -290,7 +290,7 @@ class NotepadCommandBarController {
     if (plainArrow && event.key === 'ArrowRight' && this.#deps.onSplitActionFocus
       && (this.#deps.getSearchQuery().trim() === '' || this.searchNavigationMode === 'keyboard')) {
       const item = items[this.activeIndex];
-      if (item && item.kind !== 'image' && this.#deps.getOpenInSplit?.() && hasSplitNoteDestination(item.item)) {
+      if (item && item.kind !== 'image' && this.#deps.getOpenInSplit?.() && hasSplitDiscoveryDestination(item.item)) {
         event.preventDefault();
         this.searchNavigationMode = 'keyboard';
         this.#deps.onSplitActionFocus(this.activeIndex);

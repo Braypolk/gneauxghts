@@ -8,7 +8,7 @@
   import { MediaQuery } from 'svelte/reactivity';
   import { invoke } from '@tauri-apps/api/core';
   import type { ImageSearchItem, SearchItem, RelatedNoteItem } from '#lib/types/semantic.js';
-  import { hasSplitNoteDestination } from './navigation/splitNoteDestination';
+  import { hasSplitDiscoveryDestination, hasSplitNoteDestination } from './navigation/splitNoteDestination';
   import { createNativeContractProbe, type NativeContractProbe } from "#lib/e2e/nativeContractProbe.js";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ImageViewer from "./images/ImageViewer.svelte";
@@ -1246,9 +1246,12 @@
     });
 
   async function openDiscoveryInSplit(item: SearchItem | LocationHistoryEntry) {
-    if (!canOpenDiscoverySplit || !hasSplitNoteDestination(item)) return;
+    if (!canOpenDiscoverySplit || !hasSplitDiscoveryDestination(item)) return;
     const target = 'location' in item ? item.location : item;
-    if ('kind' in target && target.kind === 'chat') return;
+    if ('kind' in target && target.kind === 'chat') {
+      await commands.openLocationInSplit(target);
+      return;
+    }
     const paneId = await commands.openNoteInSplit(target.notePath, { noteId: target.noteId });
     if (paneId && !('location' in item)) await handleSearchResultSelect(item, paneId);
   }

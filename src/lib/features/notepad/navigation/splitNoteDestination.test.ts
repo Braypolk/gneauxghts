@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { hasSplitNoteDestination } from './splitNoteDestination';
+import { hasSplitDiscoveryDestination, hasSplitNoteDestination } from './splitNoteDestination';
 
 describe('discovery split destinations', () => {
+  it('allows recent Thought partner with or without a saved conversation or context', () => {
+    for (const conversationId of [null, 'retained-chat']) {
+      expect(hasSplitDiscoveryDestination({ label: 'Thought partner', location: {
+        kind: 'chat', conversationId, contextNoteId: null, contextNotePath: null
+      } })).toBe(true);
+    }
+    expect(hasSplitDiscoveryDestination({ notePath: null })).toBe(false);
+  });
   it('keeps unsaved or blank-path results out of the saved-note split action even with an identity', () => {
     for (const notePath of [null, '', '  ']) {
       const result = { noteId: 'retained-draft', notePath };

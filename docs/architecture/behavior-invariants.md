@@ -210,6 +210,10 @@ notes, images and Recent) open in the active pane, replacing its chat view when
 necessary. The selected pane is captured before asynchronous navigation; other
 split panes retain their locations. Selecting the retained note still reveals
 the editor. Current-note match previews retain their existing editor target.
+With one pane and room for discovery splits, Recent's Thought partner entry
+supports the same split button and shortcuts as saved notes. It opens directly
+as chat with its retained conversation and document return target, preserving
+the source pane and its unfinished edits.
 
 App-directed editor destinations, including current-note and all-notes search,
 share one minimal-scroll policy: leave an in-band result still, otherwise reveal

@@ -18,7 +18,7 @@ function setup(initial?: Parameters<typeof createNotepadComposition>[0]) {
   return fixture;
 }
 const editorLocation = (id: string): NavLocation => ({ kind: 'editor', noteId: id, notePath: `/vault/${id}.md` });
-const chatLocation = (): NavLocation => ({ kind: 'chat', conversationId: 'chat-1', contextNoteId: 'a', contextNotePath: '/vault/a.md' });
+const chatLocation = (): Extract<NavLocation, { kind: 'chat' }> => ({ kind: 'chat', conversationId: 'chat-1', contextNoteId: 'a', contextNotePath: '/vault/a.md' });
 beforeEach(() => {
   vi.clearAllMocks();
   notepadLocationMru.clearAll();
@@ -389,6 +389,38 @@ it('opens an explicit note selection in the chosen chat pane and retains its pre
 });
 
 describe('discovery results in a new split', () => {
+  it.each([null, 'chat-1'])('opens recent Thought partner beside a dirty editor (conversation=%s)', async conversationId => {
+    const f = setup();
+    updateDocumentMarkdown(f.initialDocument, 'retained local work');
+    vi.mocked(f.deps.presentation.focusPaneEditor).mockReturnValue(false);
+    const destination = await f.commands.openLocationInSplit({ ...chatLocation(), conversationId });
+    expect(f.workspace.paneOrder).toEqual([f.first, destination]);
+    expect(f.workspace.activePaneId).toBe(destination);
+    expect(f.workspace.getPaneState(destination!)).toMatchObject({ kind: 'chat', chatConversationId: conversationId });
+    expect(f.workspace.getPaneState(f.first)).toMatchObject({ kind: 'editor' });
+    expect(f.getPaneDocument(destination!)).toBe(f.initialDocument);
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('retained local work');
+    expect(openNoteSession).not.toHaveBeenCalled();
+    expect(f.save).not.toHaveBeenCalled();
+    expect(finalizeNoteEditingWindow).not.toHaveBeenCalled();
+    expect(f.deps.presentation.focusPaneChat).toHaveBeenCalledWith(destination);
+    f.workspace.assertInvariants();
+    expect(await f.commands.openLocationInSplit(chatLocation())).toBeNull();
+  });
+
+  it('loads a recent chat return target before exposing the chat pane', async () => {
+    const f = setup();
+    const location: NavLocation = { ...chatLocation(), contextNoteId: 'b', contextNotePath: '/vault/b.md' };
+    vi.mocked(openNoteSession).mockRejectedValueOnce(new Error('Missing note path'));
+    await expect(f.commands.openLocationInSplit(location)).rejects.toThrow('Missing note path');
+    expect(f.workspace.paneOrder).toEqual([f.first]);
+    const destination = await f.commands.openLocationInSplit(location);
+    expect(f.workspace.getPaneState(destination!)).toMatchObject({ kind: 'chat', chatConversationId: 'chat-1' });
+    expect(f.getPaneDocument(destination!).identity).toMatchObject({ noteId: 'b', path: '/vault/b.md' });
+    expect(f.getPaneDocument(f.first)).toBe(f.initialDocument);
+    f.workspace.assertInvariants();
+  });
+
   it('loads the selected note beside the retained dirty source without saving or leaving it', async () => {
     const f = setup();
     updateDocumentMarkdown(f.initialDocument, 'retained local work');

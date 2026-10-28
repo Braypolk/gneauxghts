@@ -769,7 +769,11 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     notePath: string | null,
     open: Pick<OpenNoteOptions, 'noteId'> = {}
   ): Promise<NotepadPaneId | null> {
-    if ((!notePath && !open.noteId) || workspace.paneOrder.length !== 1 || options.maxVisiblePanes < 2) {
+    return openLocationInSplit({ kind: 'editor', noteId: open.noteId ?? null, notePath });
+  }
+
+  async function openLocationInSplit(location: NavLocation): Promise<NotepadPaneId | null> {
+    if ((location.kind === 'editor' && !location.notePath && !location.noteId) || workspace.paneOrder.length !== 1 || options.maxVisiblePanes < 2) {
       return null;
     }
     const sourcePaneId = workspace.activePaneId;
@@ -783,16 +787,25 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         }
         // Load before exposing membership: a failed read must leave the source
         // and layout intact, and simultaneous choices may only create one split.
-        const snapshot = await openNoteSession(open.noteId ?? null, notePath);
+        const retained = getPaneDocument(sourcePaneId);
+        const noteId = location.kind === 'editor' ? location.noteId : location.contextNoteId;
+        const notePath = location.kind === 'editor' ? location.notePath : location.contextNotePath;
+        const needsSnapshot = location.kind === 'editor' ||
+          ((noteId || notePath) && (getDocumentNoteId(retained) !== noteId || getDocumentPath(retained) !== notePath));
+        const snapshot = needsSnapshot ? await openNoteSession(noteId, notePath) : null;
         operation.check();
         if (workspace.paneOrder.length !== 1 || !workspace.paneOrder.includes(sourcePaneId)) return;
         const source = getPaneDocument(sourcePaneId);
-        workspace.completePaneCreation(paneId, operation.id, source.handle, 'editor');
+        workspace.completePaneCreation(paneId, operation.id, source.handle, location.kind);
         created = true;
-        const next = adoptSnapshotForPane(state, workspace, paneId, snapshot);
+        const next = snapshot ? adoptSnapshotForPane(state, workspace, paneId, snapshot) : source;
         workspace.resetPaneCommand();
         activatePaneSession(paneId);
         workspace.assertInvariants();
+        if (location.kind === 'chat') {
+          workspace.setPaneConversationId(paneId, location.conversationId);
+          touchCurrentLocation(paneId);
+        }
         await presentDocument(operation, source, next, true);
         opened = paneId;
       } finally {
@@ -1301,6 +1314,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     handleNotepadCommandBarCommand,
     openNotePath,
     openNoteInSplit,
+    openLocationInSplit,
     startNewNoteFlow,
     clearNotepad: (request?: { canRestore?: boolean }) => withStandaloneMutation(() => clearNotepad(request)),
     unforgetNotepad: () => withStandaloneMutation(unforgetNotepad),

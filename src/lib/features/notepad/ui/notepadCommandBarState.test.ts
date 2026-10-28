@@ -246,12 +246,15 @@ describe('createNotepadCommandBarState', () => {
     expect(onSearchCommit).toHaveBeenCalledOnce();
   });
 
-  it('opens saved search, pinned and recent notes through the split action with Option-Enter', () => {
+  it('opens saved notes and recent Thought partner through the split action with Option-Enter', () => {
     const note = searchItem({ notePath: '/vault/Note.md' });
     for (const item of [
       { kind: 'search' as const, item: note },
       { kind: 'pinned' as const, item: note },
-      { kind: 'location' as const, item: locationEntry() }
+      { kind: 'location' as const, item: locationEntry() },
+      { kind: 'location' as const, item: locationEntry({ label: 'Thought partner', location: {
+        kind: 'chat', conversationId: 'retained-chat', contextNoteId: null, contextNotePath: null
+      } }) }
     ]) {
       const calls: unknown[] = [];
       const onSearchSelect = vi.fn();
