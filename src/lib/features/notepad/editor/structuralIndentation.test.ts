@@ -52,6 +52,8 @@ describe('structural list indentation planner', () => {
   it.each([
     ['task', '- [ ] parent\n- [ ] child', '- [ ] parent\n  - [ ] child'],
     ['mixed bullet marker', '- parent\n* child', '- parent\n  * child'],
+    ['letter', 'a. parent\nb. child', 'a. parent\n   b. child'],
+    ['multi-letter', 'aa. parent\nab. child', 'aa. parent\n    ab. child'],
     ['multi-digit ordered', '10. parent\n11. child', '10. parent\n    11. child']
   ])('nests a %s item beneath its preceding sibling', (_name, doc, expected) => {
     const state = stateWithSelection(doc, doc.indexOf('child'));

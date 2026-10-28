@@ -1,6 +1,8 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
+import { letterListLabel, letterListPrefix } from '../markdown/letterListExtension';
+import { collectListItems, indentationColumn } from './structuralIndentation';
 import { markdownTables } from '../markdown/tables/tableModel';
 
 export interface EditorMenuOption {
@@ -25,6 +27,7 @@ export type BlockTypeId =
   | 'quote'
   | 'bulletList'
   | 'orderedList'
+  | 'letterList'
   | 'taskList'
   | 'code'
   | 'divider'
@@ -80,6 +83,7 @@ export const baseTextMenuItems = [
 export const baseListMenuItems = [
   { id: 'bulletList', label: 'Bullet List' },
   { id: 'orderedList', label: 'Ordered List' },
+  { id: 'letterList', label: 'Letter List' },
   { id: 'taskList', label: 'Task List' }
 ] as const satisfies readonly EditorMenuOption[];
 
@@ -141,6 +145,7 @@ export const blockTypeIcons: Record<string, string> = {
   divider: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M4 11H20V13H4V11Z"/></svg>`,
   bulletList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10.5C3.17 10.5 2.5 11.17 2.5 12C2.5 12.83 3.17 13.5 4 13.5C4.83 13.5 5.5 12.83 5.5 12C5.5 11.17 4.83 10.5 4 10.5ZM4 4.5C3.17 4.5 2.5 5.17 2.5 6C2.5 6.83 3.17 7.5 4 7.5C4.83 7.5 5.5 6.83 5.5 6C5.5 5.17 4.83 4.5 4 4.5ZM4 16.5C3.17 16.5 2.5 17.18 2.5 18C2.5 18.82 3.18 19.5 4 19.5C4.82 19.5 5.5 18.82 5.5 18C5.5 17.18 4.83 16.5 4 16.5ZM8 19H20C20.55 19 21 18.55 21 18C21 17.45 20.55 17 20 17H8C7.45 17 7 17.45 7 18C7 18.55 7.45 19 8 19ZM8 13H20C20.55 13 21 12.55 21 12C21 11.45 20.55 11 20 11H8C7.45 11 7 11.45 7 12C7 12.55 7.45 13 8 13ZM7 6C7 6.55 7.45 7 8 7H20C20.55 7 21 6.55 21 6C21 5.45 20.55 5 20 5H8C7.45 5 7 5.45 7 6Z"/></svg>`,
   orderedList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M8 7H20C20.55 7 21 6.55 21 6C21 5.45 20.55 5 20 5H8C7.45 5 7 5.45 7 6C7 6.55 7.45 7 8 7ZM20 17H8C7.45 17 7 17.45 7 18C7 18.55 7.45 19 8 19H20C20.55 19 21 18.55 21 18C21 17.45 20.55 17 20 17ZM20 11H8C7.45 11 7 11.45 7 12C7 12.55 7.45 13 8 13H20C20.55 13 21 12.55 21 12C21 11.45 20.55 11 20 11ZM4.5 16H2.5C2.22 16 2 16.22 2 16.5C2 16.78 2.22 17 2.5 17H4V17.5H3.5C3.22 17.5 3 17.72 3 18C3 18.28 3.22 18.5 3.5 18.5H4V19H2.5C2.22 19 2 19.22 2 19.5C2 19.78 2.22 20 2.5 20H4.5C4.78 20 5 19.78 5 19.5V16.5C5 16.22 4.78 16 4.5 16ZM2.5 5H3V7.5C3 7.78 3.22 8 3.5 8C3.78 8 4 7.78 4 7.5V4.5C4 4.22 3.78 4 3.5 4H2.5C2.22 4 2 4.22 2 4.5C2 4.78 2.22 5 2.5 5ZM4.5 10H2.5C2.22 10 2 10.22 2 10.5C2 10.78 2.22 11 2.5 11H3.8L2.12 12.96C2.04 13.05 2 13.17 2 13.28V13.5C2 13.78 2.22 14 2.5 14H4.5C4.78 14 5 13.78 5 13.5C5 13.22 4.78 13 4.5 13H3.2L4.88 11.04C4.96 10.95 5 10.83 5 10.72V10.5C5 10.22 4.78 10 4.5 10Z"/></svg>`,
+  letterList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6h10M10 12h10M10 18h10M3 7l1.5-4L6 7M3.5 6h2M3 10v4h1.5a1 1 0 0 0 0-2H3M6 17H4a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h2"/></svg>`,
   taskList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M5.67 16.34L9.39 12.62C9.54 12.47 9.72 12.39 9.92 12.4C10.12 12.4 10.3 12.48 10.45 12.63C10.58 12.78 10.65 12.96 10.65 13.16C10.65 13.36 10.58 13.54 10.45 13.69L6.33 17.82C6.15 18 5.94 18.09 5.69 18.09C5.45 18.09 5.24 18 5.06 17.82L3.02 15.78C2.88 15.64 2.81 15.46 2.81 15.25C2.82 15.04 2.89 14.87 3.03 14.73C3.17 14.59 3.34 14.52 3.55 14.52C3.76 14.52 3.93 14.59 4.07 14.73L5.67 16.34ZM5.67 8.72L9.39 5C9.54 4.85 9.72 4.78 9.92 4.78C10.12 4.78 10.3 4.86 10.45 5.02C10.58 5.17 10.65 5.34 10.65 5.54C10.65 5.75 10.58 5.92 10.45 6.07L6.33 10.2C6.15 10.39 5.94 10.48 5.69 10.48C5.45 10.48 5.24 10.39 5.06 10.2L3.02 8.16C2.88 8.02 2.81 7.85 2.81 7.64C2.82 7.43 2.89 7.25 3.03 7.12C3.17 6.98 3.34 6.91 3.55 6.91C3.76 6.91 3.93 6.98 4.07 7.12L5.67 8.72ZM13.76 16.56C13.55 16.56 13.37 16.49 13.23 16.34C13.08 16.2 13.01 16.02 13.01 15.81C13.01 15.6 13.08 15.42 13.23 15.27C13.37 15.13 13.55 15.06 13.76 15.06H20.76C20.97 15.06 21.15 15.13 21.29 15.27C21.44 15.42 21.51 15.6 21.51 15.81C21.51 16.02 21.44 16.2 21.29 16.34C21.15 16.49 20.97 16.56 20.76 16.56H13.76ZM13.76 8.94C13.55 8.94 13.37 8.87 13.23 8.73C13.08 8.58 13.01 8.41 13.01 8.19C13.01 7.98 13.08 7.8 13.23 7.66C13.37 7.51 13.55 7.44 13.76 7.44H20.76C20.97 7.44 21.15 7.51 21.29 7.66C21.44 7.8 21.51 7.98 21.51 8.19C21.51 8.41 21.44 8.58 21.29 8.73C21.15 8.87 20.97 8.94 20.76 8.94H13.76Z"/></svg>`,
   code: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6ZM14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6Z"/></svg>`,
   wikilink: wikilinkSlashIcon
@@ -173,7 +178,7 @@ function isBlank(text: string) {
 }
 
 function matchesList(text: string) {
-  return unorderedListPattern.test(text) || orderedListPattern.test(text);
+  return unorderedListPattern.test(text) || orderedListPattern.test(text) || letterListPrefix.test(text);
 }
 
 function matchesTask(text: string) {
@@ -183,11 +188,12 @@ function matchesTask(text: string) {
 function listKind(text: string): BlockTypeId {
   if (matchesTask(text)) return 'taskList';
   if (orderedListPattern.test(text)) return 'orderedList';
+  if (letterListPrefix.test(text)) return 'letterList';
   return 'bulletList';
 }
 
 function stripListMarker(text: string) {
-  return text.replace(/^(\s*)(?:[-+*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, '$1');
+  return text.replace(/^(\s*)(?:[-+*]|\d+\.|[a-z]{1,3}\.)\s+(?:\[[ xX]\]\s+)?/, '$1');
 }
 
 function stripQuote(text: string) {
@@ -294,7 +300,7 @@ function getSelectedLineRange(state: EditorState) {
   };
 }
 
-function transformLine(text: string, id: string, index: number) {
+function transformLine(text: string, id: string) {
   if (id === 'paragraph') {
     return toParagraph(text);
   }
@@ -309,11 +315,6 @@ function transformLine(text: string, id: string, index: number) {
 
   if (id === 'quote') {
     return toQuote(text);
-  }
-
-  if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
-    const line = toList(text, id);
-    return id === 'orderedList' ? line.replace(/^1\./, `${index + 1}.`) : line;
   }
 
   if (id === 'divider') {
@@ -335,7 +336,7 @@ function applyBlockTypeToSelectedLines(view: EditorView, id: string) {
       ? toCode(text)
       : text
           .split('\n')
-          .map((line, index) => transformLine(line, id, index))
+          .map((line) => transformLine(line, id))
           .filter((line): line is string => line !== null)
           .join('\n');
 
@@ -381,17 +382,72 @@ function toCode(text: string) {
   return ['```', ...lines, '```'].join('\n');
 }
 
-function toList(text: string, kind: 'bulletList' | 'orderedList' | 'taskList') {
-  const lines = normalizeToParagraphLines(text);
-  if (lines.length === 0) {
-    return kind === 'orderedList' ? '1. ' : kind === 'taskList' ? '- [ ] ' : '- ';
-  }
+type ListTypeId = 'bulletList' | 'orderedList' | 'letterList' | 'taskList';
 
-  const first = lines[0] ?? '';
-  const prefix =
-    kind === 'orderedList' ? '1. ' : kind === 'taskList' ? '- [ ] ' : '- ';
-  const rest = lines.slice(1);
-  return [prefix + first.trim(), ...rest].join('\n');
+function isListType(id: string): id is ListTypeId {
+  return id === 'bulletList' || id === 'orderedList' || id === 'letterList' || id === 'taskList';
+}
+
+function listPrefix(kind: ListTypeId, index: number) {
+  return kind === 'orderedList' ? `${index + 1}. ` : kind === 'letterList'
+    ? `${letterListLabel(index)}. ` : kind === 'taskList' ? '- [ ] ' : '- ';
+}
+
+function toList(text: string, kind: ListTypeId, index = 0) {
+  const [first = '', ...rest] = normalizeToParagraphLines(text);
+  const indent = text.match(/^[\t ]*/)?.[0] ?? '';
+  return [indent + listPrefix(kind, index) + first.trim(), ...rest].join('\n');
+}
+
+// A marker's width participates in Markdown's structure. Change the chosen
+// item's style without changing its level, and move continuation/descendant
+// lines by the width difference so they keep the same parent.
+function applyListType(view: EditorView, kind: ListTypeId, block: BlockDescriptor | null) {
+  const { state } = view;
+  const selection = block ? null : getSelectedLineRange(state);
+  const current = block ?? describeBlockAt(state, state.selection.main.head);
+  const first = selection?.startLine ?? current.startLine;
+  const last = selection?.endLine ?? current.endLine;
+  const items = collectListItems(state);
+  const byLine = new Map(items.map(item => [item.startLine, item]));
+  const counts = new Map<string, number>();
+  const shifts: { end: number; delta: number }[] = [];
+  const changes: { from: number; to: number; insert: string }[] = [];
+  let through = last;
+  let caret = 0;
+  let shift = 0;
+  for (let number = first; number <= through; number++) {
+    const line = state.doc.line(number);
+    const whitespace = line.text.match(/^[\t ]*/)?.[0] ?? '';
+    while (shifts.length && number > shifts.at(-1)!.end) shift -= shifts.pop()!.delta;
+    const inheritedShift = shift;
+    let insert = line.text;
+    if (number <= last) {
+      const item = byLine.get(number);
+      const key = item?.parentItemKey ?? `root:${indentationColumn(whitespace, state.tabSize)}`;
+      const index = counts.get(key) ?? 0;
+      counts.set(key, index + 1);
+      insert = toList(line.text, kind, index);
+      if (item) {
+        through = Math.max(through, item.endLine);
+        const prefixWidth = kind === 'taskList' ? 2 : listPrefix(kind, index).length;
+        const delta = prefixWidth - (item.contentColumn - item.indentColumn);
+        shifts.push({ end: item.endLine, delta });
+        shift += delta;
+      }
+    }
+    if (inheritedShift && insert.trim()) {
+      insert = ' '.repeat(Math.max(0, indentationColumn(whitespace, state.tabSize) + inheritedShift)) + insert.slice(whitespace.length);
+    }
+    if (number === first) caret = line.from + (insert.match(/^[\t ]*/)?.[0].length ?? 0) + listPrefix(kind, 0).length;
+    if (insert !== line.text) changes.push({ from: line.from, to: line.to, insert });
+  }
+  const changeSet = state.changes(changes);
+  return applySpec(view, {
+    changes: changeSet,
+    selection: selection ? { anchor: selection.from, head: changeSet.mapPos(selection.to, 1) } : { anchor: caret },
+    scrollIntoView: true
+  });
 }
 
 export function applyBlockTypeSelection(
@@ -399,6 +455,7 @@ export function applyBlockTypeSelection(
   id: string,
   blockOverride: BlockDescriptor | null = null
 ) {
+  if (isListType(id)) return applyListType(view, id, blockOverride);
   if (!blockOverride && applyBlockTypeToSelectedLines(view, id)) {
     return true;
   }
@@ -424,10 +481,6 @@ export function applyBlockTypeSelection(
 
   if (id === 'quote') {
     return replaceBlock(view, block, toQuote(text), block.from + 2);
-  }
-
-  if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
-    return replaceBlock(view, block, toList(text, id), block.from + (id === 'orderedList' ? 3 : id === 'taskList' ? 6 : 2));
   }
 
   if (id === 'code') {

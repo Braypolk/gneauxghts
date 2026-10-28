@@ -17,6 +17,23 @@ export function developmentSigningIdentity(env = process.env) {
   return config.identity;
 }
 
+/** Let Tauri sign local app bundles with the same identity as development.
+ * Explicit signing/exported certificates and notarized distribution builds keep
+ * their own configuration; the local development certificate is not a release
+ * distribution credential.
+ */
+export function macSigningEnvironment(args, env = process.env, {
+  platform = process.platform,
+  localIdentity = developmentSigningIdentity
+} = {}) {
+  if (platform !== 'darwin' || !['dev', 'build', 'bundle'].includes(args[0]) ||
+      args.includes('--help') || args.includes('-h') || args.includes('--no-sign') ||
+      env.APPLE_SIGNING_IDENTITY || env.APPLE_CERTIFICATE ||
+      (args[0] !== 'dev' && env.GNEAUXGHTS_REQUIRE_NOTARIZATION === '1')) return env;
+  const identity = localIdentity(env);
+  return identity ? { ...env, APPLE_SIGNING_IDENTITY: identity } : env;
+}
+
 /** Cargo owns the dev process; the shell runner execs the signed app so Tauri's
  * rebuild/stop behavior remains intact. TOML arrays preserve paths with spaces.
  */

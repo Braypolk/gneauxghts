@@ -101,17 +101,19 @@
   let routed = $derived(curvedConnections && !isMorphing ? routeConnections(targetGeometry, links, focusId) : { paths: new Map(), trunks: [] });
   // Spaced geography stays fixed; camera and label visibility never repack it.
 
-  let graphClouds = $derived(geometry.clouds.filter(item => item.points.length).toSorted((a, b) => a.cloud.level - b.cloud.level));
+  let graphClouds = $derived(geometry.clouds.filter(item => item.points.length &&
+    (!query.trim() || item.cloud.memberNodeIds.some(id => matchingIds.has(id))))
+    .toSorted((a, b) => a.cloud.level - b.cloud.level));
   let captionClouds = $derived(graphClouds.filter(item => !item.cloud.parentId || zoom >= labelZoom || item.cloud.id === inspectedRegionId));
   let familyRegions = $derived.by(() => {
     const families = new Map<string, typeof geometry.clouds>();
-    for (const cloud of geometry.clouds) {
+    for (const cloud of graphClouds) {
       if (cloud.cloud.parentId || !cloud.cloud.familyId) continue;
       const siblings = families.get(cloud.cloud.familyId) ?? [];
       siblings.push(cloud); families.set(cloud.cloud.familyId, siblings);
     }
     return [...families].flatMap(([id, children]) => {
-      const parent = geometry.clouds.find(item => item.cloud.id === id);
+      const parent = graphClouds.find(item => item.cloud.id === id);
       const members = parent ? [...children,parent] : children;
       if (members.length < 2) return [];
       const points = members.flatMap(item => item.points);
@@ -121,7 +123,8 @@
     });
   });
   let worldBounds = $derived.by(() => {
-    const points = graphClouds.flatMap((cloud) => cloud.points).concat(geometry.nodes);
+    // Search hides geography without changing the camera's full-map framing.
+    const points = geometry.clouds.flatMap((cloud) => cloud.points).concat(geometry.nodes);
     const minX = points.length ? Math.min(...points.map((point) => point.x)) : -100;
     const maxX = points.length ? Math.max(...points.map((point) => point.x)) : 100;
     const minY = points.length ? Math.min(...points.map((point) => point.y)) : -100;

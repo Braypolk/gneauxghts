@@ -64,6 +64,7 @@
     "@internationalized/date": "^3.12.4",
     "@lezer/common": "1.5.3",
     "@lezer/highlight": "^1.2.5",
+    "@lezer/markdown": "1.8.1",
     "@lucide/svelte": "^1.60.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "2.12.4",

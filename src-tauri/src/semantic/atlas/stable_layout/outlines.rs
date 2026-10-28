@@ -99,7 +99,103 @@ fn organic_outline(
             ]
         })
         .collect::<Vec<_>>();
-    soften_outline(&organic, 12.0)
+    // Blend across a wider span so organic lobes ease into each other instead
+    // of retaining the tight bends around individual footprint corners.
+    let softened = soften_outline(&organic, 28.0);
+    bow_flat_spans(&softened, if has_children { 8.0 } else { 24.0 })
+}
+
+/// A smooth corner does not prevent a long side from looking ruler-straight.
+/// Find shallow spans, then give each a broad outward bow of 5% of its chord,
+/// bounded in world units so sparse clouds and parents do not gain huge borders.
+fn bow_flat_spans(outline: &[[f32; 2]], max_bow: f32) -> Vec<[f32; 2]> {
+    if outline.len() < 3 {
+        return outline.to_vec();
+    }
+    let distance_squared = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2);
+    // Split the closed contour at opposite extremities, not its arbitrary seam.
+    let start = (0..outline.len())
+        .max_by(|&a, &b| outline[a][0].total_cmp(&outline[b][0]))
+        .unwrap();
+    let points = (0..=outline.len())
+        .map(|i| outline[(start + i) % outline.len()])
+        .collect::<Vec<_>>();
+    let opposite = (1..outline.len())
+        .max_by(|&a, &b| {
+            distance_squared(points[a], points[0])
+                .total_cmp(&distance_squared(points[b], points[0]))
+        })
+        .unwrap();
+    let mut result = points.clone();
+    fn bow_span(
+        points: &[[f32; 2]],
+        result: &mut [[f32; 2]],
+        start: usize,
+        end: usize,
+        max_bow: f32,
+    ) {
+        if end <= start + 1 {
+            return;
+        }
+        let a = points[start];
+        let b = points[end];
+        let delta = [b[0] - a[0], b[1] - a[1]];
+        let length = delta[0].hypot(delta[1]);
+        if length < 80.0 {
+            return;
+        }
+        let normal = [delta[1] / length, -delta[0] / length];
+        let deviation = |p: [f32; 2]| (p[0] - a[0]) * normal[0] + (p[1] - a[1]) * normal[1];
+        let farthest = (start + 1..end)
+            .max_by(|&i, &j| {
+                deviation(points[i])
+                    .abs()
+                    .total_cmp(&deviation(points[j]).abs())
+            })
+            .unwrap();
+        if deviation(points[farthest]).abs() > length * 0.025 {
+            bow_span(points, result, start, farthest, max_bow);
+            bow_span(points, result, farthest, end, max_bow);
+            return;
+        }
+        let height = (length * 0.05).min(max_bow);
+        for i in start + 1..end {
+            let p = points[i];
+            let t = (((p[0] - a[0]) * delta[0] + (p[1] - a[1]) * delta[1]) / (length * length))
+                .clamp(0.0, 1.0);
+            let offset = (height * 4.0 * t * (1.0 - t) - deviation(p)).max(0.0);
+            result[i] = [p[0] + normal[0] * offset, p[1] + normal[1] * offset];
+        }
+    }
+    bow_span(&points, &mut result, 0, opposite, max_bow);
+    bow_span(&points, &mut result, opposite, outline.len(), max_bow);
+    result.pop();
+    // Ease only the added displacement. Smoothing the whole contour again
+    // would trim existing corners and could cut a child out of its parent.
+    // soften_outline supplied uniform arc-length samples, so this window has
+    // a fixed world-space size, independent of the cloud's vertex density.
+    let count = outline.len();
+    let perimeter = points
+        .windows(2)
+        .map(|pair| distance_squared(pair[0], pair[1]).sqrt())
+        .sum::<f32>();
+    let radius = ((28.0 * count as f32 / perimeter.max(0.001)).ceil() as usize).clamp(1, count / 2);
+    (0..count)
+        .map(|original| {
+            let i = (original + count - start) % count;
+            let mut offset = [0.0; 2];
+            let mut total = 0.0;
+            for k in -(radius as isize)..=radius as isize {
+                let j = (i as isize + k).rem_euclid(count as isize) as usize;
+                let weight = (radius + 1 - k.unsigned_abs()) as f32;
+                for axis in 0..2 {
+                    offset[axis] += (result[j][axis] - points[j][axis]) * weight;
+                }
+                total += weight;
+            }
+            std::array::from_fn(|axis| outline[original][axis] + offset[axis] / total)
+        })
+        .collect()
 }
 
 /// Pull the empty spans of a parent's envelope inward to reveal its subgroups.
@@ -173,7 +269,9 @@ fn boundary_distance(point: [f32; 2], boundaries: &[Vec<[f32; 2]>]) -> f32 {
 /// sideways; using it as a boundary line keeps the padding constant instead.
 fn tight_outline(center: [f32; 2], boundaries: &[Vec<[f32; 2]>]) -> Vec<[f32; 2]> {
     const POINTS: usize = 96;
-    const PADDING: f32 = 6.0;
+    // Reserve a little clearance for the broader final rounding, including
+    // around child contours whose corners must stay inside their parent.
+    const PADDING: f32 = 10.0;
     let step = std::f32::consts::TAU / POINTS as f32;
     let directions = (0..POINTS)
         .map(|i| {
@@ -326,6 +424,104 @@ mod tests {
     }
 
     #[test]
+    fn long_sides_keep_a_visible_bow_after_smoothing() {
+        let rectangle = |x: f32, y: f32| {
+            vec![
+                [x - 35.0, y - 16.0],
+                [x + 35.0, y - 16.0],
+                [x + 35.0, y + 16.0],
+                [x - 35.0, y + 16.0],
+            ]
+        };
+        let boundaries = vec![
+            rectangle(-150.0, -250.0),
+            rectangle(-100.0, 250.0),
+            rectangle(100.0, -100.0),
+            rectangle(150.0, 200.0),
+        ];
+        let outline = organic_outline("cooking", [0.0, 0.0], &boundaries, false);
+        // Measure the long left side between two horizontal slices. Rounded
+        // corners alone used to leave this span with only a 1% bow.
+        let left_at = |y: f32| {
+            (0..outline.len())
+                .filter_map(|i| {
+                    let a = outline[i];
+                    let b = outline[(i + 1) % outline.len()];
+                    ((a[1] > y) != (b[1] > y))
+                        .then(|| a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]))
+                })
+                .reduce(f32::min)
+                .unwrap()
+        };
+        let a = [left_at(-200.0), -200.0];
+        let b = [left_at(200.0), 200.0];
+        let delta = [b[0] - a[0], b[1] - a[1]];
+        let chord = delta[0].hypot(delta[1]);
+        let bow = outline
+            .iter()
+            .filter(|p| p[0] < -75.0 && (-200.0..=200.0).contains(&p[1]))
+            .map(|p| ((p[0] - a[0]) * delta[1] - (p[1] - a[1]) * delta[0]).abs() / chord)
+            .reduce(f32::max)
+            .unwrap();
+        assert!(
+            bow > chord * 0.025,
+            "long side is too straight: bow {bow}, chord {chord}"
+        );
+        assert!(bow < 24.0, "bow added an excessive border: {bow}");
+        assert_eq!(
+            outline,
+            organic_outline("cooking", [0.0, 0.0], &boundaries, false)
+        );
+    }
+
+    #[test]
+    fn organic_lobes_have_broad_turns_and_keep_member_footprints_inside() {
+        let rectangle = |x: f32, y: f32| {
+            vec![
+                [x - 45.0, y - 16.0],
+                [x + 45.0, y - 16.0],
+                [x + 45.0, y + 16.0],
+                [x - 45.0, y + 16.0],
+            ]
+        };
+        let boundaries = vec![
+            rectangle(-150.0, -75.0),
+            rectangle(-130.0, 60.0),
+            rectangle(80.0, -60.0),
+            rectangle(150.0, 80.0),
+        ];
+        let outline = organic_outline("planning", [0.0, 0.0], &boundaries, false);
+        // Boundary rectangles include the six-unit filename clearance used by
+        // finish(); the actual member footprints must remain fully enclosed.
+        for boundary in &boundaries {
+            let center = [
+                (boundary[0][0] + boundary[1][0]) / 2.0,
+                (boundary[0][1] + boundary[2][1]) / 2.0,
+            ];
+            for p in boundary {
+                let footprint =
+                    std::array::from_fn(|axis| p[axis] + (center[axis] - p[axis]).signum() * 6.0);
+                assert!(inside(footprint, &outline));
+            }
+        }
+        for i in 0..outline.len() {
+            let a = outline[(i + outline.len() - 1) % outline.len()];
+            let b = outline[i];
+            let c = outline[(i + 1) % outline.len()];
+            let incoming = [b[0] - a[0], b[1] - a[1]];
+            let outgoing = [c[0] - b[0], c[1] - b[1]];
+            let turn = (incoming[0] * outgoing[1] - incoming[1] * outgoing[0])
+                .atan2(incoming[0] * outgoing[0] + incoming[1] * outgoing[1])
+                .abs();
+            let distance = (incoming[0].hypot(incoming[1]) + outgoing[0].hypot(outgoing[1])) / 2.0;
+            assert!(
+                turn / distance < 1.0 / 24.0,
+                "organic lobe bends too sharply"
+            );
+        }
+    }
+
+    #[test]
     fn filename_corners_turn_gradually_without_expanding_the_border() {
         let outline = tight_outline(
             [0.0, 0.0],
@@ -347,9 +543,9 @@ mod tests {
                 .abs();
             let distance = (incoming[0].hypot(incoming[1]) + outgoing[0].hypot(outgoing[1])) / 2.0;
             // Corners should bend over at least a 12-unit radius, rather than
-            // concentrating the turn in the small six-unit outline border.
+            // concentrating the turn in the narrow outline border.
             assert!(turn / distance < 1.0 / 12.0, "corner bends too sharply");
-            assert!(b[0].abs() <= 106.01 && b[1].abs() <= 46.01);
+            assert!(b[0].abs() <= 110.01 && b[1].abs() <= 50.01);
         }
     }
 

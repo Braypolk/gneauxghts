@@ -3,12 +3,13 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { developmentSigningIdentity, withMacDevelopmentSigning } from './signMacExecutable.mjs';
+import { macSigningEnvironment, withMacDevelopmentSigning } from './signMacExecutable.mjs';
 
 const args = process.argv.slice(2);
 const tauriBin = resolveTauriBinary();
+const signingEnvironment = macSigningEnvironment(args);
 const developmentIdentity = process.platform === 'darwin' && args[0] === 'dev'
-  ? developmentSigningIdentity() : undefined;
+  ? signingEnvironment.APPLE_SIGNING_IDENTITY : undefined;
 const finalArgs = withMacDevelopmentSigning(withBundleConfig(args), developmentIdentity);
 
 syncIosAppIcons(finalArgs);
@@ -20,7 +21,7 @@ if (['dev', 'build'].includes(args[0]) && !args.includes('--help') && !args.incl
 
 const child = spawn(tauriBin, finalArgs, {
   stdio: "inherit",
-  env: developmentIdentity ? { ...process.env, APPLE_SIGNING_IDENTITY: developmentIdentity } : process.env
+  env: signingEnvironment
 });
 
 child.on("exit", (code, signal) => {

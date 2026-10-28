@@ -1,3 +1,4 @@
+import { letterListExtension } from './letterListExtension';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { Extension } from '@codemirror/state';
 import { languages } from '#lib/vendor/codemirrorLanguageData.js';
@@ -22,7 +23,7 @@ import { obsidianMarkdownExtensions } from '#lib/features/notepad/markdown/obsid
 export function createMarkdownLanguage(): Extension {
   return markdown({
     base: markdownLanguage,
-    extensions: [obsidianMarkdownExtensions],
+    extensions: [obsidianMarkdownExtensions, letterListExtension],
     codeLanguages: [...languages],
     completeHTMLTags: true,
     pasteURLAsLink: true,

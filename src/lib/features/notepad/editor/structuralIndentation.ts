@@ -1,5 +1,5 @@
 import { indentLess, indentMore } from '@codemirror/commands';
-import { syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import type { SyntaxNode } from '@lezer/common';
@@ -17,7 +17,7 @@ export type ListIndentationPlan =
   | { kind: 'invalid' }
   | { kind: 'changes'; changes: IndentationChange[] };
 
-interface ListItemInfo {
+export interface ListItemInfo {
   key: string;
   parentItemKey: string | null;
   startLine: number;
@@ -30,7 +30,7 @@ interface ListItemGroup {
   items: ListItemInfo[];
 }
 
-const LIST_PREFIX_RE = /^([\t ]*)(?:[-+*]|\d{1,9}[.)])([\t ]+)/;
+const LIST_PREFIX_RE = /^([\t ]*)(?:[-+*]|\d{1,9}[.)]|[a-z]{1,3}\.)([\t ]+)/;
 
 function nodeKey(node: SyntaxNode): string {
   return `${node.name}:${node.from}:${node.to}`;
@@ -45,7 +45,7 @@ function ancestorNamed(node: SyntaxNode | null, name: string): SyntaxNode | null
   return null;
 }
 
-function indentationColumn(text: string, tabSize: number): number {
+export function indentationColumn(text: string, tabSize: number): number {
   let column = 0;
   for (const character of text) {
     if (character === '\t') {
@@ -57,10 +57,10 @@ function indentationColumn(text: string, tabSize: number): number {
   return column;
 }
 
-function collectListItems(state: EditorState): ListItemInfo[] {
+export function collectListItems(state: EditorState): ListItemInfo[] {
   const items: ListItemInfo[] = [];
 
-  syntaxTree(state).iterate({
+  ensureSyntaxTree(state, state.doc.length, 100)?.iterate({
     enter(nodeRef) {
       if (nodeRef.name !== 'ListItem') {
         return;
@@ -68,7 +68,7 @@ function collectListItems(state: EditorState): ListItemInfo[] {
 
       const node = nodeRef.node;
       const parentList = node.parent;
-      if (!parentList || (parentList.name !== 'BulletList' && parentList.name !== 'OrderedList')) {
+      if (!parentList || (parentList.name !== 'BulletList' && parentList.name !== 'OrderedList' && parentList.name !== 'LetterList')) {
         return;
       }
 

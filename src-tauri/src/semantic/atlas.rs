@@ -65,8 +65,8 @@ const CHILD_TARGET_MAX_NOTES: usize = 16;
 const UMAP_ITERATIONS_MAX: usize = 140;
 const UMAP_ITERATIONS_BASE: usize = 40;
 const UMAP_ITERATIONS_SQRT_SCALE: f32 = 3.0;
-/// Bumped when layout/clustering parallelism or iteration budgets change.
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 29;
+/// Bumped when layout, visible contours, or clustering policy changes.
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 31;
 const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
 const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
 const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 2;

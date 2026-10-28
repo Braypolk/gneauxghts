@@ -214,6 +214,17 @@ Build a release app:
 pnpm tauri build
 ```
 
+On macOS, local development, release builds and rebundling use the certificate
+selected in the gitignored `.gneauxghts-signing.local.json` (`{"identity":"<certificate fingerprint>"}`),
+unless explicit signing credentials or `--no-sign` are supplied. A stable
+certificate lets Keychain recognize subsequent builds; ad-hoc builds can request
+credential access again after each rebuild. Reinstalling the app retains its
+saved settings and Keychain credentials.
+
+For notarized distribution, use `pnpm release:mac` with explicit Developer ID
+signing and notarization credentials. That command does not use the local
+development certificate.
+
 Development and test builds use packed debugging symbols. On macOS this keeps
 full debug information in `.dSYM` bundles instead of leaving new loose object
 files in `target/debug/deps` after every incremental rebuild. Incremental

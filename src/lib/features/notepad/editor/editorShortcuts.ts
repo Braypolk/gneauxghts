@@ -34,6 +34,7 @@ import { Prec, Transaction, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { indentOnInput } from '@codemirror/language';
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
+import { continueLetterList, deleteLetterListMarkup } from './letterListCommands';
 import { createSelectionSurroundExtension } from './selectionSurround';
 import {
   deleteCurrentBlock,
@@ -56,6 +57,7 @@ import {
 import type { EditorController } from './types';
 
 export function markdownEnter(view: EditorView): boolean {
+  if (continueLetterList(view)) return true;
   const selection = view.state.selection.main;
   if (selection.empty) {
     const line = view.state.doc.lineAt(selection.head);
@@ -80,7 +82,10 @@ export function markdownEnter(view: EditorView): boolean {
   return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
-const markdownEditingKeymap = [{ key: 'Enter', run: markdownEnter }];
+const markdownEditingKeymap = [
+  { key: 'Enter', run: markdownEnter },
+  { key: 'Backspace', run: deleteLetterListMarkup }
+];
 
 export function createMarkdownBaseExtensions(): Extension[] {
   return [

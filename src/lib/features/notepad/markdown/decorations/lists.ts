@@ -9,7 +9,7 @@ import type { MarkdownNodeDecorator } from './types';
 // up/down geometry is preserved and the ArrowUp/Down keymap exclusion can be
 // dropped.
 
-const TASK_MARKER_RE = /^(\s*(?:[-*+]|\d+\.)\s*)\[([ xX])\]/;
+const TASK_MARKER_RE = /^(\s*(?:[-*+]|\d+\.|[a-z]{1,3}\.)\s*)\[([ xX])\]/;
 
 // Markdown stores list nesting as leading whitespace. The editor renders that
 // nesting as line padding, so exposing the whitespace as ordinary text would
@@ -121,7 +121,7 @@ export const decorateList: MarkdownNodeDecorator = (ctx, node) => {
 
       const lineClass = isTask
         ? 'cm-gn-task-line'
-        : listType === 'OrderedList'
+        : (listType === 'OrderedList' || listType === 'LetterList')
           ? 'cm-gn-list-line-ol'
           : 'cm-gn-list-line-ul';
 
@@ -145,7 +145,7 @@ export const decorateList: MarkdownNodeDecorator = (ctx, node) => {
       const listType = node.node.parent?.parent?.name;
       const isTask = TASK_MARKER_RE.test(line.text);
       const markClass =
-        listType === 'OrderedList'
+        (listType === 'OrderedList' || listType === 'LetterList')
           ? 'cm-gn-list-mark-ol'
           : 'cm-gn-list-mark-ul';
       const activeSuffix = active ? ' cm-gn-active' : '';

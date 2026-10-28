@@ -1,6 +1,34 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { signMacExecutable, withMacDevelopmentSigning } from '../../scripts/signMacExecutable.mjs';
+import { macSigningEnvironment, signMacExecutable, withMacDevelopmentSigning } from '../../scripts/signMacExecutable.mjs';
+
+test('local release builds and bundles pass the configured stable identity to Tauri', () => {
+  const env = { PATH: '/usr/bin' };
+  for (const command of ['dev', 'build', 'bundle']) {
+    const actual = macSigningEnvironment([command], env, { platform: 'darwin', localIdentity: () => 'Local certificate' });
+    assert.deepEqual(actual, { ...env, APPLE_SIGNING_IDENTITY: 'Local certificate' });
+  }
+  assert.deepEqual(env, { PATH: '/usr/bin' });
+});
+
+test('distribution credentials and explicit unsigned builds never inherit the local certificate', () => {
+  const localIdentity = () => { throw new Error('must not read local configuration'); };
+  const options = { platform: 'darwin', localIdentity };
+  for (const env of [
+    { APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example' },
+    { APPLE_CERTIFICATE: 'exported-certificate' },
+    { GNEAUXGHTS_REQUIRE_NOTARIZATION: '1' }
+  ]) {
+    assert.equal(macSigningEnvironment(['build'], env, options), env);
+    assert.equal(macSigningEnvironment(['bundle'], env, options), env);
+  }
+  const env = {};
+  for (const args of [['build', '--no-sign'], ['build', '--help'], ['build', '-h'], ['ios', 'build']]) {
+    assert.equal(macSigningEnvironment(args, env, options), env);
+  }
+  assert.equal(macSigningEnvironment(['build'], env, { platform: 'linux', localIdentity }), env);
+  assert.equal(macSigningEnvironment(['build'], env, { platform: 'darwin', localIdentity: () => undefined }), env);
+});
 
 test('native builds sign and verify the final executable using a stable certificate identity', () => {
   const calls = [];

@@ -61,6 +61,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.5
         version: 1.2.5
+      '@lezer/markdown':
+        specifier: 1.8.1
+        version: 1.8.1(patch_hash=9a8a73878252c282d6aeb96e5a3aeffe65628ef96b357025cda1941716ae443b)
       '@lucide/svelte':
         specifier: ^1.60.0
         version: 1.60.0(svelte@5.57.2)
