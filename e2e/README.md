@@ -82,6 +82,17 @@ The native command first runs the shared TypeScript and Rust timeline-contract f
 
 Keep this suite focused. Add native cases only for behavior that depends on real window state, filesystem persistence, OS events, restart durability, or Tauri plugins.
 
+### Watcher recovery
+
+`watcher-recovery.spec.ts` starts with a registration-failure marker in its owned
+disposable vault. The `e2e-wdio` build alone recognizes that marker and uses a
+one-second scan/retry minimum with a four-second retry cap. Removing the marker
+restores actual OS registration. The spec exercises real scans, Note Timeline,
+task projection, clean-editor adoption, dirty conflicts, rename/deletion, staged
+vault isolation, recovered OS notifications and clean-close joining. Production
+builds omit injection and retain 15-second fallback scans and 15-to-300-second
+retry backoff; this test does not simulate actual OS resource exhaustion.
+
 ### Giant quoted paragraphs
 
 After building the native artifact, run the parser-patch regression against

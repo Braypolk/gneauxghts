@@ -3,9 +3,10 @@ import { expect, it } from 'vitest';
 import type { WatcherHealth } from '#lib/types/vault.js';
 import WatcherHealthPanel from './WatcherHealthPanel.svelte';
 
-function panel(status: WatcherHealth['status'], reason: WatcherHealth['reason'] = null) {
+function panel(status: WatcherHealth['status'], reason: WatcherHealth['reason'] = null,
+  reconciliationRunning = status === 'watching' || status === 'degraded') {
   return render(WatcherHealthPanel, { props: {
-    health: { revision: 2, status, reason, reconciliationRunning: status === 'watching' || status === 'degraded' }
+    health: { revision: 2, status, reason, reconciliationRunning }
   } }).body;
 }
 
@@ -20,6 +21,16 @@ it('distinguishes startup failure from degraded watching with continuing scans',
   expect(degraded).toContain('Periodic scans remain active');
   expect(degraded).toContain('warning stays visible until restart');
   expect(degraded).not.toContain('<button');
+});
+
+it('explains fallback scanning and automatic registration recovery without promising inaccessible reads', () => {
+  const fallback = panel('unavailable', 'watchLimit', true);
+  expect(fallback).toContain('every 15 seconds when the vault is accessible');
+  expect(fallback).toContain('File watching retries automatically');
+  expect(fallback).toContain('up to five minutes between attempts');
+  expect(fallback).toContain('startup warning clears when file watching starts successfully');
+  expect(fallback).not.toContain('Periodic scans are not running');
+  expect(fallback).not.toContain('warning stays visible until restart');
 });
 
 it('provides permission guidance and labels health as applying to the Running Vault', () => {

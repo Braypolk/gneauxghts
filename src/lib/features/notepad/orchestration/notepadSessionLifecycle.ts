@@ -92,6 +92,9 @@ export function createNotepadSessionLifecycle(
       try {
         await deps.ensurePaneEditors();
         if (!current()) return;
+        // Listen before reading disk: changes during the read are coalesced by
+        // the refresh owner, and focus/pending navigation must not delay admission.
+        unsubscribeVault = appStore.subscribeVaultNoteChanged(deps.onVaultNoteChanged);
         await deps.refreshCurrentNote();
         if (!current()) return;
         deps.scheduleRelated({ immediate: true });
@@ -129,11 +132,6 @@ export function createNotepadSessionLifecycle(
           });
           if (current() && initialFocus.isCurrent()) deps.focusNavigationPane();
         }
-        if (!current()) return;
-        const unsubscribe = appStore.subscribeVaultNoteChanged(
-          deps.onVaultNoteChanged
-        );
-        unsubscribeVault = () => unsubscribe();
       } catch (error) {
         console.error('Notepad init failed:', error);
       }

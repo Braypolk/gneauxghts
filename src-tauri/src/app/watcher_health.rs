@@ -51,18 +51,26 @@ pub(crate) struct WatcherHealthSnapshot {
 }
 
 pub(crate) struct WatcherHealth {
-    state: Mutex<WatcherHealthSnapshot>,
+    state: Mutex<HealthState>,
     events: EventBus,
+}
+
+struct HealthState {
+    snapshot: WatcherHealthSnapshot,
+    callback_failure: Option<WatcherFailure>,
 }
 
 impl WatcherHealth {
     pub(crate) fn new(events: EventBus) -> Self {
         Self {
-            state: Mutex::new(WatcherHealthSnapshot {
-                revision: 0,
-                status: WatcherStatus::Starting,
-                reason: None,
-                reconciliation_running: false,
+            state: Mutex::new(HealthState {
+                snapshot: WatcherHealthSnapshot {
+                    revision: 0,
+                    status: WatcherStatus::Starting,
+                    reason: None,
+                    reconciliation_running: false,
+                },
+                callback_failure: None,
             }),
             events,
         }
@@ -72,59 +80,76 @@ impl WatcherHealth {
         self.state
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+            .snapshot
             .clone()
     }
 
-    fn update(&self, change: impl FnOnce(&mut WatcherHealthSnapshot)) {
+    fn update(&self, change: impl FnOnce(&mut HealthState)) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.status == WatcherStatus::Stopped {
+        if state.snapshot.status == WatcherStatus::Stopped {
             return;
         }
-        let before = state.clone();
+        let before = state.snapshot.clone();
         change(&mut state);
-        if *state != before {
-            state.revision += 1;
+        if state.snapshot != before {
+            state.snapshot.revision += 1;
             // Serialize updates and emission together so callbacks cannot publish
             // older state after shutdown. IPC delivery itself is best effort.
-            self.events.watcher_health_changed(state.clone());
+            self.events.watcher_health_changed(state.snapshot.clone());
         }
     }
 
     pub(crate) fn started(&self) {
         self.update(|state| {
-            if state.status == WatcherStatus::Unavailable {
-                return;
-            }
-            state.status = if state.reason.is_some() {
+            state.snapshot.reason = state.callback_failure;
+            state.snapshot.status = if state.callback_failure.is_some() {
                 WatcherStatus::Degraded
             } else {
                 WatcherStatus::Watching
             };
-            state.reconciliation_running = true;
+            state.snapshot.reconciliation_running = true;
         });
+    }
+
+    pub(crate) fn reconciliation_started(&self) {
+        self.update(|state| state.snapshot.reconciliation_running = true);
     }
 
     pub(crate) fn startup_failed(&self, reason: WatcherFailure) {
         self.update(|state| {
+            let state = &mut state.snapshot;
             state.status = WatcherStatus::Unavailable;
             state.reason = Some(state.reason.map_or(reason, |previous| previous.max(reason)));
-            state.reconciliation_running = false;
+        });
+    }
+
+    pub(crate) fn workers_failed(&self) {
+        self.update(|state| {
+            state.snapshot.status = WatcherStatus::Unavailable;
+            state.snapshot.reason = Some(state.snapshot.reason.unwrap_or(WatcherFailure::Other));
+            state.snapshot.reconciliation_running = false;
         });
     }
 
     pub(crate) fn callback_failed(&self, error: &notify::Error) {
         self.update(|state| {
-            if state.status == WatcherStatus::Unavailable {
-                return;
-            }
             let reason = WatcherFailure::from_notify(error);
+            state.callback_failure = Some(
+                state
+                    .callback_failure
+                    .map_or(reason, |previous| previous.max(reason)),
+            );
+            let state = &mut state.snapshot;
             state.reason = Some(state.reason.map_or(reason, |previous| previous.max(reason)));
-            state.status = WatcherStatus::Degraded;
+            if state.status != WatcherStatus::Unavailable {
+                state.status = WatcherStatus::Degraded;
+            }
         });
     }
 
     pub(crate) fn stop(&self) {
         self.update(|state| {
+            let state = &mut state.snapshot;
             state.status = WatcherStatus::Stopped;
             state.reconciliation_running = false;
         });
@@ -140,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_failures_are_safe_retained_and_never_claim_reconciliation() {
+    fn startup_failures_are_safe_and_clear_only_after_successful_registration() {
         for (error, reason) in [
             (
                 notify::Error::new(notify::ErrorKind::MaxFilesWatch),
@@ -165,8 +190,23 @@ mod tests {
                 .unwrap()
                 .contains("private"));
             health.started();
-            assert_eq!(health.snapshot(), snapshot);
+            assert_eq!(health.snapshot().status, WatcherStatus::Watching);
+            assert_eq!(health.snapshot().reason, None);
         }
+    }
+
+    #[test]
+    fn failed_registration_keeps_scans_and_recovery_retains_only_callback_warnings() {
+        let health = health();
+        health.reconciliation_started();
+        health.startup_failed(WatcherFailure::WatchLimit);
+        assert!(health.snapshot().reconciliation_running);
+        health.callback_failed(&notify::Error::generic("callback during registration"));
+        health.started();
+        assert_eq!(health.snapshot().status, WatcherStatus::Degraded);
+        assert_eq!(health.snapshot().reason, Some(WatcherFailure::Other));
+        health.workers_failed();
+        assert!(!health.snapshot().reconciliation_running);
     }
 
     #[test]
@@ -214,6 +254,8 @@ mod tests {
             health.started();
             health.callback_failed(&notify::Error::generic("late"));
             health.startup_failed(WatcherFailure::Other);
+            health.reconciliation_started();
+            health.workers_failed();
             health.stop();
             assert_eq!(health.snapshot(), stopped);
             assert_eq!(stopped.status, WatcherStatus::Stopped);

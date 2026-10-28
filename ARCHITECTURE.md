@@ -59,7 +59,7 @@ concrete state references, independently of Tauri dispatch.
 | Next-launch semantic recovery | Vault-local `semantic-provider.json` stages Gemma or retained Jina; composition selects one provider on launch |
 | Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
 | Next-launch vault selection | The atomically published vault configuration preference; Settings Apply stages it without rebinding running resources |
-| Running Vault watcher diagnostics | `AppState.watcher_health` retains bounded, revisioned health; the existing watcher/lifecycle report startup, callback and terminal shutdown transitions; AppStore admits snapshots/events for Vault Settings |
+| Running Vault watching and recovery | `VaultWatcherHandle` owns debounce and the reconciliation worker; that worker retains one OS watcher, scans through registration failure and retries with bounded backoff. `AppState.watcher_health` retains revisioned health; AppStore admits snapshots/events for Vault Settings |
 
 Compact pane rails derive their geometry from measured workspace space and
 WorkspaceStore's active pane. They retain editor/chat mounts and share the

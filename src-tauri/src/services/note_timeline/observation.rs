@@ -254,22 +254,32 @@ impl<'a> NoteTimeline<'a> {
                         &path,
                     )?);
                 if let Some(note_id) = note_id {
-                    self.finalize_editor_capture(&note_id)?;
-                    self.state.detach_indexed_note_identity(&path)?;
-                    let retention_days = missing_retention_days.ok_or_else(|| {
-                        "Missing Note observation has no captured retention setting".to_string()
-                    })?;
-                    let missing_record = MissingNoteRecord::captured(
-                        note_id.clone(),
-                        path.clone(),
-                        observed_at_millis,
-                        retention_days,
-                    );
-                    history_store::record_observed_missing_lifecycle_event(
-                        &self.runtime.store,
-                        &missing_record,
-                    )?;
-                    lifecycle_projection_warning = self.synchronize_missing_projection(&path);
+                    // A preceding canonical observation may already have moved
+                    // this identity. The catalog can still retain the old path
+                    // until the enclosing scan commits its projections. Its
+                    // absence cannot mark the now-relocated note missing.
+                    let current_path = history_store::current_path(&self.runtime.store, &note_id)?;
+                    if current_path
+                        .as_deref()
+                        .is_none_or(|current| current == path)
+                    {
+                        self.finalize_editor_capture(&note_id)?;
+                        self.state.detach_indexed_note_identity(&path)?;
+                        let retention_days = missing_retention_days.ok_or_else(|| {
+                            "Missing Note observation has no captured retention setting".to_string()
+                        })?;
+                        let missing_record = MissingNoteRecord::captured(
+                            note_id.clone(),
+                            path.clone(),
+                            observed_at_millis,
+                            retention_days,
+                        );
+                        history_store::record_observed_missing_lifecycle_event(
+                            &self.runtime.store,
+                            &missing_record,
+                        )?;
+                        lifecycle_projection_warning = self.synchronize_missing_projection(&path);
+                    }
                 }
             }
             VaultObservationKind::CanonicalState => {

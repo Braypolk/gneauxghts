@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -50,6 +50,12 @@ export const config: TestrunnerConfig = {
         async prepare(resolvedConfig: TestrunnerConfig) {
           admitNativePresentation(resolvedConfig.specs ?? []);
           nativeE2EBinary(profile, application);
+          if (JSON.stringify(resolvedConfig.specs).includes('watcher-recovery.spec.ts')) {
+            assert(ownedFixture, 'Watcher failure injection requires a disposable fixture');
+            mkdirSync(join(vaultRoot, '.gneauxghts'), { recursive: true });
+            writeFileSync(join(vaultRoot, '.gneauxghts/e2e-watch-unavailable'), 'registration failure');
+            process.env.GNEAUXGHTS_E2E_WATCHER_RECOVERY = '1';
+          }
           await startVite(optimized ? 'native-preview' : 'native', ports.dev);
         },
         async stopRestartedApp() {

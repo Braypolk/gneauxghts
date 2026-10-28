@@ -7,7 +7,7 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
-- [Watcher health, 2026-10-27](archive/watcher-health-2026-10-27.md): retained startup/callback diagnostics in Vault Settings, truthful periodic-scan status, restart-retained warnings and stale-update/shutdown guards. Retry and fallback scanning remain separate work.
+- [Watcher recovery, 2026-10-28](archive/watcher-recovery-2026-10-28.md): automatic registration retries, fallback scans, editor notifications, retained rename/history identity and safe stop/join. Extends the [earlier status-only work](archive/watcher-health-2026-10-27.md); native recovery passed three consecutive final runs.
 
 - [Chat activity indicators](archive/chat-activity-indicators-2026-10-23.md): running and unread dots on the chat switcher, history button and conversation rows, with persistent read acknowledgement and browser regression coverage.
 

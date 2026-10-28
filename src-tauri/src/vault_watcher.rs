@@ -291,7 +291,6 @@ impl DirtyQueue {
 
 pub(crate) struct VaultWatcherHandle {
     health: std::sync::Arc<WatcherHealth>,
-    watcher: Option<RecommendedWatcher>,
     queue: std::sync::Arc<DirtyQueue>,
     debounce: Option<thread::JoinHandle<()>>,
     reconcile: Option<thread::JoinHandle<()>>,
@@ -300,7 +299,6 @@ pub(crate) struct VaultWatcherHandle {
 impl VaultWatcherHandle {
     pub(crate) fn stop_and_join(&mut self) -> Result<(), String> {
         self.health.stop();
-        self.watcher.take();
         self.queue.stop();
         let mut first_error = None;
         for (name, handle) in [
@@ -319,6 +317,12 @@ impl VaultWatcherHandle {
     }
 }
 
+impl Drop for VaultWatcherHandle {
+    fn drop(&mut self) {
+        let _ = self.stop_and_join();
+    }
+}
+
 pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherHandle, String> {
     let state = app_handle
         .try_state::<AppState>()
@@ -327,9 +331,8 @@ pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherH
     let notes_dir = state.running_vault().root().to_path_buf();
     drop(state);
     let result = start_vault_watcher_inner(app_handle, notes_dir, health.clone());
-    match &result {
-        Ok(_) => health.started(),
-        Err(_) => health.startup_failed(WatcherFailure::Other),
+    if result.is_err() {
+        health.workers_failed();
     }
     result
 }
@@ -339,15 +342,40 @@ fn start_vault_watcher_inner(
     notes_dir: PathBuf,
     health: std::sync::Arc<WatcherHealth>,
 ) -> Result<VaultWatcherHandle, String> {
-    fs::create_dir_all(&notes_dir).map_err(|err| {
-        health.startup_failed(WatcherFailure::from_io(&err));
-        err.to_string()
-    })?;
-
     let queue = std::sync::Arc::new(DirtyQueue::new());
+    let debounce = spawn_debounce_flush_loop(app_handle.clone(), queue.clone(), notes_dir.clone())?;
+    let reconcile =
+        match spawn_background_reconcile_loop(app_handle, queue.clone(), notes_dir, health.clone())
+        {
+            Ok(reconcile) => reconcile,
+            Err(error) => {
+                queue.stop();
+                let _ = debounce.join();
+                return Err(error);
+            }
+        };
+    Ok(VaultWatcherHandle {
+        health,
+        queue,
+        debounce: Some(debounce),
+        reconcile: Some(reconcile),
+    })
+}
 
+fn register_watcher(
+    notes_dir: &Path,
+    queue: &std::sync::Arc<DirtyQueue>,
+    health: &std::sync::Arc<WatcherHealth>,
+) -> Result<RecommendedWatcher, WatcherFailure> {
+    fs::create_dir_all(notes_dir).map_err(|err| WatcherFailure::from_io(&err))?;
+    // Test-only failure injection, scoped to the disposable Running Vault. The
+    // ordinary binary has neither the marker check nor accelerated scheduling.
+    #[cfg(feature = "e2e-wdio")]
+    if recovery_fixture() && notes_dir.join(".gneauxghts/e2e-watch-unavailable").exists() {
+        return Err(WatcherFailure::WatchLimit);
+    }
     let callback_queue = queue.clone();
-    let callback_notes_dir = notes_dir.clone();
+    let callback_notes_dir = notes_dir.to_path_buf();
     let callback_health = health.clone();
     let mut watcher = RecommendedWatcher::new(
         move |result| {
@@ -360,34 +388,11 @@ fn start_vault_watcher_inner(
         },
         NotifyConfig::default(),
     )
-    .map_err(|err| {
-        health.startup_failed(WatcherFailure::from_notify(&err));
-        err.to_string()
-    })?;
+    .map_err(|err| WatcherFailure::from_notify(&err))?;
     watcher
         .watch(&notes_dir, RecursiveMode::Recursive)
-        .map_err(|err| {
-            health.startup_failed(WatcherFailure::from_notify(&err));
-            err.to_string()
-        })?;
-
-    let debounce = spawn_debounce_flush_loop(app_handle.clone(), queue.clone(), notes_dir.clone())?;
-    let reconcile = match spawn_background_reconcile_loop(app_handle, queue.clone(), notes_dir) {
-        Ok(reconcile) => reconcile,
-        Err(error) => {
-            queue.stop();
-            drop(watcher);
-            let _ = debounce.join();
-            return Err(error);
-        }
-    };
-    Ok(VaultWatcherHandle {
-        health,
-        watcher: Some(watcher),
-        queue,
-        debounce: Some(debounce),
-        reconcile: Some(reconcile),
-    })
+        .map_err(|err| WatcherFailure::from_notify(&err))?;
+    Ok(watcher)
 }
 
 /// Watcher callback: cheap. Filter events and record dirty paths only; all
@@ -741,10 +746,11 @@ fn reconciliation_observations(
 }
 
 fn observe_reconciliation_state(
-    state: &tauri::State<'_, AppState>,
+    state: &AppState,
     notes_dir: &Path,
     known_paths: &[PathBuf],
     present_paths: &HashSet<PathBuf>,
+    pending: &mut HashMap<PathBuf, bool>,
 ) -> Result<(), String> {
     let observed_at_millis = current_time_millis()?;
     let timeline = state.note_timeline();
@@ -766,6 +772,8 @@ fn observe_reconciliation_state(
             (path, modified_at_millis)
         })
         .collect::<Vec<_>>();
+    // Capture each difference before its observation changes the catalog. Keep
+    // only pending paths across failures, never the whole vault's note bytes.
     for mut observation in
         reconciliation_observations(known_paths, present_paths, observed_at_millis)
     {
@@ -776,10 +784,138 @@ fn observe_reconciliation_state(
                     observation.path().display()
                 )
             })?;
+            if state
+                .indexed_note_content_hash(observation.path())
+                .as_deref()
+                != Some(content_hash(&markdown).as_str())
+            {
+                pending.insert(observation.path().to_path_buf(), false);
+            }
             observation = observation.with_canonical_markdown(markdown);
+        } else {
+            pending.insert(observation.path().to_path_buf(), true);
         }
         observe_timeline(&timeline, observation);
     }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct RecoverySchedule {
+    scan_interval: Duration,
+    retry_max: Duration,
+}
+
+impl RecoverySchedule {
+    fn production() -> Self {
+        Self {
+            scan_interval: RECONCILE_INTERVAL_MIN,
+            retry_max: RECONCILE_INTERVAL_MAX,
+        }
+    }
+}
+
+#[cfg(feature = "e2e-wdio")]
+fn recovery_fixture() -> bool {
+    std::env::var("GNEAUXGHTS_E2E_WATCHER_RECOVERY").as_deref() == Ok("1")
+}
+
+// The same worker owns registration, bounded retries and scanning. No retry can
+// overlap another registration or survive the handle's stop/join boundary.
+fn run_reconcile_loop<W>(
+    queue: &DirtyQueue,
+    health: &WatcherHealth,
+    schedule: RecoverySchedule,
+    mut register: impl FnMut() -> Result<W, WatcherFailure>,
+    mut reconcile: impl FnMut(),
+) {
+    health.reconciliation_started();
+    let mut watcher = None;
+    let mut retry_at = Instant::now();
+    let mut retry_delay = schedule.scan_interval;
+    let mut first_pass = true;
+    while queue.wait_for_reconcile(Duration::ZERO) {
+        if watcher.is_none() && Instant::now() >= retry_at {
+            match register() {
+                Ok(registered) => {
+                    watcher = Some(registered);
+                    health.started();
+                }
+                Err(reason) => {
+                    health.startup_failed(reason);
+                    retry_at = Instant::now() + retry_delay;
+                    retry_delay = (retry_delay * 2).min(schedule.retry_max);
+                }
+            }
+        }
+        if !queue.wait_for_reconcile(Duration::ZERO) {
+            break;
+        }
+        // Successful ordinary startup retains the lightweight prewarm path.
+        // Failed startup scans immediately; later recovery scans catch the gap.
+        if !first_pass || watcher.is_none() {
+            reconcile();
+        }
+        first_pass = false;
+        let interval = if watcher.is_none() {
+            schedule
+                .scan_interval
+                .min(retry_at.saturating_duration_since(Instant::now()))
+        } else {
+            next_reconcile_interval(queue.last_activity())
+        };
+        if !queue.wait_for_reconcile(interval) {
+            break;
+        }
+    }
+}
+
+fn reconcile_vault(
+    state: &AppState,
+    notes_dir: &Path,
+    pending: &mut HashMap<PathBuf, bool>,
+) -> Result<(), String> {
+    if !notes_dir.exists() {
+        return Ok(());
+    }
+    state.semantic.queue_image_reconciliation()?;
+    state.reconcile_full_vault_scan_observing(notes_dir, |known_paths, present_paths| {
+        for (path, deleted) in pending.iter_mut() {
+            *deleted = !present_paths.contains(path);
+        }
+        observe_reconciliation_state(state, notes_dir, known_paths, present_paths, pending)
+    })?;
+    // Scans previously refreshed only backend projections. Recovered changes
+    // must also enter the existing clean-adopt/dirty-conflict frontend path.
+    // Retain notifications across a failed projection commit: observation may
+    // already have detached a missing path or transferred its identity.
+    let mut published = Vec::new();
+    for (path, deleted) in pending.iter() {
+        let deleted = *deleted;
+        let semantic_result = if deleted {
+            state.semantic.queue_delete_note(&path)
+        } else {
+            fs::read_to_string(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|markdown| {
+                    state
+                        .semantic
+                        .queue_note_update(&path, markdown, current_time_millis()?)
+                })
+        };
+        if let Err(error) = semantic_result {
+            eprintln!("Reconciled semantic update failed: {error}");
+        } else {
+            published.push(path.clone());
+        }
+        state.events.vault_note_changed(&path, deleted);
+    }
+    for path in published {
+        pending.remove(&path);
+    }
+    state
+        .note_timeline()
+        .compact_history_storage(BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES)?;
     Ok(())
 }
 
@@ -793,38 +929,35 @@ fn spawn_background_reconcile_loop(
     app_handle: AppHandle,
     queue: std::sync::Arc<DirtyQueue>,
     notes_dir: PathBuf,
+    health: std::sync::Arc<WatcherHealth>,
 ) -> Result<thread::JoinHandle<()>, String> {
+    let schedule = RecoverySchedule::production();
+    #[cfg(feature = "e2e-wdio")]
+    let schedule = if recovery_fixture() {
+        RecoverySchedule {
+            scan_interval: Duration::from_secs(1),
+            retry_max: Duration::from_secs(4),
+        }
+    } else {
+        schedule
+    };
     thread::Builder::new()
         .name("vault-reconciliation".to_string())
-        .spawn(move || loop {
-            if !queue.wait_for_reconcile(next_reconcile_interval(queue.last_activity())) {
-                return;
-            }
-            let Some(state) = app_handle.try_state::<crate::index::AppState>() else {
-                continue;
-            };
-            if !notes_dir.exists() {
-                continue;
-            }
-            if let Err(error) = state.semantic.queue_image_reconciliation() {
-                eprintln!("Image reconciliation admission failed: {error}");
-            }
-            match state.reconcile_full_vault_scan_observing(
-                &notes_dir,
-                |known_paths, present_paths| {
-                    observe_reconciliation_state(&state, &notes_dir, known_paths, present_paths)
-                },
-            ) {
-                Err(error) => eprintln!("vault reconcile error: {error}"),
-                Ok(_) => {
-                    if let Err(error) = state
-                        .note_timeline()
-                        .compact_history_storage(BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES)
-                    {
-                        eprintln!("Note Timeline background compaction error: {error}");
+        .spawn(move || {
+            let mut pending = HashMap::new();
+            run_reconcile_loop(
+                &queue,
+                &health,
+                schedule,
+                || register_watcher(&notes_dir, &queue, &health),
+                || {
+                    if let Some(state) = app_handle.try_state::<AppState>() {
+                        if let Err(error) = reconcile_vault(&state, &notes_dir, &mut pending) {
+                            eprintln!("vault reconcile error: {error}");
+                        }
                     }
-                }
-            }
+                },
+            );
         })
         .map_err(|error| error.to_string())
 }
@@ -904,6 +1037,196 @@ mod tests {
         path::{Path, PathBuf},
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn recovery_scans_between_bounded_retries_and_joins_the_only_registered_watcher() {
+        use crate::app::watcher_health::{WatcherFailure, WatcherHealth, WatcherStatus};
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        };
+        struct Registered(Arc<AtomicBool>);
+        impl Drop for Registered {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let queue = Arc::new(DirtyQueue::new());
+        let health = Arc::new(WatcherHealth::new(EventBus::disabled()));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let worker_queue = queue.clone();
+        let worker_health = health.clone();
+        let watcher_dropped = dropped.clone();
+        let worker = std::thread::spawn(move || {
+            let mut attempts = Vec::new();
+            super::run_reconcile_loop(
+                &worker_queue,
+                &worker_health,
+                super::RecoverySchedule {
+                    scan_interval: Duration::from_millis(20),
+                    retry_max: Duration::from_millis(40),
+                },
+                || {
+                    attempts.push(Instant::now());
+                    if attempts.len() < 4 {
+                        Err(WatcherFailure::WatchLimit)
+                    } else {
+                        Ok(Registered(watcher_dropped.clone()))
+                    }
+                },
+                || {
+                    tx.send(worker_health.snapshot()).unwrap();
+                },
+            );
+            attempts
+        });
+        let mut snapshots = Vec::new();
+        loop {
+            let snapshot = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("recovery worker made progress");
+            let recovered = snapshot.status == WatcherStatus::Watching;
+            snapshots.push(snapshot);
+            if recovered {
+                break;
+            }
+        }
+        health.stop();
+        queue.stop();
+        let attempts = worker.join().unwrap();
+        assert_eq!(attempts.len(), 4);
+        assert!(attempts[1].duration_since(attempts[0]) >= Duration::from_millis(20));
+        assert!(attempts[2].duration_since(attempts[1]) >= Duration::from_millis(40));
+        assert!(attempts[3].duration_since(attempts[2]) >= Duration::from_millis(40));
+        assert!(
+            snapshots.len() > attempts.len(),
+            "fallback scans continue between retries"
+        );
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| snapshot.reconciliation_running));
+        assert!(snapshots
+            .iter()
+            .any(|snapshot| snapshot.status == WatcherStatus::Unavailable));
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(health.snapshot().status, WatcherStatus::Stopped);
+    }
+
+    #[test]
+    fn stopped_recovery_never_registers_or_scans() {
+        let health = crate::app::watcher_health::WatcherHealth::new(EventBus::disabled());
+        let queue = DirtyQueue::new();
+        health.stop();
+        queue.stop();
+        super::run_reconcile_loop::<()>(
+            &queue,
+            &health,
+            super::RecoverySchedule::production(),
+            || panic!("registration after stop"),
+            || panic!("scan after stop"),
+        );
+        assert!(!health.snapshot().reconciliation_running);
+    }
+
+    #[test]
+    fn shutdown_during_registration_retires_the_late_watcher_before_any_scan() {
+        use std::sync::{mpsc, Arc};
+        let queue = Arc::new(DirtyQueue::new());
+        let health = Arc::new(crate::app::watcher_health::WatcherHealth::new(
+            EventBus::disabled(),
+        ));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker_queue = queue.clone();
+        let worker_health = health.clone();
+        let worker = std::thread::spawn(move || {
+            super::run_reconcile_loop(
+                &worker_queue,
+                &worker_health,
+                super::RecoverySchedule::production(),
+                || {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    Ok(())
+                },
+                || panic!("scan after stopped registration"),
+            )
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        health.stop();
+        queue.stop();
+        let stopped = health.snapshot();
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(health.snapshot(), stopped);
+    }
+
+    #[test]
+    fn fallback_reconciliation_catches_edits_renames_and_deletes_without_forking_history() {
+        let vault = crate::test_support::TestVault::new("watcher-fallback");
+        let mut pending = std::collections::HashMap::new();
+        let note = crate::test_support::save_and_finalize(
+            &vault.state,
+            "Fallback".into(),
+            "Before external edit".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let path = PathBuf::from(note.path.unwrap());
+        let id = note.note_id.unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            raw.replace("Before external edit", "- [ ] Recovered external task"),
+        )
+        .unwrap();
+        super::reconcile_vault(&vault.state, vault.notes.path(), &mut pending).unwrap();
+        assert_eq!(
+            reconstructed_revision_bodies_for_test(&vault.state, &id).unwrap(),
+            vec!["Before external edit", "- [ ] Recovered external task"]
+        );
+        let moved = vault.notes.path().join("Renamed.md");
+        std::fs::rename(&path, &moved).unwrap();
+        super::reconcile_vault(&vault.state, vault.notes.path(), &mut pending).unwrap();
+        assert_eq!(
+            vault.state.indexed_note_identity(&moved).unwrap(),
+            Some(id.clone())
+        );
+        assert_eq!(vault.state.indexed_note_identity(&path).unwrap(), None);
+        assert!(
+            vault
+                .state
+                .note_timeline()
+                .missing_notes()
+                .unwrap()
+                .is_empty(),
+            "a reconciled rename must not mark the relocated identity missing"
+        );
+        assert_eq!(
+            reconstructed_revision_bodies_for_test(&vault.state, &id).unwrap(),
+            vec!["Before external edit", "- [ ] Recovered external task"]
+        );
+        std::fs::remove_file(&moved).unwrap();
+        super::reconcile_vault(&vault.state, vault.notes.path(), &mut pending).unwrap();
+        assert_eq!(vault.state.indexed_note_identity(&moved).unwrap(), None);
+        super::reconcile_vault(&vault.state, vault.notes.path(), &mut pending).unwrap();
+        let missing = vault.state.note_timeline().missing_notes().unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].note_id().as_str(), id);
+        vault
+            .state
+            .note_timeline()
+            .recover_missing_note(crate::services::note_timeline::NoteIdentity::new(
+                id.clone(),
+            ))
+            .unwrap();
+        assert_eq!(
+            reconstructed_revision_bodies_for_test(&vault.state, &id).unwrap(),
+            vec!["Before external edit", "- [ ] Recovered external task"]
+        );
+    }
 
     #[test]
     fn callback_errors_retain_health_while_later_file_events_still_enter_the_queue() {

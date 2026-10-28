@@ -82,9 +82,45 @@ it.each(['ensurePaneEditors', 'refreshCurrentNote', 'openNote'] as const)('does 
   if (stage === 'openNote') mocks.taskTarget.mockReturnValue({ notePath: '/vault/note.md', noteId: 'note' });
   const unmount = createNotepadSessionLifecycle(d).mount(); await entered.promise;
   expect(d[stage]).toHaveBeenCalledOnce(); unmount(); pending.resolve(); await unmount.ready;
-  expect(d.focusNavigationPane).not.toHaveBeenCalled(); expect(mocks.subscribe).not.toHaveBeenCalled();
+  expect(d.focusNavigationPane).not.toHaveBeenCalled();
+  if (stage === 'ensurePaneEditors') expect(mocks.subscribe).not.toHaveBeenCalled();
+  else {
+    expect(mocks.subscribe).toHaveBeenCalledOnce();
+    expect(mocks.subscribe.mock.results[0].value).toHaveBeenCalledOnce();
+  }
   if (stage === 'ensurePaneEditors') expect(d.refreshCurrentNote).not.toHaveBeenCalled();
   if (stage === 'openNote') expect(d.navigateToTaskTarget).not.toHaveBeenCalled();
+});
+
+it('admits external changes during the initial disk read and delayed focus, and releases on unmount', async () => {
+  const reading = deferred<void>();
+  const entered = deferred<void>();
+  const frame = deferred<() => void>();
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { frame.resolve(callback); return 1; });
+  const listeners = new Set<NotepadSessionLifecycleDeps['onVaultNoteChanged']>();
+  mocks.subscribe.mockImplementation(listener => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  });
+  const change = { notePath: '/vault/note.md', deleted: false, source: null };
+  const emit = () => listeners.forEach(listener => listener(change));
+  const d = deps();
+  vi.mocked(d.refreshCurrentNote).mockImplementation(() => { entered.resolve(); return reading.promise; });
+  const unmount = createNotepadSessionLifecycle(d).mount();
+  await entered.promise;
+  emit();
+  expect(d.onVaultNoteChanged).toHaveBeenCalledWith(change);
+  reading.resolve();
+  const firstFrame = await frame.promise;
+  emit();
+  expect(d.onVaultNoteChanged).toHaveBeenCalledTimes(2);
+  unmount();
+  emit();
+  expect(d.onVaultNoteChanged).toHaveBeenCalledTimes(2);
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => { callback(); return 1; });
+  firstFrame();
+  await unmount.ready;
+  expect(d.focusNavigationPane).not.toHaveBeenCalled();
 });
 
 it.each(['ensurePaneEditors', 'refreshCurrentNote'] as const)('keeps newer search interaction focused when startup awaits %s', async stage => {

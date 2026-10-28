@@ -135,6 +135,11 @@ after a different Next-launch Vault Selection has been staged. Backend readiness
 does not itself mean the mounted editor has adopted the session, and obsolete
 mount work never applies to a later editor lifetime.
 
+The mounted notepad subscribes to external note changes before its initial disk
+refresh. The existing refresh owner coalesces changes during that read; pending
+navigation and focus frame waits cannot leave a delivery gap. Unmount releases
+the subscription even while startup is still awaiting those operations.
+
 Initial editor mount and note navigation reveal the new body only after Markdown
 formatting covers the restored viewport and its layout/scroll have settled.
 Loading keeps the editor measurable but hides its content. Parsing runs in
@@ -146,20 +151,46 @@ label appears only after 150 ms; its absence is not an editor readiness signal.
 ### File-watching health describes the Running Vault
 
 Vault Settings consumes retained native health through AppStore, including
-failures that preceded opening Settings. Startup failure means watching and
-periodic reconciliation did not start; a callback error after successful startup
-keeps periodic scanning active but does not establish reliable OS notifications.
+failures that preceded opening Settings. Failed OS watcher creation or recursive
+registration does not prevent the existing reconciliation worker from starting.
+It scans immediately and every 15 seconds while registration is unavailable,
+subject to scan duration and vault accessibility. The same worker retries
+registration after 15, 30, 60, 120, 240 and then at most 300 seconds between
+attempts. Retries cannot overlap. Worker/thread startup failure still means
+periodic reconciliation is unavailable; Settings distinguishes these states.
+
+Successful registration clears startup failure diagnostics, runs a catch-up scan
+and returns to the ordinary adaptive cadence. Successful ordinary startup retains
+the lightweight prewarm path rather than adding an immediate full scan.
+A callback error after successful startup keeps periodic scanning active but
+does not establish reliable OS notifications.
 Reasons are bounded, curated categories rather than filesystem paths or raw logs.
 Repeated errors do not flood health updates. A watch-capacity warning cannot be
 replaced by a less specific later error. Callback warnings remain until process
-restart; file events and successful scans do not prove watcher recovery.
+restart; file events and successful scans do not prove watcher recovery. A callback
+warning received during a failed registration remains after a later successful
+registration even though the startup failure itself clears.
+
+Changes found by scans enter Note Timeline through the existing reconciliation
+observations and refresh catalog/task/lexical and semantic projections. After
+catalog projection succeeds, the existing external-change events refresh open
+editors and derived views. Unchanged scans emit no note events. Notifications
+remain pending across failed projection commits; their present/missing state
+is refreshed by the next scan. Clean editors adopt disk content; dirty editors
+retain their edits and require the existing conflict choice.
+If a canonical observation has already relocated a Note Identity, an observation
+of its former path's absence cannot mark that relocated note missing merely
+because the catalog still contains the former binding during the same scan.
 
 Health belongs to the immutable Running Vault even when a different next-launch
 vault is staged. Native revisions order retained snapshots and events; older
 delivery cannot replace newer state. Terminal shutdown retires health admission
 before watcher teardown, including when registration has not produced a handle,
-so late startup/callback work cannot revive it. This diagnostic slice introduces
-no watcher retry, registration-failure fallback scanning or new service lifecycle.
+so late startup/callback work cannot revive it. The existing VaultWatcherHandle
+owns debounce and reconciliation, including its one OS watcher and retry waits.
+Stop interrupts waits and joins in-flight registration/scans before clean close;
+dropping an uninstalled handle also joins its workers. Recovery introduces no
+parallel service lifecycle or next-launch-vault binding.
 
 ### New Idea changes only the invoking pane
 

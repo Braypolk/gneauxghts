@@ -22,18 +22,24 @@
     {:else}
       <p class="font-medium">{health.status === 'unavailable' ? 'File watching could not start.' : 'File watching reported an error.'}</p>
       {#if health.reason === 'watchLimit'}
-        <p>The operating system’s file-watch limit was reached. Close other apps that watch many files, then restart Gneauxghts to try again.</p>
+        <p>The operating system’s file-watch limit was reached. Close other apps that watch many files to free capacity.</p>
       {:else if health.reason === 'permissionDenied'}
-        <p>The operating system denied access. Check that Gneauxghts can access the Running Vault, then restart the app to try again.</p>
-      {:else}
-        <p>Restart Gneauxghts to try file watching again.</p>
+        <p>The operating system denied access. Check that Gneauxghts can access the Running Vault.</p>
       {/if}
       {#if health.reconciliationRunning}
-        <p>Periodic scans remain active, but changes made outside the app may take longer to appear.</p>
+        {#if health.status === 'unavailable'}
+          <p>Periodic scans check for changes every 15 seconds when the vault is accessible. File watching retries automatically, with up to five minutes between attempts.</p>
+        {:else}
+          <p>Periodic scans remain active, but changes made outside the app may take longer to appear.</p>
+        {/if}
       {:else}
         <p>Periodic scans are not running. Changes made outside the app may not appear until you restart.</p>
       {/if}
-      <p>This warning stays visible until restart.</p>
+      {#if health.status === 'unavailable' && health.reconciliationRunning}
+        <p>The startup warning clears when file watching starts successfully.</p>
+      {:else if health.status === 'degraded'}
+        <p>This warning stays visible until restart. Restart Gneauxghts to try file watching again.</p>
+      {/if}
     {/if}
   </div>
 </section>
