@@ -119,7 +119,28 @@ export function createWikilinksExtension(config: WikilinkConfig) {
 
         constructor(readonly view: EditorView) {
           this.scheduleActiveWikilinkUpdate(view);
+          // Table widgets own their events, so use the capture phase to open
+          // rendered note links before a plain click activates the cell editor.
+          view.dom.addEventListener('click', this.openRenderedTableLink, true);
         }
+
+        private openRenderedTableLink = (event: MouseEvent) => {
+          const modifier = event.metaKey !== event.ctrlKey && !event.altKey && !event.shiftKey;
+          const touch = (event instanceof PointerEvent && (event.pointerType === 'touch' || event.pointerType === 'pen')) ||
+            window.matchMedia('(any-pointer: coarse)').matches;
+          const plainTouch = touch && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+          if (event.button !== 0 || (!modifier && !plainTouch)) return;
+          const target = event.target instanceof Element ? event.target : null;
+          const link = target?.closest<HTMLElement>('.gn-table .gn-wikilink');
+          if (!link || !this.view.dom.contains(link)) return;
+          const from = Number(link.dataset.wikilinkFrom), to = Number(link.dataset.wikilinkTo);
+          if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to > this.view.state.doc.length) return;
+          const source = getWikilinkAtPosition(this.view.state, from);
+          const rawTarget = source?.rawTarget.trim().replace(/\\\|/g, '|');
+          if (!source || source.to !== to || !rawTarget || rawTarget !== link.dataset.wikilinkTarget?.trim()) return;
+          event.preventDefault(); event.stopImmediatePropagation();
+          resolveCallbacks(this.view, config).onOpenLink(rawTarget);
+        };
 
         update(update: import('@codemirror/view').ViewUpdate) {
           if (update.docChanged || update.selectionSet) {
@@ -129,6 +150,7 @@ export function createWikilinksExtension(config: WikilinkConfig) {
 
         destroy() {
           this.#destroyed = true;
+          this.view.dom.removeEventListener('click', this.openRenderedTableLink, true);
           resolveCallbacks(this.view, config).onActiveWikilinkChange(null);
         }
 

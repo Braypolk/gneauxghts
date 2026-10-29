@@ -69,12 +69,14 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
+  resize: none;
+  overflow-wrap: anywhere;
   outline: 2px solid var(--ring);
   outline-offset: -2px;
   background: var(--background);
 }
 /* Auto table layout remains based on the rendered Markdown in both modes.
-   Native inputs have their own intrinsic width, so keep them out of sizing. */
+   Native editors have their own intrinsic width, so keep them out of sizing. */
 .cm-gn .gn-table-cell-preview[data-editing] { visibility: hidden; }
 .cm-gn .gn-table-cell-input[hidden] { display: none; }
 .cm-gn .gn-table-cell-preview code { border-radius: 0.2rem; background: var(--muted); padding: 0.1rem 0.2rem; font-family: var(--font-mono, monospace); font-size: 0.9em; }

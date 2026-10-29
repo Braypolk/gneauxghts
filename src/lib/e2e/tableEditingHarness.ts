@@ -16,7 +16,7 @@ export function verifyRetiredTableCellAfterStructuralChange() {
   const content = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content');
   const view = content && EditorView.findFromDOM(content);
   const input = document.activeElement;
-  if (!view || !(input instanceof HTMLInputElement) || !input.classList.contains('gn-table-cell-input')) throw new Error('Focus a table cell first');
+  if (!view || !(input instanceof HTMLTextAreaElement) || !input.classList.contains('gn-table-cell-input')) throw new Error('Focus a table cell first');
   const container = input.closest('.gn-table');
   container?.querySelector<HTMLButtonElement>('button[data-operation="addColumn"]')?.click();
   if (input.isConnected) throw new Error('Structural edit did not replace the old cell');
@@ -35,7 +35,7 @@ export function verifyTableCompositionRetirement() {
   const content = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content');
   const view = content && EditorView.findFromDOM(content);
   const input = document.activeElement;
-  if (!view || !(input instanceof HTMLInputElement) || !input.classList.contains('gn-table-cell-input')) throw new Error('Focus a table input before testing composition');
+  if (!view || !(input instanceof HTMLTextAreaElement) || !input.classList.contains('gn-table-cell-input')) throw new Error('Focus a table input before testing composition');
   input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
   input.value = 'stale preedit';
   input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));

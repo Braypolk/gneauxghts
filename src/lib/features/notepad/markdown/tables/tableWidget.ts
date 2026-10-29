@@ -1,16 +1,11 @@
 import { EditorView, WidgetType } from '@codemirror/view';
-import MarkdownIt from 'markdown-it';
 import { changeTable, editTableCell, type TableOperation } from './tableCommands';
 import { tableSourceEffect, type MarkdownTable, type TableCellLocation } from './tableModel';
 import { selectionMenuSetNativeTarget, selectionMenuClearNativeTarget } from '../../editor/selectionMenu';
 import type { NativeSelectionMenuTarget } from '../../editor/selectionMenuTarget';
 import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
-
-const inline = new MarkdownIt({ html: false, linkify: false, breaks: false });
-// Cell activation edits its Markdown. Keep previews passive, including images:
-// no remote asset loads or a second link navigation surface inside the button.
-inline.renderer.rules.link_open = inline.renderer.rules.link_close = () => '';
-inline.renderer.rules.image = (tokens: { content: string }[], index: number) => inline.utils.escapeHtml(tokens[index].content);
+import { renderTableCellPreview } from './tableCellPreview';
+import { setRenderedLinkEditor } from '../../editor/externalLinkExtension';
 
 interface MountedTable {
   view: EditorView;
@@ -20,11 +15,12 @@ interface MountedTable {
   grid: HTMLTableElement;
   toolbar: HTMLElement;
   status: HTMLElement;
-  composing: HTMLInputElement | null;
-  cancelledComposition: HTMLInputElement | null;
+  composing: HTMLTextAreaElement | null;
+  cancelledComposition: HTMLTextAreaElement | null;
   selectionTarget: NativeSelectionMenuTarget | null;
 }
 const mounted = new WeakMap<HTMLElement, MountedTable>();
+const editCellLink = new WeakMap<HTMLElement, (link: HTMLElement) => void>();
 
 export function focusTableCell(view: EditorView, location: TableCellLocation) {
   const container = [...view.dom.querySelectorAll<HTMLElement>('.gn-table')]
@@ -60,8 +56,8 @@ function makeCell(view: EditorView, container: HTMLElement, data: MountedTable, 
   preview.type = 'button'; preview.className = 'gn-table-cell-preview';
   preview.dataset.row = String(row); preview.dataset.column = String(column);
   preview.setAttribute('aria-label', `Edit ${row === 0 ? 'header' : 'row ' + (row + 1)}, column ${column + 1}`);
-  const input = document.createElement('input');
-  input.type = 'text'; input.className = 'gn-table-cell-input'; input.hidden = true;
+  const input = document.createElement('textarea');
+  input.rows = 1; input.className = 'gn-table-cell-input'; input.hidden = true;
   input.setAttribute('aria-label', `${row === 0 ? 'Header' : 'Row ' + (row + 1)}, column ${column + 1}`);
   input.autocomplete = 'off';
   const target: NativeSelectionMenuTarget = {
@@ -90,7 +86,7 @@ function makeCell(view: EditorView, container: HTMLElement, data: MountedTable, 
     if (mounted.get(container) !== data) return;
     data.active = { row, column }; updateToolbar(data);
     if (data.readOnly) return;
-    for (const other of data.grid.querySelectorAll<HTMLInputElement>('input')) if (other !== input) {
+    for (const other of data.grid.querySelectorAll<HTMLTextAreaElement>('.gn-table-cell-input')) if (other !== input) {
       other.hidden = true;
       other.previousElementSibling?.removeAttribute('data-editing');
       other.previousElementSibling?.removeAttribute('aria-hidden');
@@ -102,6 +98,15 @@ function makeCell(view: EditorView, container: HTMLElement, data: MountedTable, 
     input.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   };
   preview.onclick = event => { event.preventDefault(); event.stopPropagation(); activate(); };
+  // A touch link's Edit action must return to this cell, selecting the link's
+  // canonical source rather than placing a hidden cursor inside the table.
+  editCellLink.set(cell, link => {
+    const source = data.ref.rows[row]?.cells[column];
+    if (mounted.get(container) !== data || !source || !cell.contains(link) || data.readOnly) return;
+    activate(false);
+    input.setSelectionRange(Number(link.dataset.linkFrom) - source.from, Number(link.dataset.linkTo) - source.from);
+    syncSelectionMenu();
+  });
   input.onfocus = () => { data.active = { row, column }; updateToolbar(data); syncSelectionMenu(); };
   input.onselect = syncSelectionMenu;
   input.onpointerup = syncSelectionMenu;
@@ -230,10 +235,13 @@ export class MarkdownTableWidget extends WidgetType {
     data.active.row = Math.min(data.active.row, this.ref.rows.length - 1);
     data.active.column = Math.min(data.active.column, columns - 1);
     for (let row = 0; row < this.ref.rows.length; row++) for (let column = 0; column < columns; column++) {
-      const cell = data.grid.rows[row].cells[column], value = this.ref.rows[row].cells[column]?.value ?? '';
+      const cell = data.grid.rows[row].cells[column], source = this.ref.rows[row].cells[column], value = source?.value ?? '';
       cell.style.textAlign = this.ref.alignments[column];
-      const preview = cell.firstElementChild as HTMLButtonElement, input = cell.lastElementChild as HTMLInputElement;
-      preview.innerHTML = inline.renderInline(value) || '<span class="gn-table-empty">Empty</span>';
+      const preview = cell.firstElementChild as HTMLButtonElement, input = cell.lastElementChild as HTMLTextAreaElement;
+      preview.innerHTML = (source && renderTableCellPreview(view.state, source)) || '<span class="gn-table-empty">Empty</span>';
+      for (const link of preview.querySelectorAll<HTMLElement>('.cm-gn-link-styled')) {
+        setRenderedLinkEditor(link, () => editCellLink.get(cell)?.(link));
+      }
       if (input.value !== value && data.composing !== input) input.value = value;
       input.disabled = this.readOnly;
       if (this.readOnly) { input.hidden = true; preview.removeAttribute('data-editing'); preview.removeAttribute('aria-hidden'); }

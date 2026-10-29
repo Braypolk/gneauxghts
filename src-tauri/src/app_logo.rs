@@ -8,9 +8,53 @@ pub enum LogoTheme {
 }
 
 fn icon_bytes(theme: LogoTheme) -> &'static [u8] {
+    #[cfg(target_os = "macos")]
+    return match theme {
+        LogoTheme::Light => include_bytes!("../icons/macos-light.png"),
+        LogoTheme::Dark => include_bytes!("../icons/macos-dark.png"),
+    };
+    #[cfg(not(target_os = "macos"))]
     match theme {
         LogoTheme::Light => include_bytes!("../icons/icon.png"),
         LogoTheme::Dark => include_bytes!("../icons/icon-dark.png"),
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{icon_bytes, LogoTheme};
+
+    #[test]
+    fn dock_icons_have_transparent_margins_and_a_lit_upper_rim() {
+        for theme in [LogoTheme::Light, LogoTheme::Dark] {
+            let icon = image::load_from_memory(icon_bytes(theme))
+                .unwrap()
+                .into_rgba8();
+            let (width, height) = icon.dimensions();
+            assert_eq!(width, height);
+            let center = width / 2;
+            let top = (0..height)
+                .find(|&y| icon.get_pixel(center, y)[3] > 127)
+                .unwrap();
+            let bottom = (0..height)
+                .rev()
+                .find(|&y| icon.get_pixel(center, y)[3] > 127)
+                .unwrap();
+            let margin = top as f32 / height as f32;
+            assert!(
+                (0.09..0.11).contains(&margin),
+                "Dock artwork needs about 10% padding, got {margin}"
+            );
+            assert_eq!(top, height - 1 - bottom);
+            assert_eq!(icon.get_pixel(center, 0)[3], 0);
+            assert_eq!(icon.get_pixel(0, center)[3], 0);
+            let rim = icon.get_pixel(center, top + 1);
+            let face = icon.get_pixel(center, top + height / 32);
+            assert!(
+                rim[0] > face[0],
+                "The upper rim should catch more light than the face"
+            );
+        }
     }
 }
 

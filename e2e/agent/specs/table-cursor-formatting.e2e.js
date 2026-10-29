@@ -108,6 +108,35 @@ describe('rendered table cursor and formatting', () => {
     expect(await body()).toContain('| Hello world |  | Another |');
   });
 
+  it('renders cell highlights applied from the toolbar and preserves toggle and undo', async () => {
+    await replaceBody('| ==Name== | Value |\n| --- | --- |\n| Hello **world** | `==literal==` |\n\nAfter');
+    const preview = () => $('.gn-table-cell-preview[data-row="1"][data-column="0"]');
+    await expect($('.gn-table-cell-preview[data-row="0"][data-column="0"] .cm-gn-highlight')).toHaveText('Name');
+    await expect($('.gn-table-cell-preview[data-row="1"][data-column="1"] code')).toHaveText('==literal==');
+    await preview().click();
+    await $('button[aria-label="Highlight"]').click();
+    await expect(cell()).toHaveValue('==Hello **world**==');
+    await expect(cell()).toBeFocused();
+    expect(await body()).toContain('| ==Hello **world**== |');
+    await browser.keys('Escape');
+    await expect(preview().$('.cm-gn-highlight')).toHaveText('Hello world');
+    await expect(preview().$('.cm-gn-highlight strong')).toHaveText('world');
+    expect(await preview().$('.cm-gn-highlight').getCSSProperty('background-color')).not.toMatchObject({ value: 'rgba(0,0,0,0)' });
+
+    await preview().click();
+    await $('button[aria-label="Highlight"]').click();
+    await expect(cell()).toHaveValue('Hello **world**');
+    await browser.keys('Escape');
+    await expect(preview().$('.cm-gn-highlight')).not.toExist();
+    await preview().click();
+    await browser.keys(['Meta', 'z', '\uE000']);
+    await expect(cell()).toHaveValue('==Hello **world**==');
+    await browser.keys(['Meta', 'Shift', 'z', '\uE000']);
+    await expect(cell()).toHaveValue('Hello **world**');
+    await browser.keys('Escape');
+    await expect(preview().$('.cm-gn-highlight')).not.toExist();
+  });
+
   it('retires a native popup safely when switching source mode and leaving the pane', async () => {
     await replaceBody(simpleTable);
     await $('.gn-table-cell-preview[data-row="1"][data-column="0"]').click();

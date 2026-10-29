@@ -172,6 +172,9 @@ icons and the iOS asset catalog. Settings → Appearance → App logo offers Aut
 Light, and Dark independently of the interface theme. Auto is the default and
 follows the system appearance. The running desktop icon and browser favicon use
 this choice; iOS Home Screen appearance is managed by the system asset catalog.
+The generator adds transparent padding and a subtle rim highlight for macOS.
+Both the bundled ICNS and the running Dock icon use this composition; the web,
+Windows, Linux and iOS artwork uses the original full-canvas composition.
 
 ### Animation iteration
 

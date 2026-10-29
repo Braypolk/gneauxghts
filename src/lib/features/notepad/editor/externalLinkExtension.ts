@@ -11,6 +11,13 @@ export interface ExternalLinkActionsSession {
   subscribe: (close: () => void) => () => void;
 }
 
+// Rendered links can live inside native editors, such as table cells. Their
+// owner restores editing without moving CodeMirror's cursor into a widget.
+const nativeLinkEditors = new WeakMap<HTMLElement, () => void>();
+export function setRenderedLinkEditor(link: HTMLElement, edit: () => void) {
+  nativeLinkEditors.set(link, edit);
+}
+
 export function findRenderedMarkdownLinkUrl(
   target: EventTarget | null
 ): string | null {
@@ -111,6 +118,8 @@ export function createExternalLinkClickExtension(
           open: () => { if (alive) void openExternalLink(rawUrl); },
           edit: () => {
             if (!alive) return;
+            const editNative = nativeLinkEditors.get(link);
+            if (editNative) { editNative(); return; }
             this.#view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
             this.#view.focus();
           },
